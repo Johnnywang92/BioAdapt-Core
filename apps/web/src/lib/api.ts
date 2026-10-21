@@ -17,6 +17,7 @@ import type {
   Approval,
   ApprovalKind,
   ApprovalState,
+  BioSuggestion,
   CandidateSet,
   CardEvidenceRead,
   DataAsset,
@@ -25,10 +26,12 @@ import type {
   ExportEnvelope,
   ExportKind,
   ExportRow,
+  KnowledgeDocument,
   Page,
   Problem,
   Project,
   ProjectCreate,
+  RagAnswer,
   RecordedAsset,
   RecordedPlan,
   ReviewDecision,
@@ -82,7 +85,7 @@ export interface Caller {
 }
 
 export interface RequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE" | "PUT";
   body?: unknown;
   idempotencyKey?: string;
   signal?: AbortSignal;
@@ -360,6 +363,46 @@ export const exports_ = {
 export const compliance = {
   audit: (caller: Caller, projectId: string, params: { limit?: number; offset?: number } = {}) =>
     call<Page<Record<string, unknown>>>(caller, `${projectPath(projectId)}/audit${queryString(params)}`),
+};
+
+/** Private knowledge base & RAG (plan V2.0 section 6). */
+export const knowledge = {
+  list: (caller: Caller, projectId: string, params: { docType?: string; limit?: number; offset?: number } = {}) =>
+    call<KnowledgeDocument[]>(caller, `${projectPath(projectId)}/knowledge/documents${queryString(params)}`),
+  ingest: (
+    caller: Caller,
+    projectId: string,
+    payload: {
+      title: string;
+      filename: string;
+      doc_type?: string;
+      content_text?: string;
+      content_b64?: string;
+      author?: string;
+      species?: string;
+      tissue?: string;
+      privacy_tier?: string;
+      license_class?: string;
+    }
+  ) =>
+    call<KnowledgeDocument>(caller, `${projectPath(projectId)}/knowledge/documents`, {
+      method: "POST",
+      body: payload,
+    }),
+  delete: (caller: Caller, projectId: string, docId: string) =>
+    call<void>(caller, `${projectPath(projectId)}/knowledge/documents/${encodeURIComponent(docId)}`, {
+      method: "DELETE",
+    }),
+  ask: (caller: Caller, projectId: string, query: string, topK: number = 4) =>
+    call<RagAnswer>(caller, `${projectPath(projectId)}/knowledge/ask`, {
+      method: "POST",
+      body: { query, top_k: topK },
+    }),
+  suggest: (caller: Caller, projectId: string, clusterId: string, markers: string[], tissue: string = "") =>
+    call<BioSuggestion>(caller, `${projectPath(projectId)}/knowledge/suggest`, {
+      method: "POST",
+      body: { cluster_id: clusterId, markers, tissue },
+    }),
 };
 
 export function queryString(params: Record<string, unknown>): string {

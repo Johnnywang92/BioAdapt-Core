@@ -15,8 +15,10 @@ import type {
   FinalStatus,
   ReviewDecision,
   ReviewEvent,
+  ReviewResponse,
   ReviewScope,
   SignOff,
+  SignOffResponse,
 } from "@/lib/types";
 
 const DECISIONS: ReviewDecision[] = [
@@ -101,6 +103,8 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
     .filter((one): one is Evidence => Boolean(one));
   const triggers = card.trigger_signal_ids.map((id) => card.evidence[id]).filter(Boolean) as Evidence[];
   const literature = [...supporting, ...contradicting].filter((one) => one.source.doi || one.source.pmid);
+  const reviewResult = review.result as ReviewResponse | null;
+  const signOffResult = signOff.result as SignOffResponse | null;
 
   return (
     <>
@@ -148,6 +152,15 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
               <dd>{card.candidate_types.join(", ") || t("none")}</dd>
               <dt>{t("status reason")}</dt>
               <dd>{card.status_reason ?? "—"}</dd>
+              <dt>{t("ceiling")}</dt>
+              <dd>
+                <StatusChip status={read.data?.ceiling ?? card.final_status} />
+                {read.data?.gate_reasons.map((reason) => (
+                  <p className="muted" key={reason}>
+                    {reason}
+                  </p>
+                ))}
+              </dd>
               <dt>{t("artifact screening")}</dt>
               <dd>
                 {card.artifact_screening
@@ -290,10 +303,16 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
           <div className="side">
             <Panel title={t("Review")}>
               <ProblemNote error={review.error} />
-              {review.result ? (
+              {reviewResult ? (
                 <Notice>
-                  {t("Recorded")} <span className="mono">{(review.result as { review_id: string }).review_id}</span>;{" "}
-                  {t("the card now reads")} <StatusChip status={(review.result as { final_status: FinalStatus }).final_status} />
+                  {t("Recorded")} <span className="mono">{reviewResult.review_id}</span>;{" "}
+                  {t("the card now reads")} <StatusChip status={reviewResult.final_status} /> · {t("ceiling")}{" "}
+                  <StatusChip status={reviewResult.ceiling} />
+                  {reviewResult.gate_reasons.map((reason) => (
+                    <p className="muted" key={reason}>
+                      {reason}
+                    </p>
+                  ))}
                 </Notice>
               ) : null}
               <ReviewForm card={card} caller={caller} projectId={projectId} onRecorded={refresh} submit={review} />
@@ -301,14 +320,21 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
 
             <Panel title={t("Sign-off")} note={t("the person who drafted or reviewed this conclusion cannot sign it (§13.1)")}>
               <ProblemNote error={signOff.error} />
-              {signOff.result ? (
+              {signOffResult ? (
                 <Notice>
-                  <span className="mono">{(signOff.result as { sign_off: string }).sign_off}</span>{" "}
-                  {t("on a card in state")} <StatusChip status={(signOff.result as { final_status: FinalStatus }).final_status} />
+                  <span className="mono">{signOffResult.sign_off}</span> {t("on a card in state")}{" "}
+                  <StatusChip status={signOffResult.final_status} /> · {t("ceiling")}{" "}
+                  <StatusChip status={signOffResult.ceiling} />
+                  {signOffResult.gate_reasons.map((reason) => (
+                    <p className="muted" key={reason}>
+                      {reason}
+                    </p>
+                  ))}
                 </Notice>
               ) : null}
               <SignOffForm
                 card={card}
+                ceiling={read.data?.ceiling ?? card.final_status}
                 caller={caller}
                 projectId={projectId}
                 onRecorded={refresh}
@@ -550,8 +576,14 @@ function ReviewForm({
       <button type="submit" disabled={submit.busy || !rationale.trim() || (scope === "field" && !newValue.trim())}>
         {submit.busy ? t("recording…") : t("Record review")}
       </button>
-      {scope === "card" && ["mark_conflict", "mark_unknown", "reject"].includes(decision) ? (
-        <p className="muted">{t("this decision moves the status, and the gate decides whether it may")}</p>
+      {scope === "card" ? (
+        <p className="muted">
+          {decision === "approve"
+            ? t(
+                "an approval adopts the card's conclusion, so it moves the status up to the ceiling; a card that states no hypothesis has nothing to adopt",
+              )
+            : t("this decision moves the status, and the gate decides whether it may")}
+        </p>
       ) : null}
     </form>
   );
@@ -559,12 +591,14 @@ function ReviewForm({
 
 function SignOffForm({
   card,
+  ceiling,
   caller,
   projectId,
   onRecorded,
   submit,
 }: {
   card: EvidenceCard;
+  ceiling: FinalStatus;
   caller: { token: string; subjectId: string };
   projectId: string;
   onRecorded: () => void;
@@ -606,6 +640,9 @@ function SignOffForm({
       <p className="muted">
         {t("currently")} <Chip title={card.sign_off}>{t(card.sign_off)}</Chip>
         {card.reviewer_id ? t(" · signed by {who}", { who: card.reviewer_id }) : t(" · not yet signed by a named person")}
+      </p>
+      <p className="muted">
+        {t("this card can reach at most")} <StatusChip status={ceiling} />
       </p>
     </form>
   );

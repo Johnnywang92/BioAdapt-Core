@@ -33,13 +33,25 @@ from bioadapt_schemas.enums import (
     FilteringState,
     HypothesisType,
     LabelLevel,
+    PerturbationKind,
     PrivacyTier,
     ReproducibilityLevel,
     RetentionClass,
+    ScreeningResult,
     ToolClass,
     UsageScope,
 )
-from bioadapt_schemas.evidence import Evidence, EvidenceCard, EvidenceSource, FieldProvenance
+from bioadapt_schemas.evidence import (
+    ArtifactScreening,
+    Evidence,
+    EvidenceCard,
+    EvidenceSource,
+    FieldProvenance,
+    OntologyRef,
+    PerturbationResult,
+    ScreeningItem,
+    StabilitySummary,
+)
 from bioadapt_schemas.identifiers import derive_candidate
 from bioadapt_schemas.plan import (
     MANDATORY_STOP_CONDITIONS,
@@ -248,6 +260,93 @@ def card(**overrides) -> EvidenceCard:
         "thresholds_version": "v0-unconfirmed",
         "final_status": FinalStatus.UNKNOWN,
         "status_reason": "awaiting independent confirmation",
+    }
+    fields.update(overrides)
+    return EvidenceCard(**fields)
+
+
+def _screened() -> ArtifactScreening:
+    """Section 1.5: every artefact risk has an independent tool output, and none of them blocked."""
+    item = ScreeningItem(result=ScreeningResult.PASS, tool="scrublet", tool_version="0.2.3")
+    return ArtifactScreening(
+        doublet=item,
+        ambient=item,
+        low_quality=item,
+        batch_specific=item,
+        stress_cycle=item,
+        over_split=item,
+    )
+
+
+def _perturbed() -> StabilitySummary:
+    """Section 7.5: the mandatory perturbation classes, each clearing the cuts."""
+    return StabilitySummary(
+        protocol_version="stab_min5_v1",
+        results=[
+            PerturbationResult(kind=kind, cc_ari=0.72, jaccard=0.68, replicates=5)
+            for kind in PerturbationKind.mandatory_protocol()
+        ],
+    )
+
+
+def named_card(**overrides) -> EvidenceCard:
+    """A card a person has already named: a field review put the hypothesis and the label on it.
+
+    Its numbers are the ones a finished run leaves behind - every artefact risk screened, the mandatory
+    perturbation protocol run, a marker that cleared the cuts - so the ceiling is provisional, or supported
+    when an independent confirmation backs the card (section 1.5).
+    """
+    c = candidate()
+    records = {
+        "ev_mark": evidence(
+            evidence_id="ev_mark", kind=EvidenceKind.MARKER_SPECIFICITY, independence_group="atlas_a"
+        ),
+        "ev_ref": evidence(
+            evidence_id="ev_ref", kind=EvidenceKind.REFERENCE_COVERAGE, independence_group="atlas_b"
+        ),
+    }
+    supporting = ["ev_mark", "ev_ref"]
+    confirmation: list[str] = []
+    if overrides.pop("confirmed", False):
+        records["ev_conf"] = evidence(
+            evidence_id="ev_conf",
+            kind=EvidenceKind.DIFFERENTIAL_EXPRESSION,
+            partition=EvidencePartition.CONFIRMATION,
+            independence_group="atlas_c",
+        )
+        supporting.append("ev_conf")
+        confirmation = ["ev_conf"]
+    fields = {
+        "card_id": "card_named",
+        "candidate_id": c.candidate_id,
+        "run_id": RUN_ID,
+        "display_name": c.display_name,
+        "candidate_types": [CandidateType.C1_UNASSIGNED],
+        "hypothesis_type": HypothesisType.CELL_TYPE,
+        "candidate_label": "CD8+ effector T",
+        "label_level": LabelLevel.CELL_TYPE_BROAD,
+        "ontology": OntologyRef(
+            term_id="CL:0000629", ontology_name="Cell Ontology", ontology_version="2026-05-01"
+        ),
+        "evidence": records,
+        "supporting_evidence_ids": supporting,
+        "confirmation_evidence_ids": confirmation,
+        "artifact_screening": _screened(),
+        "stability_summary": _perturbed(),
+        "field_provenance": {
+            "evidence.*.content.*": FieldProvenance(source=FieldSource.TOOL, object_id="as_0001"),
+            **{
+                f"stability_summary.results[{index}].{number}": FieldProvenance(
+                    source=FieldSource.TOOL, object_id="as_stability"
+                )
+                for index in range(len(PerturbationKind.mandatory_protocol()))
+                for number in ("cc_ari", "jaccard", "replicates")
+            },
+        },
+        "support_rule_version": "supp_rule_v1",
+        "thresholds_version": "v0-unconfirmed",
+        "final_status": FinalStatus.UNKNOWN,
+        "status_reason": "named by the reviewer; the status is still to be decided",
     }
     fields.update(overrides)
     return EvidenceCard(**fields)

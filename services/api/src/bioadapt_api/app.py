@@ -23,6 +23,7 @@ from .routes_data import router as data_router
 from .routes_exports import router as exports_router
 from .routes_findings import read_evidence_by_alias
 from .routes_findings import router as findings_router
+from .routes_knowledge import router as knowledge_router
 from .routes_orchestration import router as orchestration_router
 from .routes_runs import router as runs_router
 from .routes_tools import router as tools_router
@@ -64,6 +65,7 @@ def create_app(state: ApiState) -> FastAPI:
         orchestration_router,
         annotations_router,
         findings_router,
+        knowledge_router,
         tools_router,
         exports_router,
         compliance_router,

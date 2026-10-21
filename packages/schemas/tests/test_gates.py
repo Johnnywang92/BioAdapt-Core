@@ -21,10 +21,13 @@ from bioadapt_schemas.evidence import (
 )
 from bioadapt_schemas.gates import (
     ALLOWED_NUMERIC_SOURCES,
+    APPROVAL_REACH,
+    SIGNATURE_REACH,
     GateViolation,
     MarkerStatistics,
     artifact_verdict,
     audited_numeric_paths,
+    card_ceiling,
     enforce_card_status,
     expert_queue,
     final_status_ceiling,
@@ -36,7 +39,10 @@ from bioadapt_schemas.gates import (
     priority_score,
     rare_verdict,
     stability_verdict,
+    status_strength,
+    support_rule_failed,
     support_rule_verdict,
+    weaker_status,
 )
 from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS, Thresholds
 from schemas_factories import (
@@ -484,3 +490,64 @@ class TestCandidateClasses:
         assert moved[0] == ["card_00", "card_01"]
         with pytest.raises(ValueError, match="room for at least one card"):
             expert_queue(scores, limit=0)
+
+
+class TestLadder:
+    """Section 1.5: the conclusion ladder, and the two acts that can move a card up it."""
+
+    def test_the_ladder_orders_the_conclusions(self):
+        ladder = [
+            FinalStatus.REJECTED,
+            FinalStatus.UNKNOWN,
+            FinalStatus.CONFLICT,
+            FinalStatus.PROVISIONAL,
+            FinalStatus.SUPPORTED,
+        ]
+        assert [status_strength(one) for one in ladder] == sorted(status_strength(one) for one in ladder)
+
+    def test_the_weaker_of_two_conclusions_wins(self):
+        assert weaker_status(FinalStatus.SUPPORTED, FinalStatus.PROVISIONAL) is FinalStatus.PROVISIONAL
+        assert weaker_status(FinalStatus.PROVISIONAL, FinalStatus.SUPPORTED) is FinalStatus.PROVISIONAL
+        assert weaker_status(FinalStatus.UNKNOWN, FinalStatus.CONFLICT) is FinalStatus.UNKNOWN
+        assert weaker_status(FinalStatus.REJECTED, FinalStatus.REJECTED) is FinalStatus.REJECTED
+
+    def test_an_approval_and_a_signature_reach_different_heights(self):
+        assert APPROVAL_REACH is FinalStatus.PROVISIONAL
+        assert SIGNATURE_REACH is FinalStatus.SUPPORTED
+
+
+class TestCardCeiling:
+    """The ceiling a route shows a reviewer is a reading of the card's own numbers."""
+
+    def test_a_card_reads_its_own_ceiling(self):
+        assert card_ceiling(make_card()).detail["ceiling"] is FinalStatus.PROVISIONAL
+        assert card_ceiling(make_card(FinalStatus.SUPPORTED)).detail["ceiling"] is FinalStatus.SUPPORTED
+
+    def test_a_contradicting_marker_is_a_failed_support_rule(self):
+        card = make_card()
+        assert not support_rule_failed(card)
+        marked = card.model_copy(
+            update={
+                "evidence": {
+                    **card.evidence,
+                    "ev_bad": make_evidence(
+                        "ev_bad",
+                        EvidenceRole.CONTRADICTING,
+                        EvidencePartition.DISCOVERY,
+                        "panel_c",
+                        kind=EvidenceKind.MARKER_SPECIFICITY,
+                    ),
+                }
+            }
+        )
+        assert support_rule_failed(marked)
+        verdict = card_ceiling(marked)
+        assert verdict.detail["ceiling"] is FinalStatus.PROVISIONAL
+        assert "support rule not met" in verdict.reasons
+
+    def test_the_reading_follows_the_cut_set_it_is_asked_about(self):
+        card = make_card(FinalStatus.SUPPORTED)
+        assert card_ceiling(card).detail["ceiling"] is FinalStatus.SUPPORTED
+        strict = card_ceiling(card, thresholds=Thresholds(stability_cc_ari_min=0.95))
+        assert strict.detail["ceiling"] is FinalStatus.PROVISIONAL
+        assert any("perturbations" in reason for reason in strict.reasons)

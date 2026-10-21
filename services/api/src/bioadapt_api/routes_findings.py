@@ -142,11 +142,16 @@ def _read_evidence(session: SessionDep, candidate: CandidateSet) -> dict:
         memo = generate_reviewer_memo(draft)
     except Exception:
         memo = generate_reviewer_memo(card)
+    #: The reviewer has to see how far this card can go before deciding, and the ceiling is a reading
+    #: of the card's own numbers - so it is shown here and never stored on the card.
+    verdict = _ceiling_of(session, card)
     return {
         "candidate_id": candidate.candidate_id,
         "run_id": candidate.run_id,
         "cluster_id": candidate.display_name,
         "evidence_card": card.model_dump(mode="json"),
+        "ceiling": str(verdict.detail["ceiling"]),
+        "gate_reasons": list(verdict.reasons),
         "reviewer_memo": memo.model_dump(mode="json"),
     }
 
@@ -424,7 +429,14 @@ def _apply_approval(session: SessionDep, card: EvidenceCard, body: ReviewRequest
     never lowers one either.
     """
     if not _states_a_conclusion(card):
-        return card
+        #: An approval adopts a conclusion, so a card that states none has nothing to adopt. Saying so
+        #: is the point: the draft path files every card as unknown, and a silent no-op would read as
+        #: an approval that happened.
+        raise conflict(
+            "this card states no hypothesis, so there is no conclusion to approve; a field review has to "
+            "name the candidate first",
+            field="hypothesis_type",
+        )
     target = weaker_status(_ceiling_of(session, card).detail["ceiling"], APPROVAL_REACH)
     updates: dict[str, Any] = {
         "reviewer_id": session.actor.subject_id,

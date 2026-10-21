@@ -8,6 +8,7 @@ members = [
     "bioadapt-core",
     "bioadapt-evaluation",
     "bioadapt-evidence",
+    "bioadapt-knowledge",
     "bioadapt-orchestrator",
     "bioadapt-policies",
     "bioadapt-schemas",
@@ -53,6 +54,7 @@ version = "0.1.0"
 source = { editable = "services/api" }
 dependencies = [
     { name = "bioadapt-evidence" },
+    { name = "bioadapt-knowledge" },
     { name = "bioadapt-orchestrator" },
     { name = "bioadapt-policies" },
     { name = "bioadapt-schemas" },
@@ -64,6 +66,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bioadapt-evidence", editable = "services/evidence" },
+    { name = "bioadapt-knowledge", editable = "packages/knowledge" },
     { name = "bioadapt-orchestrator", editable = "services/orchestrator" },
     { name = "bioadapt-policies", editable = "packages/policies" },
     { name = "bioadapt-schemas", editable = "packages/schemas" },
@@ -82,6 +85,7 @@ dev = [
     { name = "bioadapt-api" },
     { name = "bioadapt-evaluation" },
     { name = "bioadapt-evidence" },
+    { name = "bioadapt-knowledge" },
     { name = "bioadapt-orchestrator" },
     { name = "bioadapt-policies" },
     { name = "bioadapt-schemas" },
@@ -99,6 +103,7 @@ dev = [
     { name = "bioadapt-api", editable = "services/api" },
     { name = "bioadapt-evaluation", editable = "packages/evaluation" },
     { name = "bioadapt-evidence", editable = "services/evidence" },
+    { name = "bioadapt-knowledge", editable = "packages/knowledge" },
     { name = "bioadapt-orchestrator", editable = "services/orchestrator" },
     { name = "bioadapt-policies", editable = "packages/policies" },
     { name = "bioadapt-schemas", editable = "packages/schemas" },
@@ -124,6 +129,23 @@ requires-dist = [{ name = "bioadapt-schemas", editable = "packages/schemas" }]
 name = "bioadapt-evidence"
 version = "0.1.0"
 source = { editable = "services/evidence" }
+dependencies = [
+    { name = "bioadapt-policies" },
+    { name = "bioadapt-schemas" },
+    { name = "bioadapt-storage" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bioadapt-policies", editable = "packages/policies" },
+    { name = "bioadapt-schemas", editable = "packages/schemas" },
+    { name = "bioadapt-storage", editable = "packages/storage" },
+]
+
+[[package]]
+name = "bioadapt-knowledge"
+version = "0.1.0"
+source = { editable = "packages/knowledge" }
 dependencies = [
     { name = "bioadapt-policies" },
     { name = "bioadapt-schemas" },

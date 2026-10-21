@@ -341,6 +341,8 @@ export interface CardEvidenceRead {
   run_id: string;
   cluster_id: string;
   evidence_card: EvidenceCard;
+  ceiling: FinalStatus;
+  gate_reasons: string[];
   reviewer_memo?: ReviewerMemo | null;
 }
 
@@ -407,6 +409,8 @@ export interface ReviewResponse {
   review_id: string;
   card_id: string;
   final_status: FinalStatus;
+  ceiling: FinalStatus;
+  gate_reasons: string[];
   card: EvidenceCard;
 }
 
@@ -441,6 +445,8 @@ export interface SignOffResponse {
   card_id: string;
   sign_off: SignOff;
   final_status: FinalStatus;
+  ceiling: FinalStatus;
+  gate_reasons: string[];
 }
 
 export interface ExportEnvelope {
@@ -463,4 +469,57 @@ export interface ExportRow {
   download_url?: string;
   expires_at?: string;
   ttl_seconds?: number;
+}
+
+export type DocumentType = "paper" | "lab_note" | "analysis_log" | "protocol" | "other";
+
+export interface KnowledgeDocument {
+  doc_id: string;
+  project_id: string;
+  filename: string;
+  doc_type: DocumentType;
+  title: string;
+  author?: string | null;
+  species?: string | null;
+  tissue?: string | null;
+  privacy_tier: PrivacyTier;
+  license_class: string;
+  file_sha256: string;
+  chunk_count: number;
+  created_at: string;
+  summary?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface RetrievalHit {
+  chunk: {
+    chunk_id: string;
+    doc_id: string;
+    chunk_index: number;
+    section_path: string;
+    content: string;
+    token_count: number;
+    metadata: Record<string, unknown>;
+  };
+  score: number;
+  dense_rank?: number | null;
+  sparse_rank?: number | null;
+  source_doc?: KnowledgeDocument | null;
+}
+
+export interface RagAnswer {
+  query: string;
+  answer: string;
+  citations: RetrievalHit[];
+  confidence: number;
+  grounded_facts: string[];
+}
+
+export interface BioSuggestion {
+  cluster_id: string;
+  markers: string[];
+  suggested_cell_types: string[];
+  rationale: string;
+  citations: RetrievalHit[];
+  confidence: number;
 }

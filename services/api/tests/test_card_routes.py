@@ -23,6 +23,7 @@ from bioadapt_schemas.enums import (
     UsageScope,
 )
 from bioadapt_schemas.errors import ErrorClass
+from bioadapt_schemas.gates import card_ceiling
 from bioadapt_schemas.identifiers import (
     canonical_cell_key,
     candidate_id,
@@ -327,6 +328,17 @@ def test_drafting_records_which_cards_it_filed_in_the_audit_trail(client, auth, 
     cards = response.json()["cards"]
     assert details["card_ids"] == [item["card_id"] for item in cards]
     assert details["ceilings"] == {item["card_id"]: item["ceiling"] for item in cards}
+
+
+def test_the_ceiling_the_draft_shows_is_the_one_the_review_route_reads_off_the_card(client, auth, catalog, drafted):
+    """The ceiling is a reading of the card's own numbers, so the draft and the gate cannot drift apart."""
+    body = client.post(f"{DRAFT_BASE}/cards/draft", json={}, headers=auth(ANALYST, [Role.ANALYST])).json()
+    focus = _draft_for(body, drafted["focus_candidate_id"])
+    scoped = catalog.set_scope(PROJECT_ID)
+    filed = scoped.get_card_for_candidate(drafted["focus_candidate_id"])
+    verdict = card_ceiling(filed, thresholds=scoped.get_project().thresholds)
+    assert focus["ceiling"] == str(verdict.detail["ceiling"])
+    assert set(focus["gate_reasons"]) == set(verdict.reasons)
 
 
 def test_a_named_candidate_still_has_to_belong_to_the_run_being_drafted(client, auth, seeded, drafted):

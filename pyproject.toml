@@ -18,6 +18,7 @@ bioadapt-orchestrator = { workspace = true }
 bioadapt-scrnaseq = { workspace = true }
 bioadapt-evidence = { workspace = true }
 bioadapt-evaluation = { workspace = true }
+bioadapt-knowledge = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -27,6 +28,7 @@ dev = [
     "bioadapt-tool-registry",
     "bioadapt-policies",
     "bioadapt-storage",
+    "bioadapt-knowledge",
     "bioadapt-api",
     "bioadapt-orchestrator",
     "bioadapt-scrnaseq",
