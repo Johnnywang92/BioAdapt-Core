@@ -12,6 +12,7 @@ from .enums import (
     CandidateType,
     CrossModalStatus,
     EvidenceKind,
+    EvidenceRole,
     FieldSource,
     FinalStatus,
     PerturbationKind,
@@ -492,6 +493,52 @@ def enforce_card_status(
             f"final_status {card.final_status} exceeds ceiling {ceiling}; reasons: {verdict.reasons}"
         )
     return verdict
+
+
+#: Section 1.5: the two acts that can move a conclusion, and how high each one reaches on its own.
+#: An approval is the reviewer's judgement of the content, so it stops at provisional; only the
+#: expert's signature reaches supported, and only where the numbers allow it.
+APPROVAL_REACH = FinalStatus.PROVISIONAL
+SIGNATURE_REACH = FinalStatus.SUPPORTED
+
+
+def weaker_status(first: FinalStatus, second: FinalStatus) -> FinalStatus:
+    """The weaker of two conclusions, on the ladder rejected < unknown < conflict < provisional < supported."""
+    return _min_status(first, second)
+
+
+def status_strength(status: FinalStatus) -> int:
+    """How strong a conclusion a status is; the same ladder, as a number."""
+    return _rank(status)
+
+
+def support_rule_failed(card: EvidenceCard) -> bool:
+    """Whether section 7.8's marker rule failed on this card, read off the card's own records.
+
+    The rule leaves no column behind: what it produced is the role of the marker evidence - a contrast
+    that cleared the cuts is filed as supporting, a contrast that did not is filed as contradicting.
+    So a card carrying a contradicting marker has failed the rule, and a card that does not has either
+    passed it or never ran it. Only the failure moves a ceiling, so only the failure needs reading.
+    """
+    return any(
+        record.kind is EvidenceKind.MARKER_SPECIFICITY and record.role is EvidenceRole.CONTRADICTING
+        for record in card.evidence.values()
+    )
+
+
+def card_ceiling(card: EvidenceCard, *, thresholds: Thresholds = DEFAULT_THRESHOLDS) -> Verdict:
+    """How strong a conclusion this card's own numbers allow (sections 1.5, 7.2, 7.8).
+
+    This is the reading the drafting path makes, taken from the card as it stands - so a route that moves
+    a card's status applies the ceiling the reviewer was shown, not a second opinion about it. The
+    underpowered-design note is the drafting path's alone: the donor counts it reads are not on the card,
+    and it never moves a ceiling (a composition outlier is capped at provisional by its class anyway).
+    """
+    return final_status_ceiling(
+        card,
+        thresholds=thresholds,
+        support_met=False if support_rule_failed(card) else None,
+    )
 
 
 def priority_score(impact: int, uncertainty: int, client_ask: bool) -> int:

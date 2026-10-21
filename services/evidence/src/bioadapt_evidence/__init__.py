@@ -58,7 +58,13 @@ from .errors import (
     PromptUnsafe,
     TriggerOnHeldOutCells,
 )
-from .outbound import CARD_OUTBOUND, CardNarrative, card_model_request, card_outbound
+from .outbound import (
+    CARD_OUTBOUND,
+    CardNarrative,
+    card_model_request,
+    card_outbound,
+    generate_reviewer_memo,
+)
 from .queue import CardScore, ExpertQueue, build_queue, score_draft
 
 __all__ = [
@@ -105,6 +111,7 @@ __all__ = [
     "card_id_for",
     "card_model_request",
     "card_outbound",
+    "generate_reviewer_memo",
     "node_tool_of",
     "score_draft",
     "specimen_of",

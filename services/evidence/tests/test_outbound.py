@@ -25,6 +25,7 @@ from bioadapt_evidence.outbound import (
     CardNarrative,
     card_model_request,
     card_outbound,
+    generate_reviewer_memo,
 )
 from bioadapt_policies.egress import (
     DENIED_ALWAYS,
@@ -387,7 +388,16 @@ class TestTheOneModelPath:
 
     def test_the_answer_contract_names_no_field_a_person_decides(self) -> None:
         """Control 6 is a property of the contract, not a filter: the fields are simply absent from it."""
-        assert sorted(CardNarrative.model_fields) == ["confidence", "summary"]
+        assert sorted(CardNarrative.model_fields) == [
+            "confidence",
+            "confounding_risks",
+            "power_warning",
+            "recommended_action",
+            "stability_verdict",
+            "summary",
+        ]
+        human_fields = {"final_status", "candidate_label", "reviewer_id", "sign_off", "reviewed_at", "review_reason"}
+        assert human_fields.isdisjoint(CardNarrative.model_fields)
 
     def test_a_local_route_is_handed_exactly_the_face(self, single: Focus) -> None:
         capture = E.RecordingGateway(
@@ -443,3 +453,38 @@ class TestTheOneModelPath:
         assert "may not leave the data plane" in raised.value.message
         assert capture.prompts == [], "nothing may leave while the decision says it may not"
         assert rows(local_only.catalog) == []
+
+
+class TestReviewerMemo:
+    def test_generates_valid_narrative_from_draft(self, focus: Focus) -> None:
+        memo = generate_reviewer_memo(focus.draft)
+        assert isinstance(memo, CardNarrative)
+        assert memo.summary
+        assert memo.confidence is not None and 0.0 <= memo.confidence <= 1.0
+        assert memo.stability_verdict is not None
+        assert memo.recommended_action is not None
+
+    def test_generates_valid_narrative_from_card(self, focus: Focus) -> None:
+        memo = generate_reviewer_memo(focus.draft.card)
+        assert isinstance(memo, CardNarrative)
+        assert memo.summary
+        assert memo.confidence is not None
+
+    def test_power_warning_flagged_when_underpowered(self, focus: Focus) -> None:
+        from dataclasses import replace
+        underpowered_draft = replace(focus.draft, underpowered_design=True)
+        memo = generate_reviewer_memo(underpowered_draft)
+        assert memo.power_warning is not None
+        assert "min_n_per_group" in memo.power_warning
+
+    def test_confounding_risk_flagged_for_continuous_tail(self, focus: Focus) -> None:
+        from dataclasses import replace
+        from bioadapt_schemas.evidence import ContinuousStateCheck, IdentityVsState
+        mock_tail = ContinuousStateCheck(method="diffusion_pseudotime", is_axis_tail=True, statistic=0.88)
+        card_with_tail = focus.draft.card.model_copy(
+            update={"identity_vs_state": IdentityVsState(continuous_state_check=mock_tail)}
+        )
+        tail_draft = replace(focus.draft, card=card_with_tail)
+        memo = generate_reviewer_memo(tail_draft)
+        assert any("连续态混杂" in r for r in memo.confounding_risks)
+        assert "0.88" in memo.confounding_risks[0]

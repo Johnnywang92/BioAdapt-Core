@@ -166,6 +166,84 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
               <dd>{t(card.cross_modal_status)}</dd>
             </dl>
 
+            {read.data?.reviewer_memo ? (
+              <div
+                style={{
+                  background: "#f8f9fa",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "8px",
+                  padding: "16px",
+                  marginTop: "16px",
+                  marginBottom: "20px",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <h3 style={{ margin: 0, fontSize: "1.05rem", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span>🧠</span> {t("AI Review Memo")}
+                  </h3>
+                  {read.data.reviewer_memo.confidence != null ? (
+                    <span className="chip chip--unknown">
+                      {t("Confidence")}: {Math.round(read.data.reviewer_memo.confidence * 100)}%
+                    </span>
+                  ) : null}
+                </div>
+                <p style={{ margin: "4px 0 12px 0", color: "#334155", lineHeight: 1.5 }}>
+                  {read.data.reviewer_memo.summary}
+                </p>
+
+                {read.data.reviewer_memo.power_warning ? (
+                  <div
+                    style={{
+                      background: "#fffbeb",
+                      border: "1px solid #fef3c7",
+                      color: "#92400e",
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      marginBottom: "10px",
+                      fontSize: "0.9rem",
+                    }}
+                  >
+                    <strong>⚠️ {t("Statistical Power Alert")}:</strong> {read.data.reviewer_memo.power_warning}
+                  </div>
+                ) : null}
+
+                {read.data.reviewer_memo.confounding_risks && read.data.reviewer_memo.confounding_risks.length > 0 ? (
+                  <div style={{ marginBottom: "10px", fontSize: "0.9rem" }}>
+                    <strong>{t("Confounding Risks")}:</strong>
+                    <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>
+                      {read.data.reviewer_memo.confounding_risks.map((risk, idx) => (
+                        <li key={idx} style={{ color: "#b45309" }}>
+                          {risk}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {read.data.reviewer_memo.stability_verdict ? (
+                  <div style={{ marginBottom: "8px", fontSize: "0.9rem", color: "#475569" }}>
+                    <strong>{t("Stability (5-Perturbation)")}:</strong> {read.data.reviewer_memo.stability_verdict}
+                  </div>
+                ) : null}
+
+                {read.data.reviewer_memo.recommended_action ? (
+                  <div
+                    style={{
+                      background: "#f0fdf4",
+                      border: "1px solid #dcfce7",
+                      color: "#166534",
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      marginTop: "10px",
+                      fontSize: "0.9rem",
+                    }}
+                  >
+                    <strong>🎯 {t("Recommended Action for Expert")}:</strong> {read.data.reviewer_memo.recommended_action}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <h3>{t("Two records that carry it")}</h3>
             <ul className="evidence-list">
               {supporting.slice(0, 2).map((one) => (

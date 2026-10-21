@@ -327,11 +327,21 @@ export interface EvidenceCard {
   reviewed_at: string | null;
 }
 
+export interface ReviewerMemo {
+  summary: string;
+  confidence?: number | null;
+  power_warning?: string | null;
+  confounding_risks: string[];
+  stability_verdict?: string | null;
+  recommended_action?: string | null;
+}
+
 export interface CardEvidenceRead {
   candidate_id: string;
   run_id: string;
   cluster_id: string;
   evidence_card: EvidenceCard;
+  reviewer_memo?: ReviewerMemo | null;
 }
 
 export interface CardDraftRead {
@@ -345,6 +355,7 @@ export interface CardDraftRead {
   blocking_risks: string[];
   evidence_count: number;
   card: EvidenceCard;
+  reviewer_memo?: ReviewerMemo | null;
 }
 
 export interface DraftResponse {

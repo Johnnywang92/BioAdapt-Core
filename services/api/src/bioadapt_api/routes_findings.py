@@ -12,13 +12,28 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 
-from bioadapt_evidence import CardDraft, build_queue
+from bioadapt_evidence import CardDraft, build_queue, generate_reviewer_memo
 from bioadapt_policies.access import Action
 from bioadapt_schemas.alignment import classify_alignment
 from bioadapt_schemas.entities import CandidateSet, Contract, ReviewEvent
-from bioadapt_schemas.enums import FieldSource, FinalStatus, ReviewDecision, ReviewScope, SignOff
+from bioadapt_schemas.enums import (
+    FieldSource,
+    FinalStatus,
+    HypothesisType,
+    ReviewDecision,
+    ReviewScope,
+    SignOff,
+)
 from bioadapt_schemas.evidence import EvidenceCard, FieldProvenance
-from bioadapt_schemas.gates import enforce_card_status
+from bioadapt_schemas.gates import (
+    APPROVAL_REACH,
+    SIGNATURE_REACH,
+    Verdict,
+    card_ceiling,
+    enforce_card_status,
+    status_strength,
+    weaker_status,
+)
 
 from .deps import SessionDep
 from .errors import conflict, invalid, not_found
@@ -26,9 +41,15 @@ from .paging import Page, page_params
 
 router = APIRouter(tags=["findings"])
 
+#: Section 1.5: what each card-scope decision does to the conclusion. An approval adopts the card's
+#: conclusion and stops at provisional - only the expert's signature reaches supported - so it is not in
+#: this table. Every decision here withdraws the conclusion, and a signature that attests to a conclusion
+#: which is gone goes with it.
 CARD_SCOPE_DECISIONS = {
     ReviewDecision.MARK_CONFLICT: FinalStatus.CONFLICT,
     ReviewDecision.MARK_UNKNOWN: FinalStatus.UNKNOWN,
+    ReviewDecision.REVISE: FinalStatus.UNKNOWN,
+    ReviewDecision.RETURN_FOR_ANALYSIS: FinalStatus.UNKNOWN,
     ReviewDecision.REJECT: FinalStatus.REJECTED,
 }
 
@@ -91,21 +112,42 @@ def _get_card(session: SessionDep, card_id: str) -> EvidenceCard:
 
 
 def _write(session: SessionDep, card: EvidenceCard, updates: dict[str, Any]) -> EvidenceCard:
-    """Section 5.4: rewrite through validation and the gate, and only persist what survives both."""
+    """Section 5.4: rewrite through validation and the gate, and only persist what survives both.
+
+    The gate reads the cut set the project registered (§7.3) - the same one the ceiling is read against -
+    so the guard and the target can never disagree about what the numbers allow.
+    """
     revised = EvidenceCard.model_validate({**card.model_dump(), **updates})
-    enforce_card_status(revised)
+    enforce_card_status(revised, thresholds=session.thresholds)
     session.catalog.update_card(revised)
     return revised
+
+
+def _states_a_conclusion(card: EvidenceCard) -> bool:
+    """Whether the card says anything a person could adopt: a hypothesis, and the label it names."""
+    return card.hypothesis_type is not HypothesisType.UNKNOWN and bool(card.candidate_label)
+
+
+def _ceiling_of(session: SessionDep, card: EvidenceCard) -> Verdict:
+    """The highest conclusion this card's own numbers allow, read against the project's cut set."""
+    return card_ceiling(card, thresholds=session.thresholds)
 
 
 def _read_evidence(session: SessionDep, candidate: CandidateSet) -> dict:
     card = _card_for(session, candidate.candidate_id)
     session.enforce(Action.RUN_READ, card.card_id, "evidence_card")
+    try:
+        service = session.evidence_cards(candidate.run_id)
+        draft = service.draft(candidate)
+        memo = generate_reviewer_memo(draft)
+    except Exception:
+        memo = generate_reviewer_memo(card)
     return {
         "candidate_id": candidate.candidate_id,
         "run_id": candidate.run_id,
         "cluster_id": candidate.display_name,
         "evidence_card": card.model_dump(mode="json"),
+        "reviewer_memo": memo.model_dump(mode="json"),
     }
 
 
@@ -205,6 +247,7 @@ def _draft_body(draft: CardDraft) -> dict[str, Any]:
         "blocking_risks": list(draft.blocking),
         "evidence_count": len(draft.card.evidence),
         "card": draft.card.model_dump(mode="json"),
+        "reviewer_memo": generate_reviewer_memo(draft).model_dump(mode="json"),
     }
 
 
@@ -277,21 +320,36 @@ def review_card(card_id: str, body: ReviewRequest, session: SessionDep) -> dict:
     card = _get_card(session, card_id)
     review_id = new_review_id()
     previous = body.previous_value
+    before = card.final_status
     if body.scope is ReviewScope.FIELD:
         card, previous = _apply_field_revision(session, card, body, review_id=review_id)
+    elif body.scope is ReviewScope.CARD and body.decision is ReviewDecision.APPROVE:
+        card = _apply_approval(session, card, body)
     elif body.scope is ReviewScope.CARD and body.decision in CARD_SCOPE_DECISIONS:
         card = _apply_card_decision(session, card, body)
     event = _event(session, card_id, body, review_id=review_id, previous_value=previous)
     session.catalog.append_review(event)
+    #: The ceiling is a gate reading of the stored numbers, so it is re-derived here rather than read
+    #: off the card: the reviewer is told how far this card can go and what holds it back.
+    verdict = _ceiling_of(session, card)
     session.audit(
         f"card:review:{body.decision}",
         card_id,
-        details={"review_id": event.review_id, "scope": str(body.scope), "rationale": event.rationale},
+        details={
+            "review_id": event.review_id,
+            "scope": str(body.scope),
+            "rationale": event.rationale,
+            "from_status": str(before),
+            "to_status": str(card.final_status),
+            "ceiling": str(verdict.detail["ceiling"]),
+        },
     )
     return {
         "review_id": event.review_id,
         "card_id": card_id,
         "final_status": str(card.final_status),
+        "ceiling": str(verdict.detail["ceiling"]),
+        "gate_reasons": list(verdict.reasons),
         "card": card.model_dump(mode="json"),
     }
 
@@ -340,17 +398,42 @@ def _apply_field_revision(
 
 
 def _apply_card_decision(session: SessionDep, card: EvidenceCard, body: ReviewRequest) -> EvidenceCard:
+    """A card-scope decision that withdraws the conclusion - and the signature that went with it."""
     status = CARD_SCOPE_DECISIONS[body.decision]
     updates: dict[str, Any] = {
         "final_status": status,
         "reviewer_id": session.actor.subject_id,
         "reviewed_at": session.state.clock(),
         "review_reason": body.rationale,
+        "status_reason": body.rationale,
+        #: A conclusion that is gone takes its signature with it: the sign-off attests to the conclusion,
+        #: so a card that no longer holds one cannot keep the expert's signature on it.
+        "sign_off": SignOff.NOT_SIGNED,
     }
     if status is FinalStatus.CONFLICT:
         updates["unresolved_conflict"] = True
-    if status is FinalStatus.REJECTED:
-        updates["sign_off"] = SignOff.NOT_SIGNED
+    return _write(session, card, updates)
+
+
+def _apply_approval(session: SessionDep, card: EvidenceCard, body: ReviewRequest) -> EvidenceCard:
+    """Section 1.5: an approval adopts the card's conclusion, so it moves the status up the ladder.
+
+    It stops at provisional: a conclusion only becomes supported when an expert signs it (§1.5), and the
+    signature is the other act. The card's own numbers cap the move - the ceiling is a gate reading, not
+    a column on the card - so an approval can never talk a card above what its evidence allows, and it
+    never lowers one either.
+    """
+    if not _states_a_conclusion(card):
+        return card
+    target = weaker_status(_ceiling_of(session, card).detail["ceiling"], APPROVAL_REACH)
+    updates: dict[str, Any] = {
+        "reviewer_id": session.actor.subject_id,
+        "reviewed_at": session.state.clock(),
+        "review_reason": body.rationale,
+    }
+    if status_strength(target) > status_strength(card.final_status):
+        updates["final_status"] = target
+        updates["status_reason"] = body.rationale
     return _write(session, card, updates)
 
 
@@ -394,10 +477,34 @@ def sign_off_card(card_id: str, body: SignOffRequest, session: SessionDep) -> di
     if body.sign_off is not SignOff.NOT_SIGNED:
         updates.setdefault("reviewer_id", session.actor.subject_id)
         updates["reviewed_at"] = session.state.clock()
+        #: Section 1.5: a full signature is the act that carries a conclusion to supported; a conditional
+        #: one attests with a reservation, so it stops at provisional. Either way the card's own numbers
+        #: cap the move, and a card that states no conclusion has nothing for a signature to carry.
+        reach = SIGNATURE_REACH if body.sign_off is SignOff.FULL else APPROVAL_REACH
+        target = weaker_status(_ceiling_of(session, card).detail["ceiling"], reach)
+        if _states_a_conclusion(card) and status_strength(target) > status_strength(card.final_status):
+            updates["final_status"] = target
+            updates["status_reason"] = body.reason or f"signed {body.sign_off} by {session.actor.subject_id}"
+    elif card.final_status is FinalStatus.SUPPORTED:
+        #: A supported card rests on the signature, so withdrawing it takes the status down with it.
+        updates["final_status"] = FinalStatus.PROVISIONAL
+        updates["status_reason"] = body.reason or "the sign-off was withdrawn"
     signed = _write(session, card, updates)
+    verdict = _ceiling_of(session, signed)
     session.audit(
         "card:sign_off",
         card_id,
-        details={"sign_off": str(signed.sign_off), "final_status": str(signed.final_status), "reason": body.reason},
+        details={
+            "sign_off": str(signed.sign_off),
+            "final_status": str(signed.final_status),
+            "reason": body.reason,
+            "ceiling": str(verdict.detail["ceiling"]),
+        },
     )
-    return {"card_id": card_id, "sign_off": str(signed.sign_off), "final_status": str(signed.final_status)}
+    return {
+        "card_id": card_id,
+        "sign_off": str(signed.sign_off),
+        "final_status": str(signed.final_status),
+        "ceiling": str(verdict.detail["ceiling"]),
+        "gate_reasons": list(verdict.reasons),
+    }

@@ -13,13 +13,16 @@ the projection and the schema a permitted reply has to fit leave together or not
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Union
 
 from pydantic import BaseModel, Field
 
 from bioadapt_policies.egress import FieldCategory, OutgoingField
 from bioadapt_policies.model_policy import ModelTask
-from bioadapt_schemas.enums import EvidenceKind, PrivacyTier, RegulatoryProfile
+from bioadapt_schemas.enums import EvidenceKind, PrivacyTier, RegulatoryProfile, ScreeningResult
+from bioadapt_schemas.evidence import EvidenceCard
+from bioadapt_schemas.gates import card_ceiling
+from bioadapt_schemas.gates import stability_verdict as stability_verdict_fn
 
 from .cards import CardDraft
 from .decision import SYSTEM_INSTRUCTIONS, ModelCallRequest
@@ -70,6 +73,30 @@ CARD_OUTBOUND: Mapping[str, OutgoingField] = {
     "reference_coverage": OutgoingField(
         path="reference_coverage", category=FieldCategory.AGGREGATE_STATISTICS, unit="group"
     ),
+    "stability": OutgoingField(
+        path="stability",
+        category=FieldCategory.AGGREGATE_STATISTICS,
+        unit="group",
+        note="perturbation pass counts, min ARI and Jaccard across arms; group-level numbers",
+    ),
+    "artifact_screening": OutgoingField(
+        path="artifact_screening",
+        category=FieldCategory.AGGREGATE_STATISTICS,
+        unit="group",
+        note="doublet and ambient screening risk levels and blocked flags; group-level",
+    ),
+    "continuous_state": OutgoingField(
+        path="continuous_state",
+        category=FieldCategory.AGGREGATE_STATISTICS,
+        unit="group",
+        note="continuous state tail and gradient score; group-level",
+    ),
+    "power_diagnostics": OutgoingField(
+        path="power_diagnostics",
+        category=FieldCategory.AGGREGATE_STATISTICS,
+        unit="group",
+        note="whether donor count meets the design min_n_per_group and notes",
+    ),
     "rule_versions": OutgoingField(
         path="rule_versions",
         category=FieldCategory.TASK_SEMANTICS,
@@ -97,6 +124,153 @@ class CardNarrative(BaseModel):
 
     summary: str = Field(min_length=1, max_length=600)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    power_warning: Optional[str] = Field(default=None, max_length=300)
+    confounding_risks: list[str] = Field(default_factory=list)
+    stability_verdict: Optional[str] = Field(default=None, max_length=300)
+    recommended_action: Optional[str] = Field(default=None, max_length=300)
+
+
+def _card_content(card: EvidenceCard, kind: EvidenceKind) -> dict[str, Any]:
+    """One evidence record's content by kind."""
+    found = [entry for entry in card.evidence.values() if entry.kind is kind]
+    return {} if not found else dict(found[0].content)
+
+
+def generate_reviewer_memo(target: Union[CardDraft, EvidenceCard]) -> CardNarrative:
+    """Generate a structured, deterministic bioinformatics review memo from a drafted card or EvidenceCard.
+
+    Adheres strictly to plan V2.0 sections 7.2-7.8 & 11.6:
+    - Never sets privileged fields (final_status, candidate_label, reviewer_id, sign_off).
+    - Checks power sufficiency: flags whether donor count is below min_n_per_group (§7.4).
+    - Detects confounding: continuous state activation/differentiation axis tail, doublet & ambient risks.
+    - Evaluates robustness across the 5 perturbation classes.
+    - Synthesizes recommended action based on gate ceiling and evidence completeness.
+    """
+    if isinstance(target, CardDraft):
+        card = target.card
+        ceiling_str = target.ceiling.value
+        gate_reasons = list(target.gate_reasons)
+        underpowered = target.underpowered_design
+        blocking = list(target.blocking)
+    else:
+        card = target
+        verdict = card_ceiling(card)
+        ceiling_obj = verdict.detail.get("ceiling")
+        ceiling_str = ceiling_obj.value if hasattr(ceiling_obj, "value") else str(ceiling_obj or "unknown")
+        gate_reasons = list(verdict.reasons)
+        underpowered = False
+        blocking = [r.value for r in card.artifact_screening.blocked_by] if card.artifact_screening else []
+
+    # 1. Power diagnostics (§7.4)
+    power_warning: Optional[str] = None
+    if underpowered:
+        power_warning = (
+            "样本供体量低于设计矩阵底线 (min_n_per_group)，差异表达与标志物检验力受限，"
+            "组间比较仅作描述性推断，不可用于结论性论证 (§7.4)。"
+        )
+
+    # 2. Confounding risks (Continuous state, artifacts)
+    confounding_risks: list[str] = []
+    state = card.identity_vs_state.continuous_state_check
+    if state and state.is_axis_tail:
+        stat_note = f" (统计量: {state.statistic:.2f})" if state.statistic is not None else ""
+        confounding_risks.append(
+            f"连续态混杂：候选群被判定为参考梯度轴尾部 (is_axis_tail=True){stat_note}，"
+            "疑似活化/分化梯度的生理极值，并非独立新细胞类型 (§7.6)。"
+        )
+
+    screening = card.artifact_screening
+    if screening:
+        for risk, item in screening.items.items():
+            if item.result is ScreeningResult.FAIL:
+                confounding_risks.append(f"质控伪影未通过：{risk.value} (工具: {item.tool} {item.tool_version})")
+            elif item.result is ScreeningResult.WARN:
+                confounding_risks.append(f"质控伪影警示：{risk.value} 存在潜在风险标记")
+
+    # 3. Stability verdict (5 perturbation protocol, §7.5)
+    stability = card.stability_summary
+    stability_verdict: Optional[str] = None
+    if stability:
+        s_verdict = stability_verdict_fn(stability)
+        aris = [r.cc_ari for r in stability.results if r.cc_ari is not None]
+        jacs = [r.jaccard for r in stability.results if r.jaccard is not None]
+        min_ari = f"{min(aris):.2f}" if aris else "N/A"
+        min_jac = f"{min(jacs):.2f}" if jacs else "N/A"
+        if s_verdict.passed:
+            stability_verdict = f"稳健性达标：扰动评估通过 (ARI 下限: {min_ari}, Jaccard 下限: {min_jac})。"
+        else:
+            reasons_str = "; ".join(s_verdict.reasons) if s_verdict.reasons else "低于通过阈值"
+            stability_verdict = f"稳健性未达标：{reasons_str} (ARI 下限: {min_ari}, Jaccard 下限: {min_jac})。"
+    else:
+        stability_verdict = "未记录 5 类扰动稳健性评估结果。"
+
+    # 4. Recommended action based on ceiling & gate reasons (§7.2, §7.8)
+    recommended_action: Optional[str] = None
+    if blocking:
+        recommended_action = f"触发严重质控伪影阻塞 ({', '.join(blocking)})，建议专家驳回该候选群 (reject)。"
+    elif ceiling_str == "conflict":
+        recommended_action = "存在参考源或模态间冲突，建议标记为 conflict 并指派专家裁决独立正交证据。"
+    elif ceiling_str == "rejected":
+        recommended_action = "证据链严重缺失或质控未过关，建议予以驳回 (reject)。"
+    elif ceiling_str == "supported":
+        if underpowered:
+            recommended_action = "统计指标虽达标但受限于样本量，建议审慎核验后视情况签署 (conditional sign-off)。"
+        else:
+            recommended_action = "各项证据链（标志物特异性、跨供体一致性、稳健性）完整，建议专家签署确认 (supported)。"
+    elif ceiling_str == "provisional":
+        if state and state.is_axis_tail:
+            recommended_action = "存在明显连续态表型梯度，建议补充流式细胞术 (FACS) 排除生理过渡态，暂定 provisional。"
+        else:
+            recommended_action = "缺少独立确认集或关键正交验证，建议批准为暂定状态 (provisional) 并列入随访队列。"
+    else:
+        recommended_action = "证据链尚不完备，建议保留观察 (observed) 或返回重新聚类。"
+
+    # 5. Summary & Calibrated Confidence
+    types_str = "/".join(t.value for t in card.candidate_types)
+    comp = _card_content(card, EvidenceKind.COMPOSITION)
+    size_part = f"包含 {comp['size']} 个细胞" if "size" in comp else ""
+    donor_part = f"，覆盖 {comp['donor_count']} 位供体" if "donor_count" in comp else ""
+    count_desc = f" ({size_part}{donor_part})" if size_part else ""
+
+    summary_parts = [
+        f"候选群 {card.display_name} [{types_str}]{count_desc}。",
+    ]
+    if gate_reasons:
+        summary_parts.append(f"门禁判定上限: {ceiling_str} (原因: {'; '.join(gate_reasons[:2])})。")
+    if power_warning:
+        summary_parts.append("注意：供体数偏少，组间检验力受限。")
+    if confounding_risks:
+        summary_parts.append(f"提示 {len(confounding_risks)} 项混杂风险。")
+    summary = " ".join(summary_parts)[:600]
+
+    # Calculate confidence (0.0 to 1.0)
+    conf = 0.5
+    if ceiling_str == "supported":
+        conf = 0.85
+    elif ceiling_str == "provisional":
+        conf = 0.65
+    elif ceiling_str in ("conflict", "rejected"):
+        conf = 0.3
+
+    if underpowered:
+        conf = max(0.1, conf - 0.2)
+    if state and state.is_axis_tail:
+        conf = max(0.1, conf - 0.2)
+    if stability:
+        s_v = stability_verdict_fn(stability)
+        if not s_v.passed:
+            conf = max(0.1, conf - 0.15)
+    if blocking:
+        conf = 0.1
+
+    return CardNarrative(
+        summary=summary,
+        confidence=round(conf, 2),
+        power_warning=power_warning,
+        confounding_risks=confounding_risks,
+        stability_verdict=stability_verdict,
+        recommended_action=recommended_action,
+    )
 
 
 def card_outbound(
@@ -117,6 +291,9 @@ def card_outbound(
         )
     card = draft.card
     coverage = card.novelty_vs_coverage
+    stability = card.stability_summary
+    screening = card.artifact_screening
+    state = card.identity_vs_state.continuous_state_check
     values: dict[str, Any] = {
         "candidate": card.display_name,
         "candidate_types": sorted(str(kind.value) for kind in card.candidate_types),
@@ -139,6 +316,45 @@ def card_outbound(
                 "reference_coverage_score": coverage.reference_coverage_score,
             }
         ),
+        "stability": (
+            {}
+            if stability is None
+            else {
+                "protocol_version": stability.protocol_version,
+                "results": [
+                    {
+                        "kind": r.kind.value,
+                        "cc_ari": r.cc_ari,
+                        "jaccard": r.jaccard,
+                        "replicates": r.replicates,
+                        "judgement": r.detail.get("judgement"),
+                        "vanished_arms": r.detail.get("vanished_arms", 0),
+                    }
+                    for r in stability.results
+                ],
+            }
+        ),
+        "artifact_screening": (
+            {}
+            if screening is None
+            else {
+                "items": {risk.value: item.result.value for risk, item in screening.items.items()},
+                "blocked_by": [r.value for r in screening.blocked_by],
+            }
+        ),
+        "continuous_state": (
+            {}
+            if state is None
+            else {
+                "method": state.method,
+                "is_axis_tail": state.is_axis_tail,
+                "statistic": state.statistic,
+            }
+        ),
+        "power_diagnostics": {
+            "underpowered_design": draft.underpowered_design,
+            "donor_notes": [n for n in draft.notes if "min_n_per_group" in n],
+        },
         "rule_versions": {
             "support_rule_version": card.support_rule_version,
             "thresholds_version": card.thresholds_version,

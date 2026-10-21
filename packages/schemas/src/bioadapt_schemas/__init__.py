@@ -43,7 +43,18 @@ from .enums import (
 )
 from .errors import ApiError, ErrorClass
 from .evidence import Evidence, EvidenceCard, EvidenceSource, FieldProvenance, OntologyRef
-from .gates import GateViolation, MarkerStatistics, enforce_card_status, stability_verdict
+from .gates import (
+    APPROVAL_REACH,
+    SIGNATURE_REACH,
+    GateViolation,
+    MarkerStatistics,
+    card_ceiling,
+    enforce_card_status,
+    stability_verdict,
+    status_strength,
+    support_rule_failed,
+    weaker_status,
+)
 from .orchestration import (
     Approval,
     RunCheckpoint,
@@ -57,6 +68,7 @@ from .plan import AnalysisPlan, PlanNode
 from .thresholds import DEFAULT_THRESHOLDS, Thresholds
 
 __all__ = [
+    "APPROVAL_REACH",
     "AnalysisPlan",
     "AnnotationStatus",
     "Approval",
@@ -92,6 +104,7 @@ __all__ = [
     "RunEventKind",
     "RunManifest",
     "RunState",
+    "SIGNATURE_REACH",
     "ScreeningResult",
     "Specimen",
     "SubjectKind",
@@ -104,6 +117,7 @@ __all__ = [
     "evidence",
     "gates",
     "identifiers",
+    "card_ceiling",
     "enforce_card_status",
     "new_approval_id",
     "node_approval_id",
@@ -114,5 +128,8 @@ __all__ = [
     "require_hex64",
     "run_event_id",
     "stability_verdict",
+    "status_strength",
+    "support_rule_failed",
+    "weaker_status",
     "thresholds",
 ]
