@@ -1,0 +1,16 @@
+[project]
+name = "bioadapt-evaluation"
+version = "0.1.0"
+description = "Evaluation sets, metric dictionary, blind review protocol and release gates (plan V2.0 sections 10.3-10.8)"
+requires-python = ">=3.12"
+dependencies = ["bioadapt-schemas"]
+
+[tool.uv.sources]
+bioadapt-schemas = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

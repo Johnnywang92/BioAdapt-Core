@@ -1,0 +1,345 @@
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #14181d;
+  --ink-soft: #55606c;
+  --line: #d9dee5;
+  --accent: #1f5fbf;
+  --ok: #1c7a43;
+  --warn: #a26700;
+  --bad: #a3211f;
+  --quiet: #6b7480;
+  --radius: 10px;
+  --gap: 16px;
+  font-family: ui-sans-serif, -apple-system, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 8px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: 20px;
+}
+
+h2 {
+  font-size: 16px;
+}
+
+h3 {
+  font-size: 14px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar .brand {
+  font-weight: 700;
+}
+
+.topbar nav {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+}
+
+.actor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+}
+
+.main {
+  flex: 1;
+  padding: 24px;
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: var(--gap);
+}
+
+.panel > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.grid {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+th {
+  color: var(--ink-soft);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 12px;
+  background: #eef1f5;
+  color: var(--ink);
+}
+
+.chip--supported {
+  background: #e4f3ea;
+  border-color: #b7dcc6;
+  color: var(--ok);
+}
+
+.chip--provisional {
+  background: #fbf1dd;
+  border-color: #ecd8ac;
+  color: var(--warn);
+}
+
+.chip--conflict {
+  background: #fdeaea;
+  border-color: #f0c2c2;
+  color: var(--bad);
+}
+
+.chip--rejected {
+  background: #eceef1;
+  border-color: var(--line);
+  color: var(--quiet);
+}
+
+.chip--unknown {
+  background: #eef2fb;
+  border-color: #c6d5ef;
+  color: var(--accent);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+button:disabled {
+  background: var(--quiet);
+  border-color: var(--quiet);
+  cursor: not-allowed;
+}
+
+form label {
+  display: block;
+  margin-bottom: 10px;
+}
+
+form label span {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.error {
+  border: 1px solid #f0c2c2;
+  background: #fdeaea;
+  color: var(--bad);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: var(--gap);
+  white-space: pre-wrap;
+}
+
+.notice {
+  border: 1px solid #c6d5ef;
+  background: #eef2fb;
+  color: var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: var(--gap);
+}
+
+/* §13.4: one card, one screen - body, two supporting records, one counter-record, literature on demand. */
+.card-screen {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 1fr);
+  align-items: start;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.evidence--contra {
+  border-color: #f0c2c2;
+}
+
+.evidence summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  position: sticky;
+  top: 16px;
+}
+
+.trail {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.trail li {
+  margin-bottom: 8px;
+}
+
+dl.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+}
+
+dl.facts dt {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+dl.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .card-screen {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side {
+    position: static;
+  }
+}

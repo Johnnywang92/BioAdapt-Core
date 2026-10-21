@@ -1,0 +1,27 @@
+[project]
+name = "bioadapt-api"
+version = "0.1.0"
+description = "Business API with the plan V2.0 non-functional and security constraints (sections 9.3, 9.7)"
+requires-python = ">=3.12"
+dependencies = [
+    "bioadapt-schemas",
+    "bioadapt-policies",
+    "bioadapt-storage",
+    "bioadapt-orchestrator",
+    "bioadapt-evidence",
+    "fastapi>=0.115",
+]
+
+[tool.uv.sources]
+bioadapt-schemas = { workspace = true }
+bioadapt-policies = { workspace = true }
+bioadapt-storage = { workspace = true }
+bioadapt-orchestrator = { workspace = true }
+bioadapt-evidence = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

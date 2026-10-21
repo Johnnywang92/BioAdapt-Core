@@ -1,0 +1,20 @@
+[project]
+name = "bioadapt-storage"
+version = "0.1.0"
+description = "Storage foundation: relational index with project scoping, object store layout, retention and deletion (plan V2.0 sections 5.7-5.9, 9.7, 11.7)"
+requires-python = ">=3.12"
+dependencies = ["bioadapt-schemas", "bioadapt-policies"]
+
+[tool.uv.sources]
+bioadapt-schemas = { workspace = true }
+bioadapt-policies = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bioadapt_storage = ["migrations/*.sql"]

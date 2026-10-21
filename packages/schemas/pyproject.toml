@@ -1,0 +1,13 @@
+[project]
+name = "bioadapt-schemas"
+version = "0.1.0"
+description = "Data contracts, identifiers and quality gates (plan V2.0 sections 1.5, 3.3, 5.x, 7.x, 13.4)"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.9"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

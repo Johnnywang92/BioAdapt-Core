@@ -1,0 +1,19 @@
+[project]
+name = "bioadapt-scrnaseq"
+version = "0.1.0"
+description = "scRNA-seq workflow: tool wrappers, deterministic reference implementation and run driver (plan V2.0 sections 7.1, 9.4, 9.6)"
+requires-python = ">=3.12"
+dependencies = ["bioadapt-schemas", "bioadapt-tool-registry", "bioadapt-policies", "bioadapt-storage"]
+
+[tool.uv.sources]
+bioadapt-schemas = { workspace = true }
+bioadapt-tool-registry = { workspace = true }
+bioadapt-policies = { workspace = true }
+bioadapt-storage = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
