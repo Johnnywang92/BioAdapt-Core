@@ -291,6 +291,37 @@ drop policy if exists "approval_project_scope" on "approval";
 create policy "approval_project_scope" on "approval" as permissive for all
   using ("project_id" = current_setting('app.project_id', true))
   with check ("project_id" = current_setting('app.project_id', true));
+create table if not exists "tool_grant" (
+  "grant_id" text not null,
+  "project_id" text not null,
+  "run_id" text not null,
+  "node_id" text not null,
+  "plan_id" text not null,
+  "plan_version" text not null,
+  "approval_id" text not null,
+  "tool_name" text not null,
+  "tool_version" text not null,
+  "spec" jsonb not null,
+  "spec_sha256" text not null,
+  "requested_by" text not null,
+  "approver_id" text not null,
+  "reason" text not null,
+  "approved_at" timestamptz not null,
+  "expires_at" timestamptz not null,
+  "max_uses" bigint not null,
+  "spent_at" timestamptz,
+  primary key ("grant_id"),
+  unique ("project_id", "approval_id")
+);
+create index if not exists "tool_grant_project_id_idx" on "tool_grant" ("project_id");
+create index if not exists "tool_grant_run_id_idx" on "tool_grant" ("run_id");
+create index if not exists "tool_grant_tool_name_tool_version_idx" on "tool_grant" ("tool_name", "tool_version");
+create index if not exists "tool_grant_approval_id_idx" on "tool_grant" ("approval_id");
+alter table "tool_grant" enable row level security;
+drop policy if exists "tool_grant_project_scope" on "tool_grant";
+create policy "tool_grant_project_scope" on "tool_grant" as permissive for all
+  using ("project_id" = current_setting('app.project_id', true))
+  with check ("project_id" = current_setting('app.project_id', true));
 create table if not exists "run_checkpoint" (
   "project_id" text not null,
   "run_id" text not null,

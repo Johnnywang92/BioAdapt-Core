@@ -278,6 +278,33 @@ APP_SCHEMA: tuple[TableSpec, ...] = (
         indexes=(("run_id",), ("project_id",), ("state",)),
     ),
     _t(
+        "tool_grant",
+        C("grant_id", "text", primary_key=True),
+        C("project_id", "text", nullable=False),
+        C("run_id", "text", nullable=False),
+        C("node_id", "text", nullable=False),
+        C("plan_id", "text", nullable=False),
+        C("plan_version", "text", nullable=False),
+        #: Section 9.6: the ad-hoc gate whose decision this grant executes, and the key that makes a
+        #: second issue of the same permission a collision rather than another execution.
+        C("approval_id", "text", nullable=False),
+        C("tool_name", "text", nullable=False),
+        C("tool_version", "text", nullable=False),
+        C("spec", "json", nullable=False),
+        C("spec_sha256", "text", nullable=False),
+        C("requested_by", "text", nullable=False),
+        C("approver_id", "text", nullable=False),
+        C("reason", "text", nullable=False),
+        C("approved_at", "timestamp", nullable=False),
+        C("expires_at", "timestamp", nullable=False),
+        C("max_uses", "int", nullable=False),
+        #: Spending is a write on the row that grants, not a second row: one gate buys one execution, and
+        #: a nullable stamp is the whole of that promise once the process that held the registry is gone.
+        C("spent_at", "timestamp"),
+        unique_groups=(("project_id", "approval_id"),),
+        indexes=(("project_id",), ("run_id",), ("tool_name", "tool_version"), ("approval_id",)),
+    ),
+    _t(
         "run_checkpoint",
         C("project_id", "text", primary_key=True),
         C("run_id", "text", primary_key=True),

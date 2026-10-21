@@ -2,7 +2,9 @@ import sqlite3
 from datetime import timedelta
 
 import pytest
+from pydantic import ValidationError
 
+from bioadapt_schemas.entities import sha256_of_json
 from bioadapt_schemas.enums import (
     AnnotationStatus,
     ApprovalKind,
@@ -16,7 +18,7 @@ from bioadapt_schemas.enums import (
     RunState,
     UsageScope,
 )
-from bioadapt_schemas.orchestration import Approval
+from bioadapt_schemas.orchestration import AdhocToolGrant, Approval, new_tool_grant_id
 from bioadapt_schemas.thresholds import Thresholds
 from bioadapt_storage import REUSABLE_SCOPES, Catalog, ConcurrentWriteError, ScopeError, lint
 from storage_factories import (
@@ -573,6 +575,103 @@ class TestApprovalWrites:
         gate = self._gate(catalog)
         catalog.set_scope(OTHER_PROJECT_ID)
         assert catalog.approval_exists(gate.approval_id) is False
+
+
+class TestAdHocToolGrants:
+    """Section 9.6: one PI decision buys one execution of the exact bytes it covered."""
+
+    APPROVAL_ID = "apr_adhoc_01"
+
+    def _grant(self, **overrides) -> AdhocToolGrant:
+        spec = {"tool_name": "project_qc_probe", "tool_version": "0.1.0", "task": "qc"}
+        fields = {
+            "project_id": PROJECT_ID,
+            "run_id": RUN_ID,
+            "node_id": "qc",
+            "plan_id": "plan_001",
+            "plan_version": "1",
+            "approval_id": self.APPROVAL_ID,
+            "tool_name": "project_qc_probe",
+            "tool_version": "0.1.0",
+            "spec": spec,
+            "spec_sha256": sha256_of_json(spec),
+            "requested_by": "user_analyst_01",
+            "approver_id": "user_pi_01",
+            "reason": "single submission for this project only",
+            "approved_at": NOW,
+            "expires_at": NOW + timedelta(days=7),
+        }
+        fields.update(overrides)
+        fields["grant_id"] = new_tool_grant_id(
+            fields["approval_id"], fields["tool_name"], fields["tool_version"], fields["node_id"]
+        )
+        return AdhocToolGrant(**fields)
+
+    def _record(self, catalog, **overrides) -> AdhocToolGrant:
+        catalog.set_scope(PROJECT_ID)
+        grant = self._grant(**overrides)
+        catalog.record_tool_grant(grant)
+        return grant
+
+    def test_a_grant_round_trips_with_the_bytes_it_covers(self, catalog):
+        made = self._record(catalog)
+        stored = catalog.get_tool_grant(made.grant_id)
+        assert stored.spec == made.spec
+        assert stored.spec_sha256 == sha256_of_json(stored.spec)
+        assert stored.approver_id == "user_pi_01" and stored.requested_by == "user_analyst_01"
+        found = catalog.find_tool_grant("project_qc_probe", "0.1.0", run_id=RUN_ID, node_id="qc")
+        assert found is not None and found.grant_id == made.grant_id
+        assert catalog.grant_of_approval(self.APPROVAL_ID).grant_id == made.grant_id
+
+    def test_the_gate_that_bought_a_grant_cannot_buy_a_second_one(self, catalog):
+        self._record(catalog)
+        with pytest.raises(sqlite3.IntegrityError):
+            catalog.set_scope(PROJECT_ID)
+            #: A second node under the same decision is a different grant id, but one gate is still one
+            #: permission, so the row it already bought is the row that stands.
+            catalog.record_tool_grant(self._grant(node_id="cluster"))
+
+    def test_a_grant_buys_one_execution_even_after_the_process_that_held_it_ends(self, catalog):
+        made = self._record(catalog)
+        assert catalog.spend_tool_grant(made.grant_id, at=NOW + timedelta(hours=1)).spent_at == NOW + timedelta(
+            hours=1
+        )
+        assert catalog.spend_tool_grant(made.grant_id) is None
+        assert catalog.list_tool_grants(live_only=True) == []
+        assert [g.grant_id for g in catalog.list_tool_grants()] == [made.grant_id]
+
+    def test_the_bytes_a_grant_covers_are_the_tool_it_names(self, catalog):
+        with pytest.raises(ValidationError, match="its spec declares"):
+            self._grant(spec={"tool_name": "something_else", "tool_version": "9.9.9", "task": "qc"})
+
+    def test_a_grant_cannot_cite_a_digest_other_than_the_bytes_it_carries(self, catalog):
+        with pytest.raises(ValidationError, match="does not match the spec"):
+            self._grant(spec_sha256="ab" * 32)
+
+    def test_a_grant_written_under_another_scope_is_refused_before_it_lands(self, catalog):
+        catalog.set_scope(OTHER_PROJECT_ID)
+        with pytest.raises(ScopeError):
+            catalog.record_tool_grant(self._grant())
+
+    def test_the_submitter_of_a_tool_is_never_the_name_on_its_grant(self, catalog):
+        with pytest.raises(ValidationError, match="may not be the subject that submitted"):
+            self._grant(approver_id="user_analyst_01")
+
+    def test_a_grant_buys_nothing_once_its_window_has_passed(self, catalog):
+        made = self._record(catalog)
+        stale = self._record(catalog, approval_id="apr_adhoc_02", expires_at=NOW + timedelta(minutes=1))
+        assert {g.grant_id for g in catalog.list_tool_grants(live_only=True)} == {made.grant_id, stale.grant_id}
+        assert catalog.spend_tool_grant(stale.grant_id, at=NOW + timedelta(days=1)) is None
+        assert catalog.spend_tool_grant(made.grant_id, at=NOW + timedelta(days=1)) is not None
+
+    def test_another_projects_grant_is_not_this_projects_ledger(self, catalog):
+        made = self._record(catalog)
+        catalog.set_scope(OTHER_PROJECT_ID)
+        assert catalog.grant_of_approval(self.APPROVAL_ID) is None
+        assert catalog.list_tool_grants() == []
+        assert catalog.spend_tool_grant(made.grant_id) is None
+        with pytest.raises(LookupError):
+            catalog.get_tool_grant(made.grant_id)
 
 
 def evidence_invocation():

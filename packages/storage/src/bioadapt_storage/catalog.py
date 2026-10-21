@@ -30,7 +30,7 @@ from bioadapt_schemas.entities import (
 from bioadapt_schemas.enums import RunEventKind, RunState, UsageScope
 from bioadapt_schemas.evidence import EvidenceCard
 from bioadapt_schemas.identifiers import sha256_hex
-from bioadapt_schemas.orchestration import Approval, RunCheckpoint, RunEvent
+from bioadapt_schemas.orchestration import AdhocToolGrant, Approval, RunCheckpoint, RunEvent
 from bioadapt_schemas.plan import AnalysisPlan
 from bioadapt_schemas.thresholds import Thresholds
 
@@ -779,6 +779,80 @@ class Catalog:
             {"assigned_to": to_subject, "delegated_from": from_subject, "delegated_at": at},
             read_by=from_subject if read_by is None else read_by,
         )
+
+    # ------------------------------------------------------------------ ad-hoc tool grants
+
+    def _tool_grant(self, row: sqlite3.Row) -> AdhocToolGrant:
+        return AdhocToolGrant(**self._contract("tool_grant", row))
+
+    def record_tool_grant(self, grant: AdhocToolGrant) -> str:
+        """Gate-addressed: the decision that already bought a grant cannot buy a second one (§9.6).
+
+        The grant names its project rather than taking whichever session writes it, because the row is read
+        by a later process - the engine that hydrates a registry - that has to be able to see which project
+        a person granted the tool in.
+        """
+        if grant.project_id != self.scope:
+            raise ScopeError(f"an ad-hoc grant for project {grant.project_id} is not this session's {self.scope}")
+        self._insert("tool_grant", grant.model_dump(mode="python"))
+        return grant.grant_id
+
+    def get_tool_grant(self, grant_id: str) -> AdhocToolGrant:
+        return self._tool_grant(self._one("tool_grant", "grant_id = ?", grant_id))
+
+    def grant_of_approval(self, approval_id: str) -> Optional[AdhocToolGrant]:
+        rows = self._scoped("tool_grant", "approval_id = ?", approval_id, limit=1)
+        return self._tool_grant(rows[0]) if rows else None
+
+    def find_tool_grant(
+        self, tool_name: str, tool_version: str, *, run_id: str, node_id: str
+    ) -> Optional[AdhocToolGrant]:
+        rows = self._scoped(
+            "tool_grant",
+            "tool_name = ? and tool_version = ? and run_id = ? and node_id = ?",
+            tool_name,
+            tool_version,
+            run_id,
+            node_id,
+            limit=1,
+        )
+        return self._tool_grant(rows[0]) if rows else None
+
+    def list_tool_grants(
+        self,
+        *,
+        run_id: Optional[str] = None,
+        live_only: bool = False,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> list[AdhocToolGrant]:
+        where, params = "1=1", []
+        if run_id:
+            where += " and run_id = ?"
+            params.append(run_id)
+        if live_only:
+            where += " and spent_at is null and expires_at > ?"
+            params.append(self.clock().isoformat())
+        rows = self._scoped(
+            "tool_grant", f"{where} order by approved_at, grant_id", *params, limit=limit, offset=offset
+        )
+        return [self._tool_grant(row) for row in rows]
+
+    def spend_tool_grant(self, grant_id: str, *, at: Optional[datetime] = None) -> Optional[AdhocToolGrant]:
+        """Claim the one execution the grant is worth, as a compare-and-set on ``spent_at``.
+
+        A registry spent inside one process forgets that when the process ends; this row does not, so the
+        second launch that asks is told no instead of reading its own empty counter. The window is part of
+        the claim, not a separate question: a grant past ``expires_at`` buys nothing even while unspent.
+        """
+        moment = at or self.clock()
+        stamp = self._encode("tool_grant", "spent_at", moment)
+        cur = self.conn.execute(
+            "update tool_grant set spent_at = ? "
+            'where "project_id" = ? and "grant_id" = ? and spent_at is null and "expires_at" > ?',
+            (stamp, self.scope, grant_id, stamp),
+        )
+        return self.get_tool_grant(grant_id) if cur.rowcount == 1 else None
 
     def record_model_invocation(self, invocation: ModelInvocation, *, run_id: str) -> str:
         """Content addressed: replaying an identical invocation resolves to the existing row."""

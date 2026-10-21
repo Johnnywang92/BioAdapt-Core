@@ -72,6 +72,17 @@ def node_approval_id(run_id: str, node: PlanNode) -> str:
     return new_approval_id(run_id, ApprovalKind.NODE, node_subject_digest(node), node.node_id)
 
 
+def new_tool_grant_id(approval_id: str, tool_name: str, tool_version: str, node_id: str) -> str:
+    """Section 9.6: one gate's decision buys exactly one grant, so the gate addresses it.
+
+    Keying on the approval rather than on a fresh random id is what makes issuing the same grant twice a
+    collision instead of a second permission: a re-issued request has to be reported as the grant that is
+    already on the record, not as another execution the tool may buy.
+    """
+    seed = "|".join((approval_id, tool_name, tool_version, node_id))
+    return f"grn_{sha256_hex(seed.encode())[:12]}"
+
+
 class RunEvent(ImmutableContract):
     """One line of the run's journal: every transition, every retry, every unit of spend."""
 
@@ -160,6 +171,66 @@ class Approval(Contract):
 
     def is_granted(self) -> bool:
         return self.state is ApprovalState.APPROVED
+
+
+class AdhocToolGrant(Contract):
+    """Section 9.6: what one PI decision buys, kept where the engine can read it.
+
+    The gate answers "did a person approve this node"; this row answers "may these exact tool bytes run,
+    once, in this project". The distinction is the point: the registry that admits a tool is built inside
+    the compute plane, so a grant that only lives there carries an approver that that process asserts
+    about itself. Here the approver is written from an authenticated session, the spec digest pins the
+    bytes that decision covered, and the spend is a row the next launch reads instead of a counter that
+    dies with the process that held it.
+    """
+
+    grant_id: str
+    #: Section 9.6: the permission is project-scoped, and it says so on the row rather than inheriting it
+    #: from whichever session read it - the engine compares this against the run's own project.
+    project_id: str
+    run_id: str
+    node_id: str
+    plan_id: str
+    plan_version: str
+    #: The ad-hoc gate whose decision this grant executes (§9.4).
+    approval_id: str = Field(min_length=1)
+    tool_name: str
+    tool_version: str
+    spec: dict[str, Any] = Field(min_length=1)
+    spec_sha256: str
+    #: The subject that submitted the tool, read off the gate rather than restated by the caller.
+    requested_by: str = Field(min_length=1)
+    approver_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    approved_at: datetime
+    expires_at: datetime
+    max_uses: int = Field(ge=1, default=1)
+    spent_at: Optional[datetime] = None
+
+    @field_validator("spec_sha256")
+    @classmethod
+    def _spec_digest(cls, value: str) -> str:
+        return require_hex64(value, "spec_sha256")
+
+    @model_validator(mode="after")
+    def _one_time(self) -> "AdhocToolGrant":
+        if self.max_uses != 1:
+            raise ValueError("an ad-hoc grant is issued per submission: max_uses must be 1")
+        if self.expires_at <= self.approved_at:
+            raise ValueError("ad-hoc grant window must be positive")
+        if self.approver_id == self.requested_by:
+            raise ValueError("an ad-hoc grant's approver may not be the subject that submitted the tool")
+        declared = (self.spec.get("tool_name"), self.spec.get("tool_version"))
+        if declared != (self.tool_name, self.tool_version):
+            raise ValueError(
+                f"the grant covers {self.tool_name}@{self.tool_version} but its spec declares {declared[0]}@{declared[1]}"
+            )
+        if self.spec_sha256 != sha256_of_json(self.spec):
+            raise ValueError("the grant's spec digest does not match the spec it carries")
+        return self
+
+    def is_live(self, now: datetime) -> bool:
+        return self.spent_at is None and now < self.expires_at
 
 
 class RunCheckpoint(ImmutableContract):
