@@ -32,6 +32,7 @@ from bioadapt_schemas.evidence import EvidenceCard
 from bioadapt_schemas.identifiers import sha256_hex
 from bioadapt_schemas.orchestration import Approval, RunCheckpoint, RunEvent
 from bioadapt_schemas.plan import AnalysisPlan
+from bioadapt_schemas.thresholds import Thresholds
 
 from .ddl import SCOPE_GUC, render_sqlite
 from .schema import APP_SCHEMA, TABLES_BY_NAME
@@ -300,6 +301,18 @@ class Catalog:
         if not rows:
             raise LookupError(f"project {self.scope} is not registered")
         return Project(**self._decode("project", rows[0]))
+
+    def update_project_thresholds(self, thresholds: Thresholds) -> Project:
+        """Replace the cut set this project judges against (section 1.5).
+
+        Only the thresholds column moves, and only on the row the session is scoped to: a project's
+        registration is not a route to another project's.
+        """
+        self.conn.execute(
+            'update project set "thresholds" = ? where "project_id" = ?',
+            (self._encode("project", "thresholds", thresholds), self.scope),
+        )
+        return self.get_project()
 
     # ------------------------------------------------------------------ assets and lineage
 
@@ -656,6 +669,15 @@ class Catalog:
         if existing is None:
             self._insert("approval", {**approval.model_dump(mode="python"), "project_id": self.scope})
         return approval.approval_id
+
+    def approval_exists(self, approval_id: str) -> bool:
+        """Whether this exact gate was already opened, before anything is written to it."""
+        return (
+            self.conn.execute(
+                "select 1 from approval where project_id = ? and approval_id = ?", (self.scope, approval_id)
+            ).fetchone()
+            is not None
+        )
 
     def get_approval(self, approval_id: str) -> Approval:
         return self._approval(self._one("approval", "approval_id = ?", approval_id))

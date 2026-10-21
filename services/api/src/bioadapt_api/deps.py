@@ -23,7 +23,7 @@ from bioadapt_orchestrator.service import Orchestrator
 from bioadapt_policies.access import Action, AccessDecision, Actor, Resource, authorize
 from bioadapt_policies.providers import ProviderTerms
 from bioadapt_schemas.enums import PrivacyTier, UsageScope
-from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS, Thresholds
+from bioadapt_schemas.thresholds import Thresholds
 from bioadapt_storage.catalog import Catalog
 from bioadapt_storage.objectstore import ObjectStore, Signer
 from bioadapt_storage.traces import TraceStore
@@ -123,9 +123,6 @@ class ApiState:
     clock: Callable[[], datetime]
     #: Section 9.2 + appendix C1: the approval window is a deployment input, never a code constant.
     approval_policy: ApprovalPolicy
-    #: Section 7.3: the cut set the drafting service judges stored numbers against. It has to be the one
-    #: in force when the run measured them, so it is a deployment input rather than a per-request guess.
-    card_thresholds: Thresholds = DEFAULT_THRESHOLDS
     local_hosts: frozenset[str] = frozenset()
     cloud_allowlist: frozenset[str] = frozenset()
     provider_terms: Mapping[str, ProviderTerms] = field(default_factory=dict)
@@ -152,6 +149,36 @@ class Session:
             self.catalog, policy=self.state.approval_policy, quotas=self.state.quotas, clock=self.state.clock
         )
 
+    @cached_property
+    def thresholds(self) -> Thresholds:
+        """Section 7.3: the cut set this project's numbers are judged against is the one it registered.
+
+        It lives on the project row, not on the deployment, because a card cites the version it was
+        measured under - a second copy here would let the two disagree without either side noticing.
+        """
+        return self.catalog.get_project().thresholds
+
+    def require_measured_cuts(self, action: Action, resource_id: str) -> None:
+        """Section 1.5 + 14.4: a conclusion leaves the platform only over a cut set somebody measured.
+
+        Stage 0 may compute, draft and queue against the appendix C1 placeholders - running that baseline
+        is how the numbers get replaced - but sign-off and export are the two exits where an unconfirmed
+        cut would read as a finding, so they are the two that refuse it.
+        """
+        thresholds = self.thresholds
+        if not thresholds.is_unconfirmed_default_set:
+            return
+        denial = (
+            f"{action} is closed while this project judges against threshold set {thresholds.version!r}, "
+            "which no person has confirmed as measured"
+        )
+        self.audit(
+            str(action),
+            resource_id,
+            details={"allowed": False, "denials": [denial], "thresholds_version": thresholds.version},
+        )
+        raise forbidden([denial], resource_id)
+
     def evidence_cards(self, run_id: str) -> EvidenceCardService:
         """The drafting path for one run: same project scope, object plane and cut set as this request.
 
@@ -159,7 +186,7 @@ class Session:
         refuse to touch one a person has acted on, and it holds no model, approval or egress authority.
         """
         return EvidenceCardService(
-            catalog=self.catalog, objects=self.state.objects, run_id=run_id, thresholds=self.state.card_thresholds
+            catalog=self.catalog, objects=self.state.objects, run_id=run_id, thresholds=self.thresholds
         )
 
     def subject_kind(self) -> str:

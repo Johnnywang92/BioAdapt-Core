@@ -439,6 +439,35 @@ def test_the_queue_is_ordered_by_the_rule_with_a_reason_for_every_place(client, 
     assert any("ceiling provisional" in reason for reason in focus["reasons"])
 
 
+def test_the_queue_judges_against_the_cut_set_the_project_registered(client, catalog, auth, drafted):
+    """§1.5: the rarity cut and the cap a project reads against are its own numbers, not a code constant."""
+    catalog.update_project_thresholds(
+        DEFAULT_THRESHOLDS.model_copy(update={"rare_min_cells": FOCUS_CELLS + 1, "expert_queue_card_limit": 1})
+    )
+    body = client.get(f"{DRAFT_BASE}/cards/queue", headers=auth(EXPERT, [Role.DOMAIN_EXPERT])).json()
+    assert body["thresholds_version"] == DEFAULT_THRESHOLDS.version
+    assert body["limit"] == 1
+    focus = _scores(body)[drafted["focus_candidate_id"]]
+    assert any("not rare by the composition rule" in reason for reason in focus["reasons"])
+    assert not any(reason.startswith("rare by the composition rule") for reason in focus["reasons"])
+
+
+def test_stage_0_drafts_and_queues_over_an_unconfirmed_cut_set(client, catalog, auth, drafted):
+    """§1.5: the conclusion-exit gate leaves the measuring alone.
+
+    Running the baseline is how the appendix C1 placeholders get replaced, so drafting and queueing have to
+    answer over an un-attested set. Pinned here because a later batch that moved the check onto the drafting
+    path would make stage 0 unable to produce the numbers it exists to produce.
+    """
+    catalog.update_project_thresholds(DEFAULT_THRESHOLDS)
+    drafts = client.post(f"{DRAFT_BASE}/cards/draft", json={}, headers=auth(ANALYST, [Role.ANALYST]))
+    assert drafts.status_code == 200, drafts.text
+    assert drafts.json()["thresholds_version"] == "v0-unconfirmed"
+    queue = client.get(f"{DRAFT_BASE}/cards/queue", headers=auth(EXPERT, [Role.DOMAIN_EXPERT]))
+    assert queue.status_code == 200, queue.text
+    assert queue.json()["queue"]
+
+
 def test_the_project_can_ask_for_a_population_it_is_interested_in(client, auth, drafted):
     def queue_of(ask: str) -> dict:
         return client.get(f"{DRAFT_BASE}/cards/queue?client_ask={ask}", headers=auth(EXPERT, [Role.DOMAIN_EXPERT])).json()

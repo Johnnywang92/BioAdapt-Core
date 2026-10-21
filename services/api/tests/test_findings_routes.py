@@ -4,7 +4,7 @@ from bioadapt_policies.access import Role
 from bioadapt_schemas.enums import AlignmentKind, FinalStatus, ReviewDecision, ReviewScope, SignOff
 from bioadapt_schemas.errors import ErrorClass
 from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS
-from conftest import ANALYST, COMPLIANCE, EXPERT, EXPERT2, PI, PROJECT_ID, RUN_ID, SERVICE, candidate, card
+from conftest import ANALYST, ATTESTED_CUTS, COMPLIANCE, EXPERT, EXPERT2, PI, PROJECT_ID, RUN_ID, SERVICE, candidate, card
 
 BASE = f"/v1/projects/{PROJECT_ID}"
 
@@ -84,10 +84,12 @@ def test_alignment_reports_the_recorded_kind_and_the_kind_under_current_threshol
     assert body["thresholds_version"] == "v0-unconfirmed"
 
 
-def test_alignment_is_reclassified_by_the_thresholds_the_deployment_set(client, state, auth, seeded):
-    """§5.6: this read answers against the cut set in force, the same one drafting and the queue use."""
-    state.card_thresholds = DEFAULT_THRESHOLDS.model_copy(
-        update={"version": "v1-measured", "confirmed": True, "alignment_continuation_min": 0.7}
+def test_alignment_is_reclassified_by_the_thresholds_the_project_registered(client, catalog, auth, seeded):
+    """§5.6: this read answers against the project's own cut set - the one drafting and the queue use."""
+    catalog.update_project_thresholds(
+        DEFAULT_THRESHOLDS.model_copy(
+            update={"version": "v1-measured", "confirmed": True, "alignment_continuation_min": 0.7}
+        )
     )
     body = client.get(
         f"{BASE}/candidates/{seeded['candidate_id']}/alignment", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR])
@@ -299,6 +301,51 @@ def test_a_service_account_cannot_sign_off(client, auth, seeded):
     )
     assert response.status_code == 403
     assert "human" in response.json()["message"]
+
+
+def test_signing_off_is_closed_until_the_project_has_attested_its_cut_set(client, auth, catalog, seeded):
+    """§1.5 + §14.4: a finding enters the record only over numbers somebody measured.
+
+    Stage 0 may still compute, draft and queue over the appendix C1 placeholders - running that baseline is
+    how the placeholders get replaced - but a sign-off turns a draft into a conclusion, so it names the set
+    nobody attested and refuses.
+    """
+    catalog.update_project_thresholds(DEFAULT_THRESHOLDS)
+    refused = client.post(
+        f"{BASE}/cards/card_001/sign_off",
+        json={"sign_off": "full"},
+        headers=auth(EXPERT2, [Role.DOMAIN_EXPERT]),
+    )
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["class"] == str(ErrorClass.POLICY_BLOCKED)
+    assert "v0-unconfirmed" in refused.json()["message"]
+    assert _card(client, auth, seeded)["sign_off"] == str(SignOff.NOT_SIGNED)
+    denial = [row for row in catalog.audit_entries(action="card:sign_off", limit=20) if "thresholds_version" in row["details"]]
+    assert [row["details"]["thresholds_version"] for row in denial] == ["v0-unconfirmed"]
+    assert "card:sign_off is closed" in denial[0]["details"]["denials"][0]
+
+    catalog.update_project_thresholds(ATTESTED_CUTS)
+    signed = client.post(
+        f"{BASE}/cards/card_001/sign_off",
+        json={"sign_off": "full"},
+        headers=auth(EXPERT2, [Role.DOMAIN_EXPERT]),
+    )
+    assert signed.status_code == 200, signed.text
+    assert _card(client, auth, seeded)["sign_off"] == str(SignOff.FULL)
+
+
+def test_withdrawing_a_sign_off_stays_open_over_an_unconfirmed_cut_set(client, auth, catalog, seeded):
+    """The gate closes on the way in only: a conclusion has to stay withdrawable while stage 0 measures."""
+    headers = auth(EXPERT2, [Role.DOMAIN_EXPERT])
+    client.post(f"{BASE}/cards/card_001/sign_off", json={"sign_off": "full"}, headers=headers)
+    catalog.update_project_thresholds(DEFAULT_THRESHOLDS)
+    withdrew = client.post(
+        f"{BASE}/cards/card_001/sign_off",
+        json={"sign_off": "not_signed", "reason": "the cut set behind this card was never measured"},
+        headers=auth(EXPERT, [Role.DOMAIN_EXPERT]),
+    )
+    assert withdrew.status_code == 200, withdrew.text
+    assert _card(client, auth, seeded)["sign_off"] == str(SignOff.NOT_SIGNED)
 
 
 def test_a_card_whose_run_cannot_be_resolved_still_needs_the_sign_off_role(client, auth, catalog, seeded):

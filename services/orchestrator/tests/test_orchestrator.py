@@ -141,7 +141,7 @@ def request(orchestrator, *, kind=ApprovalKind.PLAN, node_id=None, actor=HUMAN_A
     """Ask for a gate. The answer is a person's to give, so the approval is still open here."""
     approval = orchestrator.request_approval(
         RUN_ID, kind, actor=actor, node_id=node_id, assigned_to=assigned_to, plan_version=plan_version
-    )
+    ).approval
     return approval.approval_id
 
 
@@ -256,6 +256,42 @@ def test_the_digest_an_approval_was_recorded_over_is_the_plan_digest(running):
     approval = running.approval_of(approval_id)
     assert approval.subject_digest == plan_digest(running.plan_of(RUN_ID))
     assert approval.subject_digest == running.catalog.plan_digest("plan_001", "1")
+
+
+def test_asking_again_for_an_answered_gate_returns_the_decision_not_a_second_pending_gate(running):
+    """Section 9.2: gates are subject-addressed, so the row that answers is the row that is shown."""
+    result = running.request_approval(
+        RUN_ID, ApprovalKind.PLAN, actor=HUMAN_ANALYST, assigned_to=DEPUTY, plan_version="1"
+    )
+    assert result.replayed is True
+    assert result.approval.state is ApprovalState.APPROVED
+    assert result.approval.decision_reason == "design is sound"
+    assert result.approval.assigned_to == PI
+    assert [a.approval_id for a in running.catalog.list_approvals(run_id=RUN_ID)] == [result.approval.approval_id]
+
+
+def test_asking_again_for_an_open_gate_does_not_move_the_person_it_is_accountable_to(running):
+    gate = open_gate(running)
+    result = running.request_approval(
+        RUN_ID, ApprovalKind.NODE, actor=HUMAN_ANALYST, node_id=NODE_ID, assigned_to=DEPUTY
+    )
+    assert result.replayed is True
+    assert result.approval.approval_id == gate
+    assert result.approval.state is ApprovalState.PENDING
+    assert result.approval.assigned_to == PI and result.approval.requested_by == ANALYST
+
+
+def test_asking_for_a_gate_over_a_newer_plan_version_opens_a_second_gate(running):
+    running.catalog.record_plan(plan(plan_version="2"), created_by=ANALYST)
+    answered = running.request_approval(
+        RUN_ID, ApprovalKind.PLAN, actor=HUMAN_ANALYST, assigned_to=PI, plan_version="1"
+    )
+    fresh = running.request_approval(
+        RUN_ID, ApprovalKind.PLAN, actor=HUMAN_ANALYST, assigned_to=PI, plan_version="2"
+    )
+    assert (answered.replayed, fresh.replayed) == (True, False)
+    assert fresh.approval.approval_id != answered.approval.approval_id
+    assert len(running.catalog.list_approvals(run_id=RUN_ID)) == 2
 
 
 # --------------------------------------------------------------------- agents (section 9.1)
@@ -397,7 +433,7 @@ def test_resuming_an_escalated_run_needs_a_bigger_approved_budget(catalog, orche
     )
     gate = orchestrator.request_approval(
         RUN_ID, ApprovalKind.ESCALATION, actor=HUMAN_ANALYST, plan_version="2"
-    )
+    ).approval
     with pytest.raises(ApprovalRequired, match="is pending"):
         orchestrator.transition(
             RUN_ID,
@@ -435,7 +471,7 @@ def test_an_escalation_approval_may_not_lower_a_ceiling(catalog, orchestrator):
     )
     gate = orchestrator.request_approval(
         RUN_ID, ApprovalKind.ESCALATION, actor=HUMAN_ANALYST, plan_version="2"
-    )
+    ).approval
     orchestrator.decide_approval(gate.approval_id, actor=HUMAN_PI, approved=True, reason="fewer, cheaper passes")
     with pytest.raises(ApprovalRequired, match="may not lower a budget ceiling"):
         orchestrator.transition(
@@ -458,7 +494,7 @@ def test_an_escalation_approval_only_covers_the_plan_version_it_named(catalog, o
     )
     gate = orchestrator.request_approval(
         RUN_ID, ApprovalKind.ESCALATION, actor=HUMAN_ANALYST, plan_version="1"
-    )
+    ).approval
     orchestrator.decide_approval(gate.approval_id, actor=HUMAN_PI, approved=True, reason="wrong version")
     with pytest.raises(ApprovalRequired, match="different plan version"):
         orchestrator.transition(

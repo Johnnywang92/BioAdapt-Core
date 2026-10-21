@@ -255,6 +255,48 @@ def test_a_rejected_gate_stops_at_that_plan_version(client, auth):
     assert "rejected" in around.json()["message"]
 
 
+def test_re_asking_for_a_gate_that_was_already_answered_shows_the_answer(client, auth):
+    """Section 9.2: a gate is addressed by its subject, so asking again resolves to the row that exists.
+
+    A script that asks again after the PI has decided must not be told a second pending gate opened:
+    the gate it is pointed at is already closed, and its next call would be refused.
+    """
+    for state in (RunState.PREFLIGHT_RUNNING, RunState.PREFLIGHT_PASSED, RunState.PLAN_DRAFTED):
+        move(client, auth, state)
+    approval_id = open_plan_gate(client, auth)
+
+    again = client.post(
+        f"{BASE}/runs/{RUN_ID}/approvals", json={"kind": "plan"}, headers=auth(ANALYST, ANALYST_ROLE)
+    )
+    assert again.status_code == 200, again.text
+    assert again.headers["Idempotency-Replayed"] == "true"
+    assert again.json()["approval_id"] == approval_id
+    assert again.json()["state"] == str(ApprovalState.APPROVED)
+    assert again.json()["decided_by"] == PI
+
+    inbox = client.get(f"{BASE}/approvals", headers=auth(PI, PI_ROLE)).json()
+    assert [a["approval_id"] for a in inbox["items"]] == [approval_id]
+
+
+def test_re_asking_for_an_open_gate_does_not_hand_it_to_a_new_owner(client, auth):
+    deputy = "user_pi_02"
+    first = client.post(
+        f"{BASE}/runs/{RUN_ID}/approvals", json={"kind": "plan"}, headers=auth(ANALYST, ANALYST_ROLE)
+    )
+    assert first.status_code == 201, first.text
+
+    again = client.post(
+        f"{BASE}/runs/{RUN_ID}/approvals",
+        json={"kind": "plan", "assigned_to": deputy},
+        headers=auth(ANALYST, ANALYST_ROLE),
+    )
+    assert again.status_code == 200, again.text
+    body = again.json()
+    assert body["approval_id"] == first.json()["approval_id"]
+    assert body["state"] == str(ApprovalState.PENDING)
+    assert body["assigned_to"] == PI and body["requested_by"] == ANALYST
+
+
 # --------------------------------------------------------------------- who may decide
 
 

@@ -94,6 +94,9 @@ def create_export(
         privacy_tier=project.privacy_tier,
         attributes={"kind": str(body.kind)},
     )
+    #: Section 1.5: the export is where a conclusion leaves the platform, so it is the second exit - after
+    #: sign-off - that refuses to be built from a cut set nobody measured.
+    session.require_measured_cuts(Action.ASSET_EXPORT, f"{session.project_id}:{body.kind}")
     run_id = body.filters.get("run_id")
     if run_id is not None:
         try:

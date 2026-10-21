@@ -227,7 +227,7 @@ def approve_plan(orchestrator: Orchestrator, *, plan_version: str = "1") -> str:
     """The plan gate: an analyst submits, a person who is not the submitter approves."""
     approval = orchestrator.request_approval(
         RUN_ID, ApprovalKind.PLAN, actor=HUMAN_ANALYST, assigned_to=PI, plan_version=plan_version
-    )
+    ).approval
     orchestrator.decide_approval(approval.approval_id, actor=HUMAN_PI, approved=True, reason="design is sound")
     return approval.approval_id
 
@@ -243,7 +243,7 @@ def approve_node(
 ) -> str:
     approval = orchestrator.request_approval(
         RUN_ID, ApprovalKind.NODE, actor=actor, node_id=node_id, assigned_to=assigned_to
-    )
+    ).approval
     orchestrator.decide_approval(approval.approval_id, actor=decided_by, approved=True, reason=reason)
     return approval.approval_id
 

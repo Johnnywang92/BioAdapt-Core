@@ -10,11 +10,13 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import Field
 
 from bioadapt_policies.access import MAX_PRESIGNED_TTL_SECONDS, Action, presigned_url_ttl
-from bioadapt_schemas.entities import DataAsset, Project
+from bioadapt_schemas.entities import Contract, DataAsset, Project
 from bioadapt_schemas.enums import RetentionClass
 from bioadapt_schemas.plan import AnalysisPlan
+from bioadapt_schemas.thresholds import Thresholds
 from bioadapt_storage.objectstore import SignedUrl, issue_signed_url, object_key
 
 from .deps import ClaimsDep, SessionDep, StateDep, open_session, request_trace_id
@@ -60,6 +62,14 @@ def _declared_in_path(session: SessionDep, asset: DataAsset) -> None:
 def create_project(body: Project, request: Request, state: StateDep, claims: ClaimsDep) -> dict:
     session = open_session(state, claims, body.project_id, request_trace_id(request))
     session.enforce(Action.PROJECT_WRITE, body.project_id, "project")
+    #: Section 1.5: registration may carry the cuts a project intends to judge with, but attesting them is
+    #: its own human act with its own second factor. Left open, a project could register itself straight
+    #: past the conclusion-exit gate in the request that created it.
+    if body.thresholds.confirmed:
+        raise invalid(
+            "thresholds.confirmed",
+            "a registration cannot attest its own cut set; POST /v1/projects/{project_id}/thresholds/confirm does",
+        )
     session.catalog.create_project(body)
     session.audit("project:create", body.project_id, details={"privacy_tier": str(body.privacy_tier)})
     return {"project_id": body.project_id, "privacy_tier": str(body.privacy_tier)}
@@ -69,6 +79,51 @@ def create_project(body: Project, request: Request, state: StateDep, claims: Cla
 def read_project(session: SessionDep) -> dict:
     session.enforce(Action.PROJECT_READ, session.project_id, "project")
     return session.catalog.get_project().model_dump(mode="json")
+
+
+#: Appendix C1: a confirmation re-states the whole cut set, so no placeholder can be attested by being
+#: left out of the request. ``confirmed`` is the one field the caller is not allowed to state.
+CONFIRMABLE_CUTS = tuple(name for name in Thresholds.model_fields if name != "confirmed")
+
+
+class ThresholdConfirmation(Contract):
+    thresholds: Thresholds
+    rationale: str = Field(min_length=1)
+
+
+@router.post("/projects/{project_id}/thresholds/confirm")
+def confirm_thresholds(body: ThresholdConfirmation, session: SessionDep) -> dict:
+    """Section 1.5: the stage-0 placeholder cuts are replaced by the numbers the project measured.
+
+    Until this happens the flag stays false and the conclusion exit is shut (§14.4 locks the thresholds
+    after the stage-0 baseline, so a run may be computed and drafted against placeholders - a finding
+    may not be signed off or exported on them).
+    """
+    session.enforce(Action.THRESHOLDS_CONFIRM, f"{session.project_id}:thresholds", "threshold_set")
+    if body.thresholds.confirmed:
+        raise invalid("thresholds.confirmed", "the platform sets this from the decision below, not the caller")
+    missing = [name for name in CONFIRMABLE_CUTS if name not in body.thresholds.model_fields_set]
+    if missing:
+        raise invalid("thresholds", f"a confirmation has to state every cut, missing {missing}")
+    if not body.thresholds.version.strip():
+        raise invalid("thresholds.version", "the measured cut set has to be named, the products cite that name")
+    current = session.catalog.get_project().thresholds
+    if current.version == body.thresholds.version:
+        raise conflict(
+            f"threshold set {body.thresholds.version!r} is already the one in force", field="thresholds.version"
+        )
+    confirmed = body.thresholds.model_copy(update={"confirmed": True})
+    project = session.catalog.update_project_thresholds(confirmed)
+    session.audit(
+        "thresholds:confirm",
+        f"{session.project_id}:thresholds",
+        details={
+            "from_version": current.version,
+            "to_version": project.thresholds.version,
+            "rationale": body.rationale,
+        },
+    )
+    return {"project_id": session.project_id, "thresholds": project.thresholds.model_dump(mode="json")}
 
 
 @router.post("/projects/{project_id}/plans", status_code=201)

@@ -278,7 +278,7 @@ def test_a_refused_grant_is_a_policy_block_not_a_waiting_state(harness_factory: 
     h = harness_factory(the_plan=F.plan(gated=("clustering",)))
     approval = h.journal.request_approval(
         F.RUN_ID, ApprovalKind.NODE, actor=F.HUMAN_ANALYST, node_id="clustering", assigned_to=F.PI
-    )
+    ).approval
     h.journal.decide_approval(approval.approval_id, actor=F.HUMAN_PI, approved=False, reason="not this design")
     stopped = h.run()
     assert stopped.state is RunState.POLICY_BLOCKED and stopped.stopped_at == "clustering"
@@ -289,7 +289,7 @@ def test_a_pending_grant_waits_for_the_person_it_is_assigned_to(harness_factory:
     h = harness_factory(the_plan=F.plan(gated=("clustering",)))
     pending = h.journal.request_approval(
         F.RUN_ID, ApprovalKind.NODE, actor=F.HUMAN_ANALYST, node_id="clustering", assigned_to=F.PI
-    )
+    ).approval
     stopped = h.run()
     assert stopped.state is RunState.NEEDS_INPUT and stopped.stopped_at == "clustering"
     assert pending.approval_id in stopped.stopped_reason and F.PI in stopped.stopped_reason

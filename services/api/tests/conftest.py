@@ -51,6 +51,7 @@ from bioadapt_schemas.plan import (
     NodeResources,
     PlanNode,
 )
+from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS
 from bioadapt_storage.objectstore import HmacSigner, InMemoryObjectStore
 from bioadapt_storage.catalog import Catalog
 
@@ -76,6 +77,13 @@ COMPLIANCE = "user_compliance_01"
 SERVICE = "svc_orchestrator"
 CLOUD_ENDPOINT = "https://models.example.com"
 LOCAL_ENDPOINT = "https://model.internal"
+
+
+#: Section 1.5: the harness's projects have been through stage 0, so a person has attested the cut set.
+#: The values and the version stay the appendix C1 ones - every card fixture cites "v0-unconfirmed", and the
+#: §7.3 drift guard compares that against what the project registers, so only the flag moves here. Tests of
+#: the attestation itself set the flag back to False.
+ATTESTED_CUTS = DEFAULT_THRESHOLDS.model_copy(update={"confirmed": True})
 
 
 def project(project_id: str = PROJECT_ID, **overrides) -> Project:
@@ -278,11 +286,17 @@ def bearer(verifier: Hs256Verifier, subject_id: str, roles: list[Role], **kwargs
 @pytest.fixture
 def catalog():
     store = Catalog(":memory:", clock=lambda: NOW, check_same_thread=False)
-    store.create_project(project())
-    store.create_project(project(OTHER_PROJECT_ID))
-    store.create_project(project(LOCAL_PROJECT_ID, privacy_tier=PrivacyTier.STRICT_LOCAL))
-    store.create_project(project(HGR_PROJECT_ID, privacy_tier=PrivacyTier.HGR_CONTROLLED))
-    store.create_project(project(PUBLIC_PROJECT_ID, privacy_tier=PrivacyTier.PUBLIC))
+    for registration in (
+        project(),
+        project(OTHER_PROJECT_ID),
+        project(LOCAL_PROJECT_ID, privacy_tier=PrivacyTier.STRICT_LOCAL),
+        project(HGR_PROJECT_ID, privacy_tier=PrivacyTier.HGR_CONTROLLED),
+        project(PUBLIC_PROJECT_ID, privacy_tier=PrivacyTier.PUBLIC),
+    ):
+        store.create_project(registration)
+        #: Section 1.5: stage 0 has run in this harness, which is the one thing a registration cannot say
+        #: for itself - so the cut set is attested through the same write the confirmation route uses.
+        store.set_scope(registration.project_id).update_project_thresholds(ATTESTED_CUTS)
     store.set_scope(PROJECT_ID)
     store.record_plan(plan(), created_by=ANALYST)
     store.record_asset(asset())

@@ -61,7 +61,7 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
             <dd>
               <span className="mono">{String(project.data.thresholds.version)}</span>
               {project.data.thresholds.confirmed === false ? (
-                <span className="chip">unconfirmed stage-0 cut set (§7.3)</span>
+                <span className="chip">unconfirmed stage-0 cut set · sign-off and export are closed (§1.5)</span>
               ) : null}
               {` · expert queue cap ${String(project.data.thresholds.expert_queue_card_limit)} cards (§13.4)`}
             </dd>

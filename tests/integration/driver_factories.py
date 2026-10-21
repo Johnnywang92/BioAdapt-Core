@@ -88,6 +88,12 @@ MAX_MINUTES = 60
 MEASURED_PEAK_MEMORY_MB = 1200
 TOOL_VERSION = "1.0.0"
 
+#: Section 1.5: this harness drives a project that has finished stage 0, so its cut set is attested. The
+#: values and the version stay the appendix C1 ones - every product written below cites
+#: ``DEFAULT_THRESHOLDS.version``, and the §7.3 drift guard compares that citation against this row.
+#: What moves is only the flag, and only because the sign-off and export exits read it.
+ATTESTED_CUTS = DEFAULT_THRESHOLDS.model_copy(update={"confirmed": True})
+
 DEPLOYMENT = Deployment(
     container_repository="registry.internal/bioadapt/scrnaseq-reference",
     container_tag="1.0.0",
@@ -451,7 +457,7 @@ class Harness:
             actor=HUMAN_ANALYST,
             node_id=node_id,
             assigned_to=PI,
-        )
+        ).approval
         self.journal.decide_approval(
             approval.approval_id, actor=HUMAN_PI, approved=True, reason="cleared for this project"
         )
@@ -460,7 +466,7 @@ class Harness:
     def approve_plan(self, run_id: str, *, plan_version: str = "1") -> str:
         approval = self.journal.request_approval(
             run_id, ApprovalKind.PLAN, actor=HUMAN_ANALYST, assigned_to=PI, plan_version=plan_version
-        )
+        ).approval
         self.journal.decide_approval(
             approval.approval_id, actor=HUMAN_PI, approved=True, reason="design is sound"
         )
@@ -565,6 +571,7 @@ def harness(
             annotation_granularity_target="cell_type_fine",
             review_load_budget_hours_per_week=6.0,
             created_at=clock(),
+            thresholds=ATTESTED_CUTS,
         )
     )
     objects = InMemoryObjectStore()

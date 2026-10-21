@@ -257,7 +257,7 @@ def check_node_gate(run_id: str, node_id: str, session: SessionDep) -> dict:
 @router.post("/projects/{project_id}/runs/{run_id}/approvals", status_code=201)
 def request_gate(run_id: str, body: GateRequest, session: SessionDep):
     _require_run(session, run_id, Action.APPROVAL_REQUEST)
-    approval = session.orchestrator.request_approval(
+    result = session.orchestrator.request_approval(
         run_id,
         body.kind,
         actor=ActorRef.of(session.actor),
@@ -265,7 +265,18 @@ def request_gate(run_id: str, body: GateRequest, session: SessionDep):
         assigned_to=body.assigned_to,
         plan_version=body.plan_version,
     )
-    session.audit("approval:request", approval.approval_id, details={"kind": str(body.kind), "run_id": run_id})
+    approval = result.approval
+    session.audit(
+        "approval:request",
+        approval.approval_id,
+        details={"kind": str(body.kind), "run_id": run_id, "replayed": result.replayed},
+    )
+    if result.replayed:
+        #: The gate for this digest was already open, so nothing here moved: the answer is the row as
+        #: it stands, decided or not (§9.2). Claiming 201 would read as a second gate having opened.
+        return JSONResponse(
+            status_code=200, content=_approval_body(approval, session), headers={"Idempotency-Replayed": "true"}
+        )
     return _approval_body(approval, session)
 
 

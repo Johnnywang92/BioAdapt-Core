@@ -79,6 +79,19 @@ class TransitionResult:
     tolerance_exhausted: bool = False
 
 
+@dataclass(frozen=True)
+class GateRequestResult:
+    """A gate ask, resolved against the index.
+
+    Gates are subject-addressed, so asking twice for the same digest does not open a second one: the
+    row that already answers is the one handed back, whether or not this call created it (§9.2). A
+    caller must never be shown a freshly built pending object while the index holds a decided row.
+    """
+
+    approval: Approval
+    replayed: bool
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -155,7 +168,7 @@ class Orchestrator:
         node_id: Optional[str] = None,
         assigned_to: Optional[str] = None,
         plan_version: Optional[str] = None,
-    ) -> Approval:
+    ) -> GateRequestResult:
         manifest = self.catalog.get_run(run_id)
         digest = self._subject_digest(run_id, kind, node_id=node_id, plan_version=plan_version)
         approver = assigned_to or self.catalog.get_project().created_by
@@ -171,8 +184,9 @@ class Orchestrator:
             sla_at=self.policy.deadline(now),
             node_id=node_id,
         )
+        replayed = self.catalog.approval_exists(approval.approval_id)
         self.catalog.record_approval(approval)
-        return approval
+        return GateRequestResult(approval=self.catalog.get_approval(approval.approval_id), replayed=replayed)
 
     def _subject_digest(
         self,

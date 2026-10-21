@@ -17,6 +17,7 @@ from bioadapt_schemas.enums import (
     UsageScope,
 )
 from bioadapt_schemas.orchestration import Approval
+from bioadapt_schemas.thresholds import Thresholds
 from bioadapt_storage import REUSABLE_SCOPES, Catalog, ConcurrentWriteError, ScopeError, lint
 from storage_factories import (
     NOW,
@@ -80,6 +81,18 @@ class TestSessionScope:
         assert loaded.project_id == PROJECT_ID
         assert loaded.thresholds.rare_share_max == 0.01
         assert loaded.created_at == NOW
+
+    def test_replacing_the_cut_set_moves_nothing_else_in_the_registration(self, catalog):
+        catalog.update_project_thresholds(
+            Thresholds(version="v1-measured", confirmed=True, rare_share_max=0.005)
+        )
+        stored = catalog.get_project()
+        assert (stored.thresholds.version, stored.thresholds.confirmed) == ("v1-measured", True)
+        assert stored.thresholds.rare_share_max == 0.005
+        registered = project()
+        assert stored.study_goal == registered.study_goal
+        assert stored.privacy_tier is registered.privacy_tier
+        assert stored.created_by == registered.created_by
 
 
 class TestAssets:
@@ -528,6 +541,38 @@ class TestApprovalWrites:
                 read_by=self.PI,
             )
         assert catalog.get_approval(gate.approval_id).decision_reason == "first"
+
+    def test_a_gate_is_recognised_as_opened_before_anything_is_written_to_it(self, catalog):
+        catalog.set_scope(PROJECT_ID)
+        assert catalog.approval_exists("apr_cas_01") is False
+        gate = self._gate(catalog)
+        assert catalog.approval_exists(gate.approval_id) is True
+
+        #: The second ask carries a different requester and holder, but it is the same subject: the row
+        #: a person is accountable to stays the row they answer (§9.2).
+        catalog.record_approval(
+            Approval(
+                approval_id=gate.approval_id,
+                run_id=RUN_ID,
+                kind=ApprovalKind.PLAN,
+                subject_digest=SHA,
+                requested_by="user_analyst_02",
+                assigned_to=self.DEPUTY,
+                requested_at=NOW,
+                sla_at=NOW + timedelta(days=3),
+            )
+        )
+        stored = catalog.get_approval(gate.approval_id)
+        assert (stored.state, stored.requested_by, stored.assigned_to) == (
+            ApprovalState.PENDING,
+            "user_analyst_01",
+            self.PI,
+        )
+
+    def test_another_projects_gate_is_not_this_projects_gate(self, catalog):
+        gate = self._gate(catalog)
+        catalog.set_scope(OTHER_PROJECT_ID)
+        assert catalog.approval_exists(gate.approval_id) is False
 
 
 def evidence_invocation():

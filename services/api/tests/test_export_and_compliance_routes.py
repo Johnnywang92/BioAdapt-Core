@@ -7,6 +7,7 @@ from bioadapt_policies.access import MAX_PRESIGNED_TTL_SECONDS, Role
 from bioadapt_policies.egress import FieldCategory
 from bioadapt_schemas.enums import PrivacyTier, RetentionClass
 from bioadapt_schemas.errors import ErrorClass
+from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS
 from bioadapt_storage.traces import TraceRecord
 from bioadapt_api.routes_data import object_key_for
 from conftest import (
@@ -17,6 +18,7 @@ from conftest import (
     HGR_PROJECT_ID,
     LOCAL_ENDPOINT,
     LOCAL_PROJECT_ID,
+    ATTESTED_CUTS,
     NOW,
     PI,
     PROJECT_ID,
@@ -152,6 +154,33 @@ def test_a_role_without_export_rights_cannot_queue_one(client, auth):
         headers={**auth(ANALYST, [Role.ANALYST]), "Idempotency-Key": "exp-key-6"},
     )
     assert response.status_code == 403
+
+
+def test_an_export_is_not_queued_over_a_cut_set_no_person_measured(client, auth, catalog):
+    """§1.5: the export is where a finding leaves the platform, so it is the second conclusion exit.
+
+    The refusal has to land before a job row exists: an export queued against the appendix C1 placeholders
+    would look like a measurement to whoever picked it up, and the placeholder numbers would be cited in
+    whatever the worker builds from them.
+    """
+    catalog.update_project_thresholds(DEFAULT_THRESHOLDS)
+    refused = client.post(
+        f"{BASE}/exports",
+        json={"kind": "tables"},
+        headers={**auth(PI, [Role.PRINCIPAL_INVESTIGATOR]), "Idempotency-Key": "exp-unmeasured"},
+    )
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["class"] == str(ErrorClass.POLICY_BLOCKED)
+    assert "v0-unconfirmed" in refused.json()["message"]
+    assert client.get(f"{BASE}/exports", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR])).json()["items"] == []
+
+    catalog.update_project_thresholds(ATTESTED_CUTS)
+    queued = client.post(
+        f"{BASE}/exports",
+        json={"kind": "tables"},
+        headers={**auth(PI, [Role.PRINCIPAL_INVESTIGATOR]), "Idempotency-Key": "exp-measured"},
+    )
+    assert queued.status_code == 202, queued.text
 
 
 def test_polling_a_running_export_offers_no_download(client, auth, seeded):

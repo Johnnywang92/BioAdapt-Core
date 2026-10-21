@@ -143,7 +143,7 @@ def read_alignment(candidate_id: str, session: SessionDep, page: Page = Depends(
     """Section 5.6: the history is reported against the thresholds in force, so a reclassification is visible."""
     session.enforce(Action.RUN_READ, candidate_id, "candidate_set")
     candidate = _get_candidate(session, candidate_id)
-    thresholds = session.state.card_thresholds
+    thresholds = session.thresholds
     history = [
         {
             **record.model_dump(mode="json"),
@@ -266,9 +266,7 @@ def read_expert_queue(
     session.enforce(Action.RUN_READ, f"{run_id}:card_queue", "evidence_card_collection")
     drafts = session.evidence_cards(run_id).drafts()
     asked = [item for item in (client_ask or "").split(",") if item.strip()]
-    queue = build_queue(
-        drafts, client_ask=asked, thresholds=session.state.card_thresholds, limit=limit
-    )
+    queue = build_queue(drafts, client_ask=asked, thresholds=session.thresholds, limit=limit)
     return {"run_id": run_id, "drafted": len(drafts), **queue.as_dict()}
 
 
@@ -384,6 +382,10 @@ def sign_off_card(card_id: str, body: SignOffRequest, session: SessionDep) -> di
     authors = list(dict.fromkeys(_conclusion_authors(session, card)))
     for author in authors or [None]:
         session.enforce(Action.CARD_SIGN_OFF, card_id, "evidence_card", attributes={"authored_by": author})
+    #: Attaching a conclusion to the record needs a measured cut set (§1.5); withdrawing one does not,
+    #: so the gate only closes on the way in.
+    if body.sign_off is not SignOff.NOT_SIGNED:
+        session.require_measured_cuts(Action.CARD_SIGN_OFF, card_id)
     if body.sign_off is SignOff.NOT_SIGNED and card.sign_off is not SignOff.NOT_SIGNED and not body.reason:
         raise invalid("reason", "withdrawing a sign-off has to record why")
     updates: dict[str, Any] = {"sign_off": body.sign_off}

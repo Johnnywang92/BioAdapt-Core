@@ -2,11 +2,20 @@
 
 import hashlib
 
+import pytest
 from bioadapt_policies.access import MAX_PRESIGNED_TTL_SECONDS, Role
 from bioadapt_schemas.enums import PrivacyTier, UsageScope
 from bioadapt_schemas.errors import ErrorClass
+from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS
 from bioadapt_storage.objectstore import BUCKET, object_key
-from conftest import ANALYST, PI, OTHER_PROJECT_ID, PROJECT_ID, asset, other_asset, plan, project
+from conftest import ANALYST, ATTESTED_CUTS, OTHER_PROJECT_ID, PI, PROJECT_ID, SERVICE, asset, other_asset, plan, project
+
+
+@pytest.fixture(autouse=True)
+def stage_0_cuts(catalog):
+    """Every test here is about the confirmation act, so the project starts in stage 0: un-attested cuts."""
+    catalog.set_scope(PROJECT_ID).update_project_thresholds(DEFAULT_THRESHOLDS)
+    return catalog.get_project().thresholds
 
 
 def _declaration(**overrides):
@@ -29,6 +38,102 @@ def test_project_creation_echoes_the_tier_and_is_readable(client, auth):
     read = client.get(f"/v1/projects/{new_project}", headers=headers)
     assert read.status_code == 200
     assert read.json()["project_id"] == new_project
+    #: A registration is not a confirmation: the project it creates judges against un-attested cuts (§1.5).
+    assert read.json()["thresholds"]["confirmed"] is False
+
+
+def test_a_registration_cannot_attest_its_own_cut_set(client, auth, catalog):
+    """§1.5: otherwise the request that opens a project would also open its conclusion exit."""
+    self_attested = project("prj_selfattested", thresholds=ATTESTED_CUTS).model_dump(mode="json")
+    response = client.post(
+        "/v1/projects",
+        json=self_attested,
+        headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR], project_ids=["prj_selfattested"]),
+    )
+    assert response.status_code == 400
+    assert response.json()["field"] == "thresholds.confirmed"
+    with pytest.raises(LookupError):
+        catalog.set_scope("prj_selfattested").get_project()
+
+
+#: Appendix C1: a confirmation re-states every §1.5 number, so this is what the request body looks like.
+MEASURED = "acme-2026-10-baseline"
+
+
+def _cut_set(**overrides) -> dict:
+    stated = DEFAULT_THRESHOLDS.model_dump(mode="json")
+    stated.pop("confirmed")
+    stated["version"] = MEASURED
+    stated.update(overrides)
+    return stated
+
+
+MEASURED_RATIONALE = "counted the candidate distribution of three past projects"
+
+
+def _confirm(client, auth, *, headers=None, thresholds=None, rationale=MEASURED_RATIONALE):
+    return client.post(
+        f"/v1/projects/{PROJECT_ID}/thresholds/confirm",
+        json={"thresholds": _cut_set() if thresholds is None else thresholds, "rationale": rationale},
+        headers=headers or auth(PI, [Role.PRINCIPAL_INVESTIGATOR], amr=["totp"]),
+    )
+
+
+def _confirmations(catalog) -> list[dict]:
+    """Only the attestation rows: an allowed decision is audited under the same action too."""
+    rows = catalog.audit_entries(action="thresholds:confirm", limit=20)
+    return [row for row in rows if "to_version" in row["details"]]
+
+
+def test_a_confirmation_states_the_measured_cuts_and_lands_on_the_project(client, auth, catalog):
+    response = _confirm(client, auth)
+    assert response.status_code == 200, response.text
+    stored = response.json()["thresholds"]
+    assert (stored["version"], stored["confirmed"]) == (MEASURED, True)
+    assert catalog.get_project().thresholds.version == MEASURED
+    read = client.get(f"/v1/projects/{PROJECT_ID}", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]))
+    assert read.json()["thresholds"]["confirmed"] is True
+    assert [row["subject_id"] for row in _confirmations(catalog)] == [PI]
+    assert _confirmations(catalog)[0]["details"] == {
+        "from_version": "v0-unconfirmed",
+        "to_version": MEASURED,
+        "rationale": MEASURED_RATIONALE,
+    }
+
+
+def test_confirming_a_cut_set_is_a_human_act_with_a_second_factor(client, auth):
+    no_mfa = _confirm(client, auth, headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]))
+    assert no_mfa.status_code == 403
+    assert "second factor" in no_mfa.json()["message"]
+    analyst = _confirm(client, auth, headers=auth(ANALYST, [Role.ANALYST], amr=["totp"]))
+    assert analyst.status_code == 403
+    assert "thresholds:confirm" in analyst.json()["message"]
+    machine = _confirm(client, auth, headers=auth(SERVICE, [Role.SERVICE_AGENT], service=True, amr=["totp"]))
+    assert machine.status_code == 403
+    assert "human" in machine.json()["message"]
+
+
+def test_a_confirmation_that_leaves_a_placeholder_out_or_attests_itself_is_refused(client, auth, catalog):
+    partial = _cut_set()
+    partial.pop("rare_min_donors")
+    response = _confirm(client, auth, thresholds=partial)
+    assert response.status_code == 400
+    assert response.json()["field"] == "thresholds"
+    assert "rare_min_donors" in response.json()["message"]
+
+    attested = _confirm(client, auth, thresholds=_cut_set(confirmed=True))
+    assert attested.status_code == 400
+    assert attested.json()["field"] == "thresholds.confirmed"
+    assert catalog.get_project().thresholds.confirmed is False
+
+
+def test_the_same_cut_set_is_not_confirmed_twice(client, auth, catalog):
+    assert _confirm(client, auth).status_code == 200
+    again = _confirm(client, auth)
+    assert again.status_code == 409
+    assert "already the one in force" in again.json()["message"]
+    #: The refusal is the point: a re-stated version does not silently re-file the attestation.
+    assert len(_confirmations(catalog)) == 1
 
 
 def test_upload_handout_clamps_the_ttl_and_stays_inside_the_project_prefix(client, auth):

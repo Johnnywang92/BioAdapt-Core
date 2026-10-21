@@ -23,6 +23,8 @@ GLOBAL_SCOPE = "*"
 class Action(StrEnum):
     PROJECT_READ = "project:read"
     PROJECT_WRITE = "project:write"
+    #: Section 1.5 + appendix C1: replacing a project's stage-0 placeholder cuts with measured ones.
+    THRESHOLDS_CONFIRM = "thresholds:confirm"
     RUN_LAUNCH = "run:launch"
     RUN_READ = "run:read"
     RUN_CANCEL = "run:cancel"
@@ -81,6 +83,7 @@ ROLE_GRANTS: dict[Role, frozenset[Action]] = {
         {
             Action.PROJECT_READ,
             Action.PROJECT_WRITE,
+            Action.THRESHOLDS_CONFIRM,
             Action.RUN_LAUNCH,
             Action.RUN_READ,
             Action.RUN_CANCEL,
@@ -164,6 +167,8 @@ HUMAN_ONLY_ACTIONS = frozenset(
         Action.ROLE_GRANT,
         Action.POLICY_WRITE,
         Action.CASE_LIBRARY_WRITE,
+        #: What the confirmed flag unlocks is the conclusion exit, so it is set by a person or not at all.
+        Action.THRESHOLDS_CONFIRM,
     }
 )
 
@@ -177,6 +182,7 @@ MFA_REQUIRED_ACTIONS = frozenset(
         Action.ROLE_GRANT,
         Action.POLICY_WRITE,
         Action.TRUTH_FREEZE,
+        Action.THRESHOLDS_CONFIRM,
     }
 )
 
