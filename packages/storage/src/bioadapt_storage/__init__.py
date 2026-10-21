@@ -1,5 +1,5 @@
 from . import catalog, ddl, objectstore, schema, traces
-from .catalog import Catalog, REUSABLE_SCOPES, ScopeError
+from .catalog import Catalog, ConcurrentWriteError, REUSABLE_SCOPES, ScopeError
 from .ddl import (
     MIGRATION_NAME,
     migration_drift,
@@ -34,6 +34,7 @@ __all__ = [
     "BUCKET",
     "Catalog",
     "Col",
+    "ConcurrentWriteError",
     "DeletionCertificate",
     "EPHEMERAL_TTL_DAYS",
     "GcPlan",

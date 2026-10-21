@@ -265,6 +265,71 @@ def test_an_approval_for_a_different_purpose_does_not_unlock_egress(client, auth
     assert response.status_code == 403
 
 
+def test_an_approval_window_is_checked_where_it_is_written(client, auth, catalog):
+    """Section 11.2: an inverted window must not become somebody else's 400 further down the line."""
+    response = client.post(
+        f"{BASE}/egress/approvals",
+        json={
+            "requester_id": PI,
+            "purpose": "a window that ends before it starts",
+            "approved_on": str(NOW.date()),
+            "expires_on": str((NOW - timedelta(days=1)).date()),
+        },
+        headers=auth(COMPLIANCE, [Role.COMPLIANCE_OFFICER], amr=["totp"]),
+    )
+    assert response.status_code == 400
+    assert response.json()["field"] == "expires_on"
+    #: The write that failed left nothing behind: a later request cannot cite an approval that was
+    #: never granted, so it fails for the reason it really has - no approval - not for a broken row.
+    blocked = _egress(client, auth, purpose="a window that ends before it starts", fields=[_aggregate("stats.group.mean")])
+    assert blocked.status_code == 403
+    assert "field-scoped approval" in blocked.json()["message"]
+
+
+def test_a_decision_is_readable_by_its_id_whichever_way_it_went(client, auth):
+    """Section 11.5: the verdict is an indexed fact, so a refusal can be quoted back by id."""
+    allowed = _egress(
+        client,
+        auth,
+        project_id=PUBLIC_PROJECT_ID,
+        purpose="readable verdict",
+        fields=[{"path": "task.goal", "category": str(FieldCategory.TASK_SEMANTICS)}, _aggregate("stats.group.mean")],
+    )
+    assert allowed.status_code == 200
+    public = auth(COMPLIANCE, [Role.COMPLIANCE_OFFICER], project_ids=[PUBLIC_PROJECT_ID])
+    body = client.get(
+        f"/v1/projects/{PUBLIC_PROJECT_ID}/egress/decisions/{allowed.json()['decision_id']}", headers=public
+    ).json()
+    assert body["allowed"] is True
+    assert body["decision"]["allowed_paths"] == ["task.goal", "stats.group.mean"]
+    assert body["request"]["purpose"] == "readable verdict"
+
+    refused = _egress(client, auth, purpose="without an approval", fields=[_aggregate("stats.group.mean")])
+    assert refused.status_code == 403
+    denied_id = DECISION_ID.search(refused.json()["message"]).group(1)
+    denied = client.get(f"{BASE}/egress/decisions/{denied_id}", headers=auth(COMPLIANCE, [Role.COMPLIANCE_OFFICER])).json()
+    assert denied["allowed"] is False
+    assert denied["decision_id"] == denied_id
+    assert any("field-scoped approval" in reason for reason in denied["decision"]["blocked_reasons"])
+
+
+def test_a_decision_read_needs_the_audit_role_and_the_right_id(client, auth):
+    granted = _egress(client, auth, project_id=PUBLIC_PROJECT_ID, purpose="scoped read")
+    decision_id = granted.json()["decision_id"]
+    scoped = f"/v1/projects/{PUBLIC_PROJECT_ID}/egress/decisions"
+    missing = client.get(
+        f"{scoped}/as_never_decided", headers=auth(COMPLIANCE, [Role.COMPLIANCE_OFFICER], project_ids=[PUBLIC_PROJECT_ID])
+    )
+    assert missing.status_code == 404
+    assert missing.json()["class"] == str(ErrorClass.NOT_FOUND)
+    analyst = client.get(
+        f"{scoped}/{decision_id}",
+        headers=auth(ANALYST, [Role.ANALYST], project_ids=[PUBLIC_PROJECT_ID]),
+    )
+    assert analyst.status_code == 403
+    assert "audit:read" in analyst.json()["message"]
+
+
 def test_a_denied_egress_is_still_written_to_the_decision_and_audit_log(client, auth, catalog):
     response = _egress(
         client,
@@ -473,8 +538,12 @@ def test_a_trace_is_not_readable_across_projects(client, auth, state):
 
 
 def test_the_access_log_line_carries_only_the_pinned_fields(client, auth, state):
-    client.get(f"{BASE}/candidates", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]))
-    line = state.log_sink.events[-1]
+    response = client.get(f"{BASE}/candidates", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]))
+    #: The sink is shared by every request in the test session, so the line this request owns is the one
+    #: carrying the trace id it was answered with - not whatever happened to be appended last.
+    lines = [event for event in state.log_sink.events if event["trace_id"] == response.headers["X-Trace-Id"]]
+    assert len(lines) == 1
+    line = lines[0]
     assert set(line) <= {
         "level",
         "timestamp",

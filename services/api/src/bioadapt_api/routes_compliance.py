@@ -126,6 +126,11 @@ def read_egress_decision(decision_id: str, session: SessionDep) -> dict:
 @router.post("/projects/{project_id}/egress/approvals", status_code=201)
 def record_approval(body: ApprovalRequest, session: SessionDep) -> dict:
     """Section 13.1: the approver must be a different, second-factored human than the requester."""
+    #: The window is checked where it is written. Stored unchecked, an approval that expires before it
+    #: starts answers 201 to the person who signed it and fails later, as a bare 400, for whoever cites
+    #: it - and the row would stay in the index in the meantime.
+    if body.expires_on <= body.approved_on:
+        raise invalid("expires_on", "an approval window must end after the day it was granted on")
     session.enforce(
         Action.EGRESS_APPROVE,
         f"{session.project_id}:{body.purpose}",

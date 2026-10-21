@@ -1,9 +1,12 @@
 import sqlite3
+from datetime import timedelta
 
 import pytest
 
 from bioadapt_schemas.enums import (
     AnnotationStatus,
+    ApprovalKind,
+    ApprovalState,
     AssetRole,
     FinalStatus,
     HypothesisType,
@@ -13,7 +16,8 @@ from bioadapt_schemas.enums import (
     RunState,
     UsageScope,
 )
-from bioadapt_storage import REUSABLE_SCOPES, Catalog, ScopeError, lint
+from bioadapt_schemas.orchestration import Approval
+from bioadapt_storage import REUSABLE_SCOPES, Catalog, ConcurrentWriteError, ScopeError, lint
 from storage_factories import (
     NOW,
     OTHER_PROJECT_ID,
@@ -446,6 +450,84 @@ class TestPlansIdempotencyExports:
                 export_id=f"exp_{index:04d}", kind="figure_bundle", filters={}, requested_by="user_analyst_01"
             )
         assert [e["export_id"] for e in catalog.list_exports(limit=2)] == ["exp_0000", "exp_0001"]
+
+
+class TestApprovalWrites:
+    """Section 9.2: a gate is closed from what the caller read, and a move under it loses the write."""
+
+    PI = "user_pi_01"
+    DEPUTY = "user_deputy_01"
+
+    def _gate(self, catalog):
+        catalog.set_scope(PROJECT_ID)
+        catalog.record_approval(
+            Approval(
+                approval_id="apr_cas_01",
+                run_id=RUN_ID,
+                kind=ApprovalKind.PLAN,
+                subject_digest=SHA,
+                requested_by="user_analyst_01",
+                assigned_to=self.PI,
+                requested_at=NOW,
+                sla_at=NOW + timedelta(days=3),
+            )
+        )
+        return catalog.get_approval("apr_cas_01")
+
+    def test_a_delegate_that_beats_a_decision_owners_it(self, catalog):
+        gate = self._gate(catalog)
+        #: Two requests read the same pending gate. The delegation lands first, so the decision - made by
+        #: the person who no longer holds it - is refused instead of quietly overwriting the delegation.
+        catalog.delegate_approval(
+            gate.approval_id, from_subject=gate.assigned_to, to_subject=self.DEPUTY, at=NOW, read_by=gate.assigned_to
+        )
+        with pytest.raises(ConcurrentWriteError, match="no longer held by user_pi_01"):
+            catalog.decide_approval(
+                gate.approval_id,
+                state=str(ApprovalState.APPROVED),
+                decided_by=self.PI,
+                decided_at=NOW,
+                reason="I still think it is mine",
+                read_by=gate.assigned_to,
+            )
+        moved = catalog.get_approval(gate.approval_id)
+        assert (moved.state, moved.assigned_to, moved.decided_by) == (ApprovalState.PENDING, self.DEPUTY, None)
+
+        #: The gate is not lost: the delegate it was handed to can still answer it.
+        decided = catalog.decide_approval(
+            gate.approval_id,
+            state=str(ApprovalState.APPROVED),
+            decided_by=self.DEPUTY,
+            decided_at=NOW,
+            reason="cleared",
+            read_by=self.DEPUTY,
+        )
+        assert (decided.state, decided.decided_by, decided.delegated_from) == (
+            ApprovalState.APPROVED,
+            self.DEPUTY,
+            self.PI,
+        )
+
+    def test_a_gate_that_already_closed_is_not_a_race(self, catalog):
+        gate = self._gate(catalog)
+        catalog.decide_approval(
+            gate.approval_id,
+            state=str(ApprovalState.APPROVED),
+            decided_by=self.PI,
+            decided_at=NOW,
+            reason="first",
+            read_by=self.PI,
+        )
+        with pytest.raises(LookupError, match="no pending approval"):
+            catalog.decide_approval(
+                gate.approval_id,
+                state=str(ApprovalState.REJECTED),
+                decided_by=self.PI,
+                decided_at=NOW,
+                reason="second",
+                read_by=self.PI,
+            )
+        assert catalog.get_approval(gate.approval_id).decision_reason == "first"
 
 
 def evidence_invocation():

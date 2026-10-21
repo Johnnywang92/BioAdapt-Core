@@ -201,13 +201,18 @@ class Orchestrator:
             decided_by=actor.subject_id,
             decided_at=self.clock(),
             reason=reason,
+            read_by=approval.assigned_to,
         )
 
     def delegate_approval(self, approval_id: str, *, actor: ActorRef, to_subject: str) -> Approval:
         approval = self.catalog.get_approval(approval_id)
         assert_delegatable(approval, actor_id=actor.subject_id, actor_kind=actor.kind, to_subject=to_subject)
         return self.catalog.delegate_approval(
-            approval_id, from_subject=actor.subject_id, to_subject=to_subject, at=self.clock()
+            approval_id,
+            from_subject=actor.subject_id,
+            to_subject=to_subject,
+            at=self.clock(),
+            read_by=approval.assigned_to,
         )
 
     def approval_of(self, approval_id: str) -> Approval:

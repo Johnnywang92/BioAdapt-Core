@@ -299,10 +299,8 @@ def test_a_draft_is_filed_under_the_annotation_version_the_caller_names(client, 
         headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]),
     )
     assert response.status_code == 200
-    row = catalog.conn.execute(
-        "select annotation_version_id from evidence_card where card_id = ?", (response.json()["cards"][0]["card_id"],)
-    ).fetchone()
-    assert row["annotation_version_id"] == "ann_0001"
+    for item in response.json()["cards"]:
+        assert catalog.set_scope(PROJECT_ID).card_annotation_version(item["card_id"]) == "ann_0001"
 
 
 def test_drafting_the_same_run_twice_files_no_second_card(client, auth, catalog, drafted):
@@ -311,7 +309,11 @@ def test_drafting_the_same_run_twice_files_no_second_card(client, auth, catalog,
     again = client.post(f"{DRAFT_BASE}/cards/draft", json={}, headers=headers)
     assert again.status_code == 200
     assert again.json() == first.json()
-    assert catalog.conn.execute("select count(*) as n from evidence_card").fetchone()["n"] == len(first.json()["cards"])
+    #: The queue counts what the run has filed, through the same read an expert gets: a second draft of the
+    #: same run would show up here as a longer list, not only as an extra row somewhere in the index.
+    queue = client.get(f"{DRAFT_BASE}/cards/queue", headers=headers).json()
+    assert queue["run_id"] == DRAFT_RUN
+    assert queue["drafted"] == len(first.json()["cards"])
 
 
 def test_drafting_records_which_cards_it_filed_in_the_audit_trail(client, auth, catalog, drafted):

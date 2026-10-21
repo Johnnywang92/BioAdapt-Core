@@ -313,3 +313,41 @@ def test_a_card_whose_run_cannot_be_resolved_still_needs_the_sign_off_role(clien
     assert response.status_code == 403
     assert "card:sign_off" in response.json()["message"]
     assert catalog.set_scope(PROJECT_ID).get_card("card_orphan").sign_off is SignOff.NOT_SIGNED
+
+
+def test_a_card_with_no_resolvable_provenance_is_signed_on_the_role_alone(client, auth, catalog, seeded):
+    """Section 13.1, and the boundary of what it can say: with no author list, only the role test is left.
+
+    The separation-of-duties rule reads the people who produced the conclusion. When a card's run row is
+    gone, that list is empty, so the fallback call in the route carries the role test and nothing more -
+    a DOMAIN_EXPERT who is not on the list is not on it, and cannot be proved to be. This pins the
+    behaviour rather than wishing it: the fail-closed alternative (refuse any card whose provenance cannot
+    be resolved) is written up in 审查报告 section 四 ⑨ as a deliberate choice, not an oversight.
+    """
+    catalog.set_scope(PROJECT_ID).record_card(card(card_id="card_orphan_2", run_id="run_gone"))
+    signed = client.post(
+        f"{BASE}/cards/card_orphan_2/sign_off",
+        json={"sign_off": "full"},
+        headers=auth(EXPERT, [Role.DOMAIN_EXPERT]),
+    )
+    assert signed.status_code == 200, signed.text
+    assert catalog.set_scope(PROJECT_ID).get_card("card_orphan_2").sign_off is SignOff.FULL
+
+    #: What is *not* waived is the person: an agent still cannot sign, and the analyst who is named as the
+    #: card's reviewer is still barred by the author test that the fallback does carry.
+    refused = client.post(
+        f"{BASE}/cards/card_orphan_2/sign_off",
+        json={"sign_off": "full"},
+        headers=auth(SERVICE, [Role.SERVICE_AGENT], service=True),
+    )
+    assert refused.status_code == 403
+    assert "human" in refused.json()["message"]
+    catalog.set_scope(PROJECT_ID).record_card(card(card_id="card_orphan_3", run_id="run_gone", reviewer_id=EXPERT))
+    own = client.post(
+        f"{BASE}/cards/card_orphan_3/sign_off",
+        json={"sign_off": "full"},
+        headers=auth(EXPERT, [Role.DOMAIN_EXPERT]),
+    )
+    assert own.status_code == 403
+    assert "own conclusion" in own.json()["message"]
+    assert catalog.set_scope(PROJECT_ID).get_card("card_orphan_3").sign_off is SignOff.NOT_SIGNED

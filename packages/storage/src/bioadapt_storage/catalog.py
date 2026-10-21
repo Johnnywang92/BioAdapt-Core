@@ -44,6 +44,12 @@ class ScopeError(RuntimeError):
     pass
 
 
+#: A compare-and-set that found the row had already moved. The gate exists and is still open; this write
+#: simply is not the one that gets to close it.
+class ConcurrentWriteError(RuntimeError):
+    pass
+
+
 def _jsonable(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
@@ -691,29 +697,65 @@ class Catalog:
         )
         return [self._approval(row) for row in rows]
 
-    def _mutate_approval(self, approval_id: str, sets: dict[str, Any], *, only_pending: bool = True) -> Approval:
+    def _mutate_approval(
+        self, approval_id: str, sets: dict[str, Any], *, read_by: Optional[str] = None, only_pending: bool = True
+    ) -> Approval:
+        """Compare-and-set on what the caller read: pending, and still held by the person they saw hold it.
+
+        Section 9.2: a decision and a delegation are each a read followed by a write, so without restating
+        the holder an interleaving lets a person who has already handed the gate away record the decision
+        anyway - the row would say they decided it while the delegate finds it closed by someone else.
+        """
         guards = ["project_id = ?", "approval_id = ?"]
         if only_pending:
             guards.append("state = 'pending'")
-        clause = ", ".join(f'"{name}" = ?' for name in sets)
         params = [self._encode("approval", name, value) for name, value in sets.items()]
         params.extend([self.scope, approval_id])
+        if read_by is not None:
+            guards.append("assigned_to = ?")
+            params.append(read_by)
+        clause = ", ".join(f'"{name}" = ?' for name in sets)
         cur = self.conn.execute(f'update approval set {clause} where {" and ".join(guards)}', params)
-        if cur.rowcount != 1:
-            raise LookupError(f"no pending approval {approval_id} in project {self.scope}")
-        return self.get_approval(approval_id)
+        if cur.rowcount == 1:
+            return self.get_approval(approval_id)
+        if read_by is not None and self.conn.execute(
+            "select 1 from approval where project_id = ? and approval_id = ? and state = 'pending'",
+            (self.scope, approval_id),
+        ).fetchone():
+            raise ConcurrentWriteError(
+                f"approval {approval_id} is no longer held by {read_by}; it moved while this write was in flight"
+            )
+        raise LookupError(f"no pending approval {approval_id} in project {self.scope}")
 
     def decide_approval(
-        self, approval_id: str, *, state: str, decided_by: str, decided_at: datetime, reason: str
+        self,
+        approval_id: str,
+        *,
+        state: str,
+        decided_by: str,
+        decided_at: datetime,
+        reason: str,
+        read_by: Optional[str] = None,
     ) -> Approval:
         return self._mutate_approval(
             approval_id,
             {"state": state, "decided_by": decided_by, "decided_at": decided_at, "decision_reason": reason},
+            read_by=read_by,
         )
 
-    def delegate_approval(self, approval_id: str, *, from_subject: str, to_subject: str, at: datetime) -> Approval:
+    def delegate_approval(
+        self,
+        approval_id: str,
+        *,
+        from_subject: str,
+        to_subject: str,
+        at: datetime,
+        read_by: Optional[str] = None,
+    ) -> Approval:
         return self._mutate_approval(
-            approval_id, {"assigned_to": to_subject, "delegated_from": from_subject, "delegated_at": at}
+            approval_id,
+            {"assigned_to": to_subject, "delegated_from": from_subject, "delegated_at": at},
+            read_by=from_subject if read_by is None else read_by,
         )
 
     def record_model_invocation(self, invocation: ModelInvocation, *, run_id: str) -> str:
@@ -879,6 +921,13 @@ class Catalog:
             "select final_status from evidence_card where project_id = ? and card_id = ?", (self.scope, card_id)
         ).fetchone()
         return row["final_status"] if row else None
+
+    def card_annotation_version(self, card_id: str) -> Optional[str]:
+        row = self.conn.execute(
+            "select annotation_version_id from evidence_card where project_id = ? and card_id = ?",
+            (self.scope, card_id),
+        ).fetchone()
+        return row["annotation_version_id"] if row else None
 
     # ------------------------------------------------------------------ idempotency and exports
 

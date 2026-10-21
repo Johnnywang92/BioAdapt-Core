@@ -20,7 +20,7 @@ from bioadapt_evidence.errors import EvidenceError
 from bioadapt_orchestrator.errors import OrchestrationError
 from bioadapt_schemas.errors import ApiError, ErrorClass
 from bioadapt_schemas.gates import GateViolation
-from bioadapt_storage.catalog import ScopeError
+from bioadapt_storage.catalog import ConcurrentWriteError, ScopeError
 
 from .observability import emit
 
@@ -135,6 +135,10 @@ def classify(exc: Exception) -> ApiProblem:
         return problem(403, ErrorClass.POLICY_BLOCKED, "permission_denied", str(exc))
     if isinstance(exc, LookupError):
         return not_found("resource", str(exc))
+    if isinstance(exc, ConcurrentWriteError):
+        #: The gate is still open and still pending - this write just was not the one that moved it, so
+        #: the caller re-reads and replays against what the gate says now.
+        return problem(409, ErrorClass.CONFLICT, "concurrent_write", str(exc), retryable=True)
     if isinstance(exc, sqlite3.IntegrityError):
         return conflict(str(exc))
     if isinstance(exc, ValueError):
@@ -152,6 +156,7 @@ def register_handlers(app: FastAPI) -> None:
     @app.exception_handler(LookupError)
     @app.exception_handler(PermissionError)
     @app.exception_handler(ScopeError)
+    @app.exception_handler(ConcurrentWriteError)
     @app.exception_handler(StarletteHTTPException)
     @app.exception_handler(sqlite3.IntegrityError)
     async def handled(request: Request, exc: Exception) -> JSONResponse:

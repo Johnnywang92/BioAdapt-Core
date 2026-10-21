@@ -2,9 +2,11 @@
 
 from datetime import timedelta
 
+from bioadapt_api.errors import classify, error_body
 from bioadapt_api.identity import Hs256Verifier, IdTokenClaims
 from bioadapt_policies.access import MAX_PAGE_SIZE, Role
 from bioadapt_schemas.errors import ErrorClass
+from bioadapt_storage.catalog import ConcurrentWriteError
 from conftest import ANALYST, AUD, ISS, NOW, OTHER_PROJECT_ID, PI, PROJECT_ID, SECRET
 
 
@@ -21,8 +23,18 @@ def test_a_tampered_signature_is_401(client, auth):
     headers = auth(PI, [Role.PRINCIPAL_INVESTIGATOR])
     token = headers["Authorization"].removeprefix("Bearer ")
     head, payload, _ = token.split(".")
-    client.get(f"/v1/projects/{PROJECT_ID}", headers={"Authorization": f"Bearer {head}.{payload}.AAAA"})
-    assert client.get(f"/v1/projects/{PROJECT_ID}", headers={"Authorization": f"Bearer {head}.{payload}"}).status_code == 401
+    #: A well-formed token whose payload was rewritten still carries three parts, so the signature
+    #: check is what stops it - and the answer has to say that, not merely differ from 200.
+    forged = client.get(f"/v1/projects/{PROJECT_ID}", headers={"Authorization": f"Bearer {head}.{payload}.AAAA"})
+    assert forged.status_code == 401
+    assert forged.json()["code"] == "unauthenticated"
+    assert "signature" in forged.json()["message"]
+
+    #: A token that is not a compact JWS at all fails on shape, before any key is touched.
+    truncated = client.get(f"/v1/projects/{PROJECT_ID}", headers={"Authorization": f"Bearer {head}.{payload}"})
+    assert truncated.status_code == 401
+    assert truncated.json()["code"] == "unauthenticated"
+    assert "compact JWS" in truncated.json()["message"]
 
 
 def test_an_expired_token_is_401(client, auth):
@@ -85,6 +97,15 @@ def test_a_rejected_body_names_the_offending_field(client, auth):
     body = response.json()
     assert body["class"] == str(ErrorClass.VALIDATION)
     assert body["field"]
+
+
+def test_a_gate_write_that_lost_the_race_is_a_retryable_conflict():
+    """§9.2: the write that arrived second is told the gate moved, not that the gate is missing."""
+    problem = classify(ConcurrentWriteError("approval apr_01 is no longer held by user_pi_01"))
+    assert problem.status_code == 409
+    body = error_body(problem.error, "trace_cas_01")
+    assert (body["code"], body["class"], body["retryable"]) == ("concurrent_write", str(ErrorClass.CONFLICT), True)
+    assert "no longer held by" in body["message"]
 
 
 def test_the_trace_id_is_reused_and_echoed_and_every_request_logs_one_line(client, auth, state):
