@@ -1,0 +1,20 @@
+# python environment and build artefacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# web app
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# local dev state - contains workbench bearer tokens
+.workbench/
+
+# os
+.DS_Store
