@@ -640,11 +640,13 @@ class WorkflowRunner:
         """Claim the one execution an ad-hoc node's grant is worth, and stop when it is not there to claim.
 
         Two ledgers answer, in order. The registry says a permission was admitted into this process at all
-        and is still inside its window; the catalog says whether the row the grant route wrote is still
-        unspent (§9.6). Only when both agree is the in-process copy consumed, so a second launch - or a
-        second run - is refused by the row rather than by a counter that died with the process that held it.
-        A registry grant with no row is the out-of-band channel: it can only ever be spent once by the
-        process that holds it, which is why a deployment builds its registry from the catalog.
+        and is still inside its window; the catalog says the row the grant route wrote exists for this very
+        run and node, and is still unspent (§9.6). Both have to agree, and the row is the one that outlives
+        the process: a permission a registry holds without a row behind it is the out-of-band channel, and
+        it buys nothing here. That is what makes "deployments hydrate the registry from the ledger" a rule
+        the engine enforces rather than a rule the README asks for.
+        A spent grant stays spent, so a second launch or a second run is refused by the row rather than by
+        a counter that died with the process that held it.
         """
         if node.tool_class is not ToolClass.PROJECT_ADHOC:
             return None
@@ -661,7 +663,14 @@ class WorkflowRunner:
         recorded = self.catalog.find_tool_grant(
             node.tool_name, node.tool_version, run_id=run_id, node_id=node.node_id
         )
-        if recorded is not None and self.catalog.spend_tool_grant(recorded.grant_id, at=self.clock()) is None:
+        if recorded is None:
+            return self._stop_for(
+                ErrorClass.POLICY_BLOCKED,
+                f"node {node.node_id} may not execute: this process holds a permission for "
+                f"{node.tool_name}@{node.tool_version} but the ledger has no grant row for "
+                f"{run_id}/{node.node_id}, and only a row written over a person's decision is an execution",
+            )
+        if self.catalog.spend_tool_grant(recorded.grant_id, at=self.clock()) is None:
             return self._stop_for(
                 ErrorClass.POLICY_BLOCKED,
                 f"node {node.node_id} may not execute: ad-hoc grant {recorded.grant_id} holds no unspent "

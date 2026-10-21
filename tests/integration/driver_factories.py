@@ -428,8 +428,8 @@ def hydrate(registry: ToolRegistry, catalog: Catalog) -> ToolRegistry:
     A spent or expired row is not admitted, so the permission a person granted a while ago cannot come
     back by way of a restart: what the ledger says is live is the whole of what the engine may run. The
     registry is the copy the compute plane works from, and this is the only supported way to fill its
-    ad-hoc side - the in-process ``grant()`` call that tests use stands in for a channel no deployment
-    has, which is why the ledger is consulted again at spend time.
+    ad-hoc side - the in-process ``grant()`` call that tests use stands for a channel no deployment has,
+    and the engine refuses to spend it without the row behind it.
     """
     for grant in catalog.list_tool_grants(live_only=True):
         registry.admit_grant(grant)
@@ -526,15 +526,6 @@ class Harness:
         )
         self.catalog.record_tool_grant(grant)
         return grant
-
-    def pin_registry_snapshot(self, run_id: Optional[str] = None) -> str:
-        """Section 4.1: a grant that lands after the manifest was written changes the registry it names."""
-        snapshot = self.registry.snapshot_id()
-        self.catalog.conn.execute(
-            "update run_manifest set tool_registry_snapshot = ? where project_id = ? and run_id = ?",
-            (snapshot, PROJECT_ID, run_id or self.run_id),
-        )
-        return snapshot
 
     def approve_plan(self, run_id: str, *, plan_version: str = "1") -> str:
         approval = self.journal.request_approval(

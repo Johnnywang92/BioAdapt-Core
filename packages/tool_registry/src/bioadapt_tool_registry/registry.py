@@ -192,6 +192,12 @@ class ToolRegistry:
             raise AdmissionError(f"{spec.tool_name} {spec.tool_version}: " + "; ".join(violations))
 
     def grant(self, spec: ToolSpec, approval: AdhocApproval) -> ToolSpec:
+        """Admit an ad-hoc permission into this process (§9.6).
+
+        This is the working copy, not the record: nothing here outlives the process, so the engine asks the
+        ledger again before it executes (§4.1). A deployment fills its registry from the grant rows and has
+        no reason to call this directly - ``admit_grant()`` is that path.
+        """
         key = _key(spec)
         if spec.tool_class is not ToolClass.PROJECT_ADHOC:
             raise AdmissionError("registered tools do not need an ad-hoc grant")
@@ -310,12 +316,20 @@ class ToolRegistry:
         return (name, version) in self._forbidden
 
     def snapshot_id(self) -> str:
+        """Section 4.1: the version of the registered tool set a run was approved against.
+
+        Ad-hoc grants are deliberately not part of it. A grant is issued over a run that already exists
+        (its route is run-scoped), so a snapshot that moved when one landed could never match the manifest
+        written before it: the check would refuse exactly the runs the approval exists to make executable.
+        What an ad-hoc node may run is pinned by its own row instead - the ledger keys it by run and node,
+        and ``AdhocToolGrant.spec_sha256`` pins the bytes a hydrated registry re-admits from it (§9.6).
+        """
         payload = {
             "specs": [
                 [name, version, spec.model_dump(mode="json", warnings=False)]
                 for (name, version), spec in sorted(self._specs.items())
+                if spec.tool_class is ToolClass.REGISTERED
             ],
-            "grants": [[name, version] for (name, version) in sorted(self._grants)],
             "forbidden": [f"{r.tool_name}@{r.tool_version}" for r in self._forbidden.values()],
         }
         return sha256_of_json(payload)

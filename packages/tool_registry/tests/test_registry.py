@@ -182,6 +182,15 @@ class TestPromotion:
         with pytest.raises(AdmissionError, match="assumptions are not documented"):
             registry.promote("local_marker_scan", "0.0.1", self.review())
 
+    def test_a_promoted_tool_moves_the_snapshot(self, registry):
+        """Promotion is the one ad-hoc event that joins the registered set a later run pins to (§4.1)."""
+        registry.grant(adhoc_spec(resources=ResourceProfile(
+            cpu=2, memory_mb=8192, max_minutes=60, measured_peak_memory_mb=7000, measured_on="run_prj_001_01"
+        )), approval())
+        before = registry.snapshot_id()
+        registry.promote("local_marker_scan", "0.0.1", self.review())
+        assert registry.snapshot_id() != before
+
 
 class TestRevocation:
     def revoke(self, registry):
@@ -240,3 +249,13 @@ class TestSnapshot:
             )
         )
         assert revoked.snapshot_id() != base.snapshot_id()
+
+    def test_an_adhoc_grant_leaves_the_snapshot_alone(self):
+        """§4.1: the snapshot is the registered tool set, because a grant always lands over a run whose
+        manifest was pinned first - moving it would make the approved run unexecutable (§9.6)."""
+        base = ToolRegistry()
+        base.register(complete_spec())
+        granted = ToolRegistry()
+        granted.register(complete_spec())
+        granted.grant(adhoc_spec(), approval())
+        assert granted.snapshot_id() == base.snapshot_id()

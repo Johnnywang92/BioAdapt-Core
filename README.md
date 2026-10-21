@@ -480,7 +480,9 @@ curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/js
 
 同一扇门重放同一份 spec → 200 + `Idempotency-Replayed: true`，台账仍只有一行；重放不同 spec → 409（第二次提交需要第二次决定）。读接口是 `GET …/runs/{id}/adhoc-grants`（分页，`?live_only=true` 滤掉已花与过期）和 `GET …/adhoc-grants/{grant_id}`，两者都只要 `approval:read`，跨项目读 404。审计写两行同一个 `resource_id`：`enforce` 的判定行与发放行（后者 details 带 `spec_sha256`、`requested_by`、`expires_at`）。
 
-一次性真正落在哪儿：runner 在 checkpoint 之后、执行之前，先问进程内的注册表，再对台账做一次 compare-and-set —— `UPDATE tool_grant SET spent_at = ? WHERE spent_at is null AND expires_at > ?`（[runner.py:639](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L639)、[catalog.py:841](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/storage/src/bioadapt_storage/catalog.py#L841)）。抢不到行就 `POLICY_BLOCKED`、一行产物都不写、`compute_minutes` 仍是 0，所以第二个 worker、第二次启动都花不掉同一份审批。引擎侧的注册表由 `list_tool_grants(live_only=True)` 水合（[driver_factories.py:425](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/driver_factories.py#L425) 是这条流程的可读实现）：已花或已过期的行不会被重新 admit，重启也就带不回一个已经用完的权限。
+一次性真正落在哪儿：runner 在 checkpoint 之后、执行之前问两道，**两道都得点头**（[runner.py:639](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L639)）。先是进程内的注册表：这份权限确实被 admit 进了本进程、还在窗口内、还没被花掉。再是台账：`find_tool_grant(run, node)` 必须**查得到这一行**，然后对它做 compare-and-set —— `UPDATE tool_grant SET spent_at = ? WHERE spent_at is null AND expires_at > ?`（[catalog.py:841](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/storage/src/bioadapt_storage/catalog.py#L841)）。查不到行、或抢不到行，都是 `POLICY_BLOCKED`（前者文案点名 `the ledger has no grant row for …`），一行产物都不写、`compute_minutes` 仍是 0。所以进程内 `ToolRegistry.grant()` 那条带外通道**到不了执行**：注册表里凭空多出来的权限买不到一次计算，"部署只用 `hydrate()` 构造注册表"从文档要求变成了引擎强制的规则。引擎侧的注册表由 `list_tool_grants(live_only=True)` 水合（[driver_factories.py:425](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/driver_factories.py#L425) 是这条流程的可读实现）：已花或已过期的行不会被重新 admit，重启也就带不回一个已经用完的权限。
+
+快照算的是什么：`ToolRegistry.snapshot_id()`（[registry.py:318](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/tool_registry/src/bioadapt_tool_registry/registry.py#L318)）只覆盖**已注册**的 ToolSpec 集合与禁用列表，ad-hoc 授予与它的 spec 不进快照。原因是发放路由的路径参数就是 run 与 node，门也是 run 级的——授予必然发生在 run 的 manifest 写完**之后**，把授予算进快照等于让 §4.1 的 preflight 恰好拒掉它本该放行的那个 run。ad-hoc 那一格的可复现举证改由台账行承担：`grant_id` 由 `(approval_id, tool, version, node)` 派生，`spec_sha256` 钉住引擎从行里重新 admit 的字节，还原时还会重跑一遍笼子。方案 §721 说的"每次正式运行记录 ToolSpec 集合版本"指的也正是部署的那套已注册工具；晋升（`promote()`）会让工具进这套，所以晋升确实会改变快照。
 
 ### 7.6 各写端点必填字段
 
@@ -591,7 +593,7 @@ app = create_app(ApiState(
 - **权限与审批状态不可由模型侧写路径触达**，只能经人工动作改变（§11.6）。服务账号永远不能决策审批门。
 - **未经确认的判据出不了结论**（§1.5/§14.4）：项目阈值 `confirmed` 为 false 时，签字与导出两个结论出口 403；打开它的 `thresholds:confirm` 是仅 PI 的人类动作且要求二次因子，请求体必须重述全部 24 个字段、`confirmed` 由平台置位。计算、起草、排队不受此门影响（附录 C1 要求阶段 0 先跑基线才能替换这些数）。
 - **预算是三条独立上限**：算力分钟、模型成本 USD、迭代次数。取计划与项目配额的逐轴较小值；任一轴耗尽即 `BUDGET_EXCEEDED`，模型成本不是算力分钟的注脚（§9.7）。
-- **ad-hoc 工具**只允许在非特权容器、只读输入、无网络、资源与时长配额下运行，且需要一次性 PI 审批。闭环已落地（批次六）：`tool:grant_adhoc` 只有 PI 角色持有、要求二次因子、要求发放人 ≠ 提交人，且必须由答那扇 `adhoc_tool` 门的人发出；笼子检查在发放时重算，`tool_grant` 行是一次性台账，引擎执行前用 CAS 抢它（见 7.5）。注册表只能从库水合，已花/过期的行带不回来。
+- **ad-hoc 工具**只允许在非特权容器、只读输入、无网络、资源与时长配额下运行，且需要一次性 PI 审批。闭环已落地（批次六）：`tool:grant_adhoc` 只有 PI 角色持有、要求二次因子、要求发放人 ≠ 提交人，且必须由答那扇 `adhoc_tool` 门的人发出；笼子检查在发放时重算，`tool_grant` 行是一次性台账，引擎执行前用 CAS 抢它（见 7.5）。注册表只能从库水合，已花/过期的行带不回来；执行前台账行**必须存在**，进程内自造的权限买不到一次计算（批次七把它从文档约束变成引擎强制）。
 - **不允许大模型自由生成任意 Shell 并直接在生产计算节点执行。**
 - **密钥不写入 Prompt、代码仓库、运行参数或日志。** `.workbench/` 与其中的 token 永不提交。
 - **注入防御**在 `tests/redteam/` 有对应门禁用例集；改 egress、prompt 组装、工具绑定后必须重跑。
@@ -600,10 +602,10 @@ app = create_app(ApiState(
 
 ## 12. 已知未完成项
 
-- **H1 已关闭，但留了三条相关缺口**（详见审查报告批次六的「遗留说明」）：
-  1. **工作台没有 ad-hoc 授予页**：`POST …/adhoc-grants` 只有 API 入口，PI 在界面上看不到「哪扇门已答、还没有发放」，也发不出这一枪。
-  2. **授予必须先于 manifest 钉快照**：`tool_grant` 行会改变注册表快照（`snapshot_id()` 含授权键），而 §4.1 的 `_preflight` 拒绝快照与 manifest 不一致的 run。所以发放要排在 `POST …/runs` 写 manifest 之前；测试里用 `pin_registry_snapshot()` 显式重钉，生产流程还没有把这一步排进编排。
-  3. **进程内 `ToolRegistry.grant()` 仍是带外通道**：单元测试可以直接构造 `AdhocApproval`（现在它必须带 `requested_by` 与 `gate_approval_id`），部署不该用它。runner 因此把台账当作第二道问句：行存在却抢不到，一律 BLOCKED。
+- **ad-hoc 这条线只剩一个缺口**（H1 由批次六闭合，批次七又关掉「授予与快照的先后矛盾」与「带外通道」两条）：
+  1. **工作台没有 ad-hoc 授予页**：`POST …/adhoc-grants` 只有 API 入口，PI 在界面上看不到「哪扇门已答、还没有发放」，也发不出这一枪。与下面批次五遗留 2 的阈值确认页同类。
+
+  批次七关掉的两条各自这样落地（见 7.5）：快照只覆盖已注册工具集，发放必然晚于 manifest，先后矛盾因此不复存在，测试里的 `pin_registry_snapshot()` 裸 SQL 重钉已删除；执行前台账行必须存在，进程内自造的权限买不到一次计算。`ToolRegistry.grant()` 仍然公开给单测与红队用例测准入逻辑，但它再也走不到一次真实的计算。
 - 生产件缺件：对象存储实现、计算执行器、导出 worker、真实 IdP、Postgres + RLS 部署、增量迁移。
 - 批次五修掉了本轮写文档时发现的两处（审批门响应与存储不一致、`Thresholds.confirmed` 无人消费），但留下三条相关的未完成项：
   1. **计算侧仍读代码常量**：判数、起草、队列与两个结论出口都读项目行的阈值，而节点参数里的 `thresholds` 由驱动直接取 `DEFAULT_THRESHOLDS`。要让"算的时候"也用项目那一套，需要把项目阈值穿过 `POST …/runs` → 编排器 → 工作流节点参数，涉及所有已注册 plan 的模板，单独排期。

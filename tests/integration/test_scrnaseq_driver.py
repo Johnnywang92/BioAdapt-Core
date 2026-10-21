@@ -109,13 +109,15 @@ def adhoc_nodes() -> list[Any]:
 
 
 def adhoc_harness(harness_factory: Any) -> F.Harness:
-    """The ad-hoc chain, with its gated QC node answered by a person (§9.6).
+    """The ad-hoc chain, with everything a submission needs before its node may run (§9.6).
 
-    An ad-hoc submission carries two separate permissions: the registry grant, which is one-time, and
-    this run's approval of the node as the plan states it. The harness sets both up so a test can break
-    one without tripping over the other.
+    Three separate facts stand between a submission and an execution: a permission in this process's
+    registry, the ledger row that a person's decision over the ad-hoc gate wrote, and this run's approval
+    of the node as the plan states it. The harness sets all three up so a test can break one without
+    tripping over the other.
     """
     made = harness_factory(registry=adhoc_registry(), the_plan=F.plan(nodes=adhoc_nodes()))
+    made.grant_adhoc("qc", F.adhoc_qc_spec())
     made.approve_node("qc")
     return made
 
@@ -353,19 +355,21 @@ def test_an_expired_adhoc_grant_blocks_before_the_step_runs(harness_factory: Any
 def ledger_harness(harness_factory: Any) -> tuple[F.Harness, Any]:
     """The ad-hoc chain driven from the ledger alone, with no in-process grant to spend (§9.6).
 
-    This is what a launch actually does: fill the registry from the rows the grant route wrote, re-pin the
-    manifest to the registry that now holds them (§4.1), then approve the node the plan gates.
+    This is what a launch actually does: the manifest is pinned first, the grant is issued over the run
+    that already exists, and the registry is then filled from that row (§4.1). The order is the point -
+    a snapshot that moved when the grant landed would leave this run unable to execute at all.
     """
     made = harness_factory(registry=F.reference_registry(), the_plan=F.plan(nodes=adhoc_nodes()))
     grant = made.grant_adhoc("qc", F.adhoc_qc_spec())
     F.hydrate(made.registry, made.catalog)
-    made.pin_registry_snapshot()
     made.approve_node("qc")
     return made, grant
 
 
 def test_a_ledger_grant_alone_buys_this_run_exactly_one_execution(harness_factory: Any) -> None:
     h, grant = ledger_harness(harness_factory)
+    #: The manifest was pinned before the grant existed, and issuing the grant left it alone (§4.1).
+    assert h.catalog.get_run(h.run_id).tool_registry_snapshot == F.reference_registry().snapshot_id()
     done = h.run()
     assert done.completed
     assert done.result_of("qc").unregistered is True, "section 9.6: an ad-hoc result is marked as one"
@@ -406,6 +410,18 @@ def test_an_expired_row_does_not_hydrate_back_into_a_restarted_registry(harness_
     restarted = F.hydrate(F.reference_registry(), h.catalog)
     with pytest.raises(UnknownToolError):
         restarted.resolve(ADHOC_TOOL, ADHOC_VERSION, now=h.clock())
+
+
+def test_a_permission_with_no_row_behind_it_buys_no_execution(harness_factory: Any) -> None:
+    """§9.6: the out-of-band channel is closed at the chokepoint - a registry grant with no ledger row
+    is a permission no person wrote, so the engine refuses to spend it rather than trusting the process
+    that minted it. A deployment that hydrates from the rows never reaches this branch."""
+    made = harness_factory(registry=adhoc_registry(), the_plan=F.plan(nodes=adhoc_nodes()))
+    made.approve_node("qc")
+    stopped = made.run()
+    assert stopped.stopped_at == "qc" and stopped.state is RunState.POLICY_BLOCKED
+    assert "no grant row" in stopped.stopped_reason
+    assert stopped.nodes == () and made.usage().compute_minutes == 0.0
 
 
 def test_a_memory_budget_below_the_measured_peak_is_refused(harness_factory: Any) -> None:
