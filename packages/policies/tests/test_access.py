@@ -166,9 +166,47 @@ class TestRunGates:
         assert authorize(actor(**EXPERT), Action.RUN_UPDATE, resource()).allowed
 
 
+class TestAdHocGrant:
+    """Section 9.6: one submission buys one execution, and the person who sells it is the PI."""
+
+    GRANT = dict(resource_id="grant_0001", resource_type="tool_grant")
+
+    def test_only_the_pi_holds_the_ad_hoc_grant(self):
+        holder = actor(**PI, mfa_verified=True)
+        assert authorize(
+            holder, Action.TOOL_GRANT_ADHOC, resource(**self.GRANT), requesting_subject_id="user_analyst_01"
+        ).allowed
+        for role in Role:
+            granted = role is Role.PRINCIPAL_INVESTIGATOR
+            decision = authorize(
+                actor(subject_id=f"user_{role}", roles=[role], mfa_verified=True),
+                Action.TOOL_GRANT_ADHOC,
+                resource(**self.GRANT),
+                requesting_subject_id="user_analyst_01",
+            )
+            assert decision.allowed is granted, role
+
+    def test_the_analyst_who_submits_the_tool_is_the_one_who_asks(self):
+        decision = authorize(actor(), Action.TOOL_GRANT_ADHOC, resource(**self.GRANT), requesting_subject_id="user_02")
+        assert not decision.allowed
+        assert "no role of ['analyst'] grants tool:grant_adhoc" in decision.denials
+
+    def test_the_subject_that_submitted_a_tool_may_not_grant_it(self):
+        pi = actor(**PI, mfa_verified=True)
+        decision = authorize(pi, Action.TOOL_GRANT_ADHOC, resource(**self.GRANT), requesting_subject_id=pi.subject_id)
+        assert not decision.allowed
+        assert "may not grant it" in decision.denials[0]
+
+    def test_granting_without_naming_the_submitter_is_incomplete(self):
+        decision = authorize(actor(**PI, mfa_verified=True), Action.TOOL_GRANT_ADHOC, resource(**self.GRANT))
+        assert not decision.allowed
+        assert "needs the subject that submitted the tool" in decision.denials[0]
+
+
 class TestSecondFactorAndTier:
     @pytest.mark.parametrize(
-        "action", [Action.ROLE_GRANT, Action.TOOL_PROMOTE, Action.ASSET_DELETE, Action.TRUTH_FREEZE]
+        "action",
+        [Action.ROLE_GRANT, Action.TOOL_GRANT_ADHOC, Action.TOOL_PROMOTE, Action.ASSET_DELETE, Action.TRUTH_FREEZE],
     )
     def test_privileged_actions_require_mfa(self, action):
         without = actor(subject_id="user_admin_01", roles=[Role.PLATFORM_ADMIN], project_ids=[GLOBAL_SCOPE])

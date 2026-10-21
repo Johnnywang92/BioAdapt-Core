@@ -115,7 +115,6 @@ ROLE_GRANTS: dict[Role, frozenset[Action]] = {
             Action.ASSET_READ,
             Action.ASSET_WRITE,
             Action.EGRESS_REQUEST,
-            Action.TOOL_GRANT_ADHOC,
             Action.CARD_REVIEW,
             Action.MODEL_CALL,
         }
@@ -177,6 +176,9 @@ HUMAN_ONLY_ACTIONS = frozenset(
 MFA_REQUIRED_ACTIONS = frozenset(
     {
         Action.EGRESS_APPROVE,
+        #: Section 9.6: an ad-hoc grant puts unaudited code into a compute container, so it is the one
+        #: promotion-shaped action that a password alone may not carry.
+        Action.TOOL_GRANT_ADHOC,
         Action.TOOL_PROMOTE,
         Action.ASSET_DELETE,
         Action.ROLE_GRANT,
@@ -296,6 +298,15 @@ def authorize(
             denials.append("approval:decide needs the subject that asked for the gate, for separation of duties")
         elif requesting_subject_id == actor.subject_id:
             denials.append("approval:decide: the subject that requested a gate may not open it")
+
+    if action is Action.TOOL_GRANT_ADHOC:
+        #: Section 9.6 + 11.6: the one-time approval is the PI's, and the analyst or agent that submitted
+        #: the tool is not a PI wearing a second hat. The grant's approver is the authenticated actor, so
+        #: this is where that pair stops being something the caller asserts about itself.
+        if requesting_subject_id is None:
+            denials.append("tool:grant_adhoc needs the subject that submitted the tool, for separation of duties")
+        elif requesting_subject_id == actor.subject_id:
+            denials.append("tool:grant_adhoc: the subject that submitted an ad-hoc tool may not grant it")
 
     if action is Action.CARD_SIGN_OFF:
         authored = resource.attributes.get("authored_by")
