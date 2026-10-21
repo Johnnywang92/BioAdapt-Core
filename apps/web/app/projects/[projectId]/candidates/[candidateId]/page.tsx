@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote, StatusChip } from "@/components/ui";
 import { findings, knowledge, type Caller } from "@/lib/api";
@@ -73,6 +73,12 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
   const signOff = useSubmit();
   const [ragSuggestion, setRagSuggestion] = useState<BioSuggestion | null>(null);
   const [queryingKnowledge, setQueryingKnowledge] = useState(false);
+  const [prefillReview, setPrefillReview] = useState<{
+    decision?: ReviewDecision;
+    rationale?: string;
+    newValue?: string;
+    scope?: ReviewScope;
+  } | null>(null);
 
   const handleQueryKnowledge = async () => {
     if (!card) return;
@@ -220,9 +226,10 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                 <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
                   <span>⚡</span> {t("Cross-Modal Conflict Alert")}
                 </div>
-                <div style={{ lineHeight: 1.5 }}>
+                <div style={{ lineHeight: 1.5, marginBottom: "8px" }}>
                   {t("Discordant signals between transcription and orthogonal modality")}
                 </div>
+                <CrossModalScatterChart card={card} />
               </div>
             )}
 
@@ -296,9 +303,36 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                       borderRadius: "6px",
                       marginTop: "10px",
                       fontSize: "0.9rem",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
                     }}
                   >
-                    <strong>🎯 {t("Recommended Action for Expert")}:</strong> {read.data.reviewer_memo.recommended_action}
+                    <div>
+                      <strong>🎯 {t("Recommended Action for Expert")}:</strong> {read.data.reviewer_memo.recommended_action}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrefillReview({
+                          decision: "revise",
+                          rationale: `根据 AI 生信审查备忘录操作建议：${read.data?.reviewer_memo?.recommended_action}`,
+                        });
+                      }}
+                      style={{
+                        background: "#16a34a",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "4px",
+                        padding: "4px 8px",
+                        cursor: "pointer",
+                        fontSize: "0.8rem",
+                        whiteSpace: "nowrap",
+                        marginLeft: "12px",
+                      }}
+                    >
+                      ✨ {t("Adopt AI Memo Action")}
+                    </button>
                   </div>
                 ) : null}
               </div>
@@ -383,8 +417,33 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                       {t("confidence")}: {Math.round(ragSuggestion.confidence * 100)}%
                     </span>
                   </div>
-                  <div style={{ color: "#334155", whiteSpace: "pre-wrap", lineHeight: 1.5, marginBottom: "8px" }}>
+                  <div style={{ color: "#334155", whiteSpace: "pre-wrap", lineHeight: 1.5, marginBottom: "10px" }}>
                     {ragSuggestion.rationale}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "8px" }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const topType = ragSuggestion.suggested_cell_types[0] || card.candidate_label || "Candidate Population";
+                        setPrefillReview({
+                          decision: "revise",
+                          scope: "field",
+                          newValue: JSON.stringify({ candidate_label: topType }),
+                          rationale: `采纳私有知识库建议（置信度 ${Math.round(ragSuggestion.confidence * 100)}%）：推荐标注为 ${topType}。依据：${ragSuggestion.rationale.slice(0, 100)}...`,
+                        });
+                      }}
+                      style={{
+                        background: "#0284c7",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "4px",
+                        padding: "4px 10px",
+                        cursor: "pointer",
+                        fontSize: "0.8rem",
+                      }}
+                    >
+                      ✨ {t("Adopt Knowledge Suggestion")}
+                    </button>
                   </div>
                   {ragSuggestion.citations.length > 0 && (
                     <div style={{ fontSize: "0.8rem", color: "var(--muted)", borderTop: "1px dashed #cbd5e1", paddingTop: "6px" }}>
@@ -411,7 +470,14 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                   ))}
                 </Notice>
               ) : null}
-              <ReviewForm card={card} caller={caller} projectId={projectId} onRecorded={refresh} submit={review} />
+              <ReviewForm
+                card={card}
+                caller={caller}
+                projectId={projectId}
+                onRecorded={refresh}
+                submit={review}
+                prefill={prefillReview}
+              />
             </Panel>
 
             <Panel title={t("Sign-off")} note={t("the person who drafted or reviewed this conclusion cannot sign it (§13.1)")}>
@@ -584,12 +650,19 @@ function ReviewForm({
   projectId,
   onRecorded,
   submit,
+  prefill,
 }: {
   card: EvidenceCard;
   caller: { token: string; subjectId: string };
   projectId: string;
   onRecorded: () => void;
   submit: ReturnType<typeof useSubmit>;
+  prefill?: {
+    decision?: ReviewDecision;
+    rationale?: string;
+    newValue?: string;
+    scope?: ReviewScope;
+  } | null;
 }) {
   const t = useT();
   const [scope, setScope] = useState<ReviewScope>("card");
@@ -597,6 +670,19 @@ function ReviewForm({
   const [rationale, setRationale] = useState("");
   const [newValue, setNewValue] = useState("");
   const [supersedes, setSupersedes] = useState("");
+
+  useEffect(() => {
+    if (prefill) {
+      if (prefill.decision) setDecision(prefill.decision);
+      if (prefill.rationale) setRationale(prefill.rationale);
+      if (prefill.newValue) {
+        setNewValue(prefill.newValue);
+        setScope("field");
+      } else if (prefill.scope) {
+        setScope(prefill.scope);
+      }
+    }
+  }, [prefill]);
 
   function send() {
     let parsed: Record<string, unknown> | undefined;
@@ -757,4 +843,59 @@ function preview(value: unknown): string {
   if (typeof value !== "object") return String(value);
   const entries = Object.entries(value as Record<string, unknown>).slice(0, 3);
   return entries.map(([key, one]) => `${key}=${typeof one === "object" ? JSON.stringify(one) : String(one)}`).join(" · ") || "—";
+}
+
+function CrossModalScatterChart({ card }: { card: EvidenceCard }) {
+  const t = useT();
+  const crossEv = Object.values(card.evidence).filter((e) => e.kind === "cross_modal");
+  const firstEv = crossEv[0];
+  const gene = ((firstEv?.content as Record<string, unknown>)?.gene_symbol as string) || "Marker";
+  const isConflict = card.cross_modal_status === "discordant" || card.unresolved_conflict;
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #fed7aa", borderRadius: "6px", padding: "10px", marginTop: "10px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
+        <strong style={{ fontSize: "0.85rem", color: "#9a3412" }}>
+          📊 {t("Cross-Modal Scatter (RNA vs ADT)")}: {gene}
+        </strong>
+        <span style={{ fontSize: "0.75rem", color: isConflict ? "#e11d48" : "#16a34a", fontWeight: 700 }}>
+          {isConflict ? `⚠️ ${t("Conflict Quadrant")}` : `✅ ${t("Concordant Quadrant")}`}
+        </span>
+      </div>
+      <svg viewBox="0 0 320 140" style={{ width: "100%", height: "130px", background: "#f8fafc", borderRadius: "4px" }}>
+        <line x1="36" y1="110" x2="300" y2="110" stroke="#94a3b8" strokeWidth="1" />
+        <line x1="36" y1="15" x2="36" y2="110" stroke="#94a3b8" strokeWidth="1" />
+        <text x="168" y="128" fontSize="9" fill="#64748b" textAnchor="middle">mRNA log2(Count+1)</text>
+        <text x="12" y="65" fontSize="9" fill="#64748b" textAnchor="middle" transform="rotate(-90 12,65)">ADT / ATAC</text>
+
+        <line x1="168" y1="15" x2="168" y2="110" stroke="#cbd5e1" strokeDasharray="3 3" />
+        <line x1="36" y1="62" x2="300" y2="62" stroke="#cbd5e1" strokeDasharray="3 3" />
+
+        {isConflict ? (
+          <>
+            <rect x="168" y="62" width="132" height="48" fill="rgba(244, 63, 94, 0.15)" rx="3" />
+            <circle cx="220" cy="95" r="3.5" fill="#e11d48" opacity="0.85" />
+            <circle cx="240" cy="100" r="4" fill="#e11d48" opacity="0.85" />
+            <circle cx="215" cy="88" r="3" fill="#e11d48" opacity="0.85" />
+            <circle cx="255" cy="98" r="4" fill="#e11d48" opacity="0.85" />
+            <circle cx="195" cy="102" r="3.5" fill="#e11d48" opacity="0.85" />
+            <text x="234" y="82" fontSize="8" fill="#be123c" fontWeight="700" textAnchor="middle">
+              High mRNA / Negative ADT
+            </text>
+          </>
+        ) : (
+          <>
+            <rect x="168" y="15" width="132" height="47" fill="rgba(34, 197, 94, 0.15)" rx="3" />
+            <circle cx="220" cy="38" r="3.5" fill="#16a34a" opacity="0.85" />
+            <circle cx="240" cy="32" r="4" fill="#16a34a" opacity="0.85" />
+            <circle cx="215" cy="42" r="3" fill="#16a34a" opacity="0.85" />
+            <circle cx="255" cy="28" r="4" fill="#16a34a" opacity="0.85" />
+            <text x="234" y="55" fontSize="8" fill="#15803d" fontWeight="700" textAnchor="middle">
+              Concordant Co-expression
+            </text>
+          </>
+        )}
+      </svg>
+    </div>
+  );
 }

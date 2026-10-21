@@ -587,4 +587,19 @@ export const zh: Record<string, string> = {
   "Consult Knowledge Base": "从私有知识库匹配先验建议",
   "Querying knowledge base...": "正在检索私有文献与实验记录…",
   "Knowledge Base RAG Advice": "私有知识库历史文献与先验建议",
+
+  // 快捷采纳与拖拽上传
+  "Adopt AI Memo Action": "采纳备忘录建议并填入评审",
+  "Adopt Knowledge Suggestion": "采纳此细胞亚群并填入评审",
+  "Cross-Modal Scatter (RNA vs ADT)": "跨组学信号分布 (mRNA 表达量 vs 表面蛋白信号)",
+  "Drop files here or click to upload": "拖拽文献/实验记录文件至此处，或点击浏览上传",
+  "Parsing & Indexing...": "正在解析分块并建立本地混合索引…",
+  "Supported formats": "支持格式：PDF、Word (.docx)、Markdown (.md)、文本 (.txt)",
+  "Conflict Quadrant": "冲突象限 (高 mRNA / 阴性蛋白)",
+  "Concordant Quadrant": "协同象限 (mRNA 与蛋白共高表达)",
+  "Batch Document Upload": "批量拖拽上传",
+  "Manual Text Input": "手输 / 粘贴文本",
+  "strict local privacy tier": "严格本地执行 (STRICT_LOCAL)：零外部大模型调用，数据与文献 100% 留存本地",
+  "Click or drag files here": "点击选择文件或将文件拖拽至此处",
+  "Successfully ingested documents": "已成功解析并建立本地混合索引！",
 };

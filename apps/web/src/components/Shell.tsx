@@ -38,7 +38,29 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="shell">
       <div className="topbar">
-        <div className="brand">BioAdapt</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div className="brand">BioAdapt</div>
+          {project && (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                padding: "2px 8px",
+                borderRadius: "9999px",
+                background: "rgba(16, 185, 129, 0.12)",
+                color: "#059669",
+                border: "1px solid rgba(16, 185, 129, 0.3)",
+                letterSpacing: "0.02em",
+              }}
+              title={t("strict local privacy tier")}
+            >
+              🔒 STRICT_LOCAL
+            </span>
+          )}
+        </div>
         <nav>
           {base ? (
             SCREENS.map(([suffix, label]) => {
