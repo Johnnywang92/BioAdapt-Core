@@ -11,7 +11,7 @@ import bisect
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Annotated, Any, Callable, Optional, Protocol
 
@@ -27,6 +27,7 @@ from bioadapt_schemas.thresholds import Thresholds
 from bioadapt_storage.catalog import Catalog
 from bioadapt_storage.objectstore import ObjectStore, Signer
 from bioadapt_storage.traces import TraceStore
+from bioadapt_tool_registry import DEFAULT_ADHOC_LIMITS, AdhocSandboxLimits
 
 from .errors import forbidden, invalid, unauthorized
 from .identity import IdTokenClaims, TokenVerifier
@@ -128,6 +129,11 @@ class ApiState:
     provider_terms: Mapping[str, ProviderTerms] = field(default_factory=dict)
     stream_max_events: int = 50
     stream_poll_seconds: float = 0.05
+    #: Section 9.6: how long one ad-hoc grant stays executable, and the cage its tool has to fit. Both are
+    #: deployment inputs: the engine that later hydrates a registry from these rows has to be answering the
+    #: same question the API was when it wrote them, and a second copy in code could drift from the first.
+    adhoc_grant_ttl: timedelta = timedelta(hours=24)
+    adhoc_limits: AdhocSandboxLimits = DEFAULT_ADHOC_LIMITS
 
 
 @dataclass

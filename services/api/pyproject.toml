@@ -9,6 +9,7 @@ dependencies = [
     "bioadapt-storage",
     "bioadapt-orchestrator",
     "bioadapt-evidence",
+    "bioadapt-tool-registry",
     "fastapi>=0.115",
 ]
 
@@ -18,6 +19,7 @@ bioadapt-policies = { workspace = true }
 bioadapt-storage = { workspace = true }
 bioadapt-orchestrator = { workspace = true }
 bioadapt-evidence = { workspace = true }
+bioadapt-tool-registry = { workspace = true }
 
 [build-system]
 requires = ["setuptools>=68"]

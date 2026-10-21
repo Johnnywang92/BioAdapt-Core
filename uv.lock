@@ -57,6 +57,7 @@ dependencies = [
     { name = "bioadapt-policies" },
     { name = "bioadapt-schemas" },
     { name = "bioadapt-storage" },
+    { name = "bioadapt-tool-registry" },
     { name = "fastapi" },
 ]
 
@@ -67,6 +68,7 @@ requires-dist = [
     { name = "bioadapt-policies", editable = "packages/policies" },
     { name = "bioadapt-schemas", editable = "packages/schemas" },
     { name = "bioadapt-storage", editable = "packages/storage" },
+    { name = "bioadapt-tool-registry", editable = "packages/tool_registry" },
     { name = "fastapi", specifier = ">=0.115" },
 ]
 

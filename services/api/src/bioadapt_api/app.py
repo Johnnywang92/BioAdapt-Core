@@ -25,6 +25,7 @@ from .routes_findings import read_evidence_by_alias
 from .routes_findings import router as findings_router
 from .routes_orchestration import router as orchestration_router
 from .routes_runs import router as runs_router
+from .routes_tools import router as tools_router
 
 TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 SUCCESSOR_ROUTE = "/v1/projects/{project_id}/evidence"
@@ -63,6 +64,7 @@ def create_app(state: ApiState) -> FastAPI:
         orchestration_router,
         annotations_router,
         findings_router,
+        tools_router,
         exports_router,
         compliance_router,
     ):
