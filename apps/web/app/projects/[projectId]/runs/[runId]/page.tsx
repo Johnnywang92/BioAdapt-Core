@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Chip, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { approvals as approvalsApi, runs as runsApi, type Caller } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
 import type { Approval, ApprovalKind, RunSummary } from "@/lib/types";
@@ -12,12 +13,13 @@ import type { Approval, ApprovalKind, RunSummary } from "@/lib/types";
 const KINDS: ApprovalKind[] = ["plan", "node", "adhoc_tool", "escalation"];
 
 export default function RunPage({ params }: { params: { projectId: string; runId: string } }) {
+  const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
   const runId = decodeURIComponent(params.runId);
 
   if (!caller) {
     return (
-      <Panel title="Run" note="nothing is read until a token is set">
+      <Panel title={t("Run")} note={t("nothing is read until a token is set")}>
         <p className="muted">{blocked}</p>
       </Panel>
     );
@@ -32,6 +34,7 @@ export default function RunPage({ params }: { params: { projectId: string; runId
 }
 
 function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; projectId: string; runId: string }) {
+  const t = useT();
   const read = useAsync<RunSummary>(() => runsApi.read(caller, projectId, runId), [caller.token, projectId, runId]);
   const budget = useAsync(
     () => runsApi.budget(caller, projectId, runId),
@@ -42,14 +45,16 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
 
   return (
     <Panel
-      title={`Run ${runId}`}
-      note="a run is a claim about inputs, a plan digest and a registry snapshot; the cards it produced are read through the queue, never from this row"
+      title={`${t("Run")} ${runId}`}
+      note={t(
+        "a run is a claim about inputs, a plan digest and a registry snapshot; the cards it produced are read through the queue, never from this row",
+      )}
       actions={
         <div style={{ display: "flex", gap: 8 }}>
           <button className="secondary" type="button" onClick={() => { read.reload(); budget.reload(); }}>
-            re-read
+            {t("re-read")}
           </button>
-          <Link href={`/projects/${projectId}/queue?run_id=${encodeURIComponent(runId)}`}>expert queue</Link>
+          <Link href={`/projects/${projectId}/queue?run_id=${encodeURIComponent(runId)}`}>{t("expert queue")}</Link>
         </div>
       }
     >
@@ -58,30 +63,32 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
       {read.data ? (
         <>
           <dl className="facts">
-            <dt>state</dt>
+            <dt>{t("state")}</dt>
             <dd>
-              <Chip status={read.data.state === "FAILED" ? "rejected" : "provisional"}>{read.data.state}</Chip>
+              <Chip title={read.data.state} status={read.data.state === "FAILED" ? "rejected" : "provisional"}>
+                {t(read.data.state)}
+              </Chip>
             </dd>
-            <dt>queue position</dt>
-            <dd>{read.data.queue_position === null ? "not queued" : read.data.queue_position}</dd>
-            <dt>plan</dt>
+            <dt>{t("queue position")}</dt>
+            <dd>{read.data.queue_position === null ? t("not queued") : read.data.queue_position}</dd>
+            <dt>{t("plan")}</dt>
             <dd className="mono">
               {read.data.plan_id} @ {read.data.plan_version}
             </dd>
-            <dt>reproducibility target</dt>
-            <dd>{read.data.reproducibility_level_target}</dd>
-            <dt>registry snapshot</dt>
+            <dt>{t("reproducibility target")}</dt>
+            <dd>{t(read.data.reproducibility_level_target)}</dd>
+            <dt>{t("registry snapshot")}</dt>
             <dd className="mono">{read.data.tool_registry_snapshot}</dd>
-            <dt>inputs</dt>
+            <dt>{t("inputs")}</dt>
             <dd>
-              {Object.keys(read.data.input_hashes).length} assets, each pinned by digest —{" "}
+              {t("{n} assets, each pinned by digest", { n: Object.keys(read.data.input_hashes).length })} —{" "}
               <span className="mono">{Object.keys(read.data.input_hashes).join(", ")}</span>
             </dd>
-            <dt>tools</dt>
+            <dt>{t("tools")}</dt>
             <dd className="mono">
               {Object.entries(read.data.tool_versions)
                 .map(([tool, version]) => `${tool}@${version}`)
-                .join(", ") || "none declared"}
+                .join(", ") || t("none declared")}
             </dd>
           </dl>
           <form
@@ -90,11 +97,11 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
               void cancel.run(() => runsApi.cancel(caller, projectId, runId, reason)).then(() => read.reload());
             }}
           >
-            <Field label="end this run" hint="ending a run is a person's act; a service token is refused here (§9.1)">
+            <Field label={t("end this run")} hint={t("ending a run is a person's act; a service token is refused here (§9.1)")}>
               <div style={{ display: "flex", gap: 8 }}>
-                <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="reason" />
+                <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder={t("reason")} />
                 <button className="secondary" type="submit" disabled={cancel.busy || !reason.trim()}>
-                  cancel run
+                  {t("cancel run")}
                 </button>
               </div>
             </Field>
@@ -107,24 +114,24 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
         <table>
           <thead>
             <tr>
-              <th>loop budget</th>
-              <th>used</th>
-              <th>ceiling</th>
+              <th>{t("loop budget")}</th>
+              <th>{t("used")}</th>
+              <th>{t("ceiling")}</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>iterations</td>
+              <td>{t("iterations")}</td>
               <td>{budget.data.usage.iterations}</td>
               <td>{budget.data.ceiling.max_iterations}</td>
             </tr>
             <tr>
-              <td>compute minutes</td>
+              <td>{t("compute minutes")}</td>
               <td>{budget.data.usage.compute_minutes}</td>
               <td>{budget.data.ceiling.max_compute_minutes}</td>
             </tr>
             <tr>
-              <td>model cost usd</td>
+              <td>{t("model cost usd")}</td>
               <td>{budget.data.usage.model_cost_usd}</td>
               <td>{budget.data.ceiling.max_model_cost_usd}</td>
             </tr>
@@ -133,8 +140,9 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
       ) : null}
       {budget.data && budget.data.exhausted.length > 0 ? (
         <div className="notice">
-          The loop budget is exhausted: another targeted analysis is not permitted until a person raises the
-          ceiling on the plan, which means a new plan version (§9.2). The rule says so in the server&apos;s words:
+          {t(
+            "The loop budget is exhausted: another targeted analysis is not permitted until a person raises the ceiling on the plan, which means a new plan version (§9.2). The rule says so in the server's words:",
+          )}
           <ul>
             {budget.data.exhausted.map((reason) => (
               <li key={reason}>{reason}</li>
@@ -153,6 +161,7 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
  * `adhoc_tool` must. The API enforces that pairing, so the form only asks and reports the answer.
  */
 function Gate({ caller, projectId, runId }: { caller: Caller; projectId: string; runId: string }) {
+  const t = useT();
   const submit = useSubmit();
   const [kind, setKind] = useState<ApprovalKind>("plan");
   const [nodeId, setNodeId] = useState("");
@@ -163,15 +172,18 @@ function Gate({ caller, projectId, runId }: { caller: Caller; projectId: string;
 
   return (
     <Panel
-      title="Request a gate"
-      note="requesting is not deciding: the decision belongs to someone else, and a service account can neither decide nor delegate (§11.4)."
+      title={t("Request a gate")}
+      note={t(
+        "requesting is not deciding: the decision belongs to someone else, and a service account can neither decide nor delegate (§11.4).",
+      )}
     >
       <ProblemNote error={submit.error} />
       {submit.result ? (
         <Notice>
-          Gate <span className="mono">{(submit.result as Approval).approval_id}</span> is{" "}
-          {(submit.result as Approval).state}, assigned to{" "}
-          <span className="mono">{(submit.result as Approval).assigned_to ?? "the project owner"}</span>.
+          {t("Gate")} <span className="mono">{(submit.result as Approval).approval_id}</span> {t("is")}{" "}
+          {t((submit.result as Approval).state)}
+          {t(", assigned to")}{" "}
+          <span className="mono">{(submit.result as Approval).assigned_to ?? t("the project owner")}</span>.
         </Notice>
       ) : null}
       <form
@@ -188,29 +200,32 @@ function Gate({ caller, projectId, runId }: { caller: Caller; projectId: string;
         }}
       >
         <div className="grid">
-          <Field label="kind">
+          <Field label={t("kind")}>
             <select value={kind} onChange={(event) => setKind(event.target.value as ApprovalKind)}>
               {KINDS.map((one) => (
                 <option key={one} value={one}>
-                  {one}
+                  {`${t(one)} (${one})`}
                 </option>
               ))}
             </select>
           </Field>
-          <Field label={needsNode ? "node_id" : "node_id (not used for this kind)"}>
+          <Field label={needsNode ? "node_id" : t("node_id (not used for this kind)")}>
             <input className="mono" value={nodeId} disabled={!needsNode} onChange={(event) => setNodeId(event.target.value)} />
           </Field>
         </div>
         <div className="grid">
-          <Field label="assigned_to" hint="who is accountable; leaving it open routes the gate to the project owner">
+          <Field label="assigned_to" hint={t("who is accountable; leaving it open routes the gate to the project owner")}>
             <input className="mono" value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)} />
           </Field>
-          <Field label="plan_version" hint={kind === "plan" ? "the version being approved" : "only used by a plan gate"}>
+          <Field
+            label="plan_version"
+            hint={kind === "plan" ? t("the version being approved") : t("only used by a plan gate")}
+          >
             <input className="mono" value={planVersion} disabled={kind !== "plan"} onChange={(event) => setPlanVersion(event.target.value)} />
           </Field>
         </div>
         <button type="submit" disabled={submit.busy || (needsNode && !nodeId.trim())}>
-          {submit.busy ? "requesting…" : "Request approval"}
+          {submit.busy ? t("requesting…") : t("Request approval")}
         </button>
       </form>
     </Panel>

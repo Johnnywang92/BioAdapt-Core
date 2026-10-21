@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { Empty, Loading, Panel, ProblemNote } from "@/components/ui";
 import { findings, type Caller } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync } from "@/lib/useAsync";
 import type { Alignment } from "@/lib/types";
@@ -15,12 +16,13 @@ import type { Alignment } from "@/lib/types";
  * than silently restated: each row carries both the recorded kind and what it counts as today.
  */
 export default function AlignmentPage({ params }: { params: { projectId: string; candidateId: string } }) {
+  const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
   const candidateId = decodeURIComponent(params.candidateId);
 
   if (!caller) {
     return (
-      <Panel title="Label alignment" note="nothing is read until a token is set">
+      <Panel title={t("Label alignment")} note={t("nothing is read until a token is set")}>
         <p className="muted">{blocked}</p>
       </Panel>
     );
@@ -30,6 +32,7 @@ export default function AlignmentPage({ params }: { params: { projectId: string;
 }
 
 function AlignmentView({ caller, projectId, candidateId }: { caller: Caller; projectId: string; candidateId: string }) {
+  const t = useT();
   const read = useAsync<Alignment>(
     () => findings.alignment(caller, projectId, candidateId),
     [caller.token, projectId, candidateId],
@@ -38,36 +41,38 @@ function AlignmentView({ caller, projectId, candidateId }: { caller: Caller; pro
 
   return (
     <Panel
-      title="Label alignment"
-      note="the same label in another run is a comparison, not a verdict: only a review can carry a conclusion across (§5.6)"
+      title={t("Label alignment")}
+      note={t(
+        "the same label in another run is a comparison, not a verdict: only a review can carry a conclusion across (§5.6)",
+      )}
     >
       <ProblemNote error={read.error} />
       {!alignment ? <Loading on={read.loading} /> : null}
       {alignment ? (
         <>
           <p className="muted mono">
-            {alignment.cluster_id} · {alignment.candidate_id} · thresholds {alignment.thresholds_version} ·
-            member fingerprint {alignment.member_fingerprint}
+            {alignment.cluster_id} · {alignment.candidate_id} · {t("thresholds")} {alignment.thresholds_version} ·{" "}
+            {t("member fingerprint")} {alignment.member_fingerprint}
           </p>
           <p>
             <Link href={`/projects/${projectId}/candidates/${encodeURIComponent(candidateId)}`}>
-              back to the card
+              {t("back to the card")}
             </Link>
           </p>
-          <h3>Alignment history</h3>
+          <h3>{t("Alignment history")}</h3>
           {alignment.alignment_history.length === 0 ? (
-            <Empty>no alignment has been recorded for this label.</Empty>
+            <Empty>{t("no alignment has been recorded for this label.")}</Empty>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>OTHER CANDIDATE</th>
-                  <th>OTHER RUN</th>
-                  <th>JACCARD</th>
-                  <th>KIND</th>
-                  <th>KIND TODAY</th>
-                  <th>CARRY OVER</th>
-                  <th>DECIDED BY</th>
+                  <th>{t("OTHER CANDIDATE")}</th>
+                  <th>{t("OTHER RUN")}</th>
+                  <th>{t("JACCARD")}</th>
+                  <th>{t("KIND")}</th>
+                  <th>{t("KIND TODAY")}</th>
+                  <th>{t("CARRY OVER")}</th>
+                  <th>{t("DECIDED BY")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -76,27 +81,27 @@ function AlignmentView({ caller, projectId, candidateId }: { caller: Caller; pro
                     <td className="mono">{record.other_candidate_id}</td>
                     <td className="mono">{record.other_run_id}</td>
                     <td>{record.jaccard}</td>
-                    <td>{record.kind}</td>
-                    <td>{record.kind_under_current_thresholds}</td>
-                    <td>{record.carry_over ? "yes" : "no"}</td>
+                    <td>{t(record.kind)}</td>
+                    <td>{t(record.kind_under_current_thresholds)}</td>
+                    <td>{record.carry_over ? t("yes") : t("no")}</td>
                     <td>{record.decided_by ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-          <h3>Same label in other runs</h3>
+          <h3>{t("Same label in other runs")}</h3>
           {alignment.same_label_in_other_runs.length === 0 ? (
-            <Empty>no other candidate carries this label.</Empty>
+            <Empty>{t("no other candidate carries this label.")}</Empty>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>CANDIDATE</th>
-                  <th>RUN</th>
-                  <th>SIZE</th>
-                  <th>DONORS</th>
-                  <th>ALIGNED</th>
+                  <th>{t("CANDIDATE")}</th>
+                  <th>{t("RUN")}</th>
+                  <th>{t("SIZE")}</th>
+                  <th>{t("DONORS")}</th>
+                  <th>{t("ALIGNED")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -113,7 +118,7 @@ function AlignmentView({ caller, projectId, candidateId }: { caller: Caller; pro
                     <td className="mono">{other.run_id}</td>
                     <td>{other.size}</td>
                     <td>{other.donor_count}</td>
-                    <td>{other.aligned ? "yes" : "no"}</td>
+                    <td>{other.aligned ? t("yes") : t("no")}</td>
                   </tr>
                 ))}
               </tbody>

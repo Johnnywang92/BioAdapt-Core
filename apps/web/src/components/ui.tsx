@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { ApiProblem } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import type { FinalStatus } from "@/lib/types";
 
 /** A titled surface. Every screen of the workbench is built out of these. */
@@ -37,11 +38,30 @@ export function Panel({
  * workbench never lets a screen compose a status out of what it would like to see.
  */
 export function StatusChip({ status }: { status: FinalStatus }) {
-  return <span className={`chip chip--${status}`}>{status}</span>;
+  const t = useT();
+  // The chip shows the display name and keeps the stored value on itself: a person reads that value
+  // back to the API, and a translation must not hide which one the index actually holds.
+  return (
+    <span className={`chip chip--${status}`} title={status}>
+      {t(status)}
+    </span>
+  );
 }
 
-export function Chip({ children, status }: { children: ReactNode; status?: string }) {
-  return <span className={status ? `chip chip--${status}` : "chip"}>{children}</span>;
+export function Chip({
+  children,
+  status,
+  title,
+}: {
+  children: ReactNode;
+  status?: string;
+  title?: string;
+}) {
+  return (
+    <span className={status ? `chip chip--${status}` : "chip"} title={title}>
+      {children}
+    </span>
+  );
 }
 
 export function Facts({ rows }: { rows: [string, ReactNode][] }) {
@@ -62,19 +82,25 @@ export function Facts({ rows }: { rows: [string, ReactNode][] }) {
  * gate from a policy from a validation error, because they ask for different next actions (§9.7).
  */
 export function ProblemNote({ error }: { error: unknown }) {
+  const t = useT();
   if (!error) return null;
   if (error instanceof ApiProblem) {
     return (
       <div className="error" role="alert">
         <div>
           {`${error.status} · ${error.class} · ${error.code}`}
-          {error.field ? ` · field ${error.field}` : ""}
+          {error.field ? ` · ${t("field")} ${error.field}` : ""}
         </div>
         <div>{error.message}</div>
         {error.retryable ? (
-          <div>retryable{error.retry_after ? `, after ${error.retry_after}s` : ""}</div>
+          <div>
+            {t("retryable")}
+            {error.retry_after ? `, ${t("after")} ${error.retry_after}s` : ""}
+          </div>
         ) : null}
-        <div className="mono">trace {error.trace_id}</div>
+        <div className="mono">
+          {t("trace")} {error.trace_id}
+        </div>
       </div>
     );
   }
@@ -91,7 +117,8 @@ export function Notice({ children }: { children: ReactNode }) {
 }
 
 export function Loading({ on }: { on: boolean }) {
-  return on ? <p className="muted">reading…</p> : null;
+  const t = useT();
+  return on ? <p className="muted">{t("reading…")}</p> : null;
 }
 
 export function Empty({ children }: { children: ReactNode }) {

@@ -96,6 +96,17 @@ a:hover {
   color: var(--ink-soft);
 }
 
+.topbar .locale {
+  display: flex;
+  gap: 4px;
+}
+
+.topbar .locale button {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
 .main {
   flex: 1;
   padding: 24px;

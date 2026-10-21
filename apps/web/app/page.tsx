@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Chip, Field, Notice, Panel, ProblemNote } from "@/components/ui";
 import { projects, type Caller } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { useWorkbench } from "@/lib/identity";
 import { useSubmit } from "@/lib/useAsync";
 import type { PrivacyTier, ProjectCreate, RegulatoryProfile } from "@/lib/types";
@@ -27,6 +28,7 @@ const TIER_NOTE: Record<PrivacyTier, string> = {
  * than offer one (§11.2). Choosing the tier is a person's decision, so this form has no default.
  */
 export default function StartPage() {
+  const t = useT();
   const { identity, projectId, setProjectId } = useWorkbench();
   const caller: Caller | null = identity ? { token: identity.token, subjectId: identity.subjectId } : null;
   const submit = useSubmit();
@@ -65,35 +67,41 @@ export default function StartPage() {
   return (
     <>
       <Panel
-        title="Start or open a project"
-        note="A project is the scope of every read: the API resolves the caller from the token and the project from the path."
+        title={t("Start or open a project")}
+        note={t(
+          "A project is the scope of every read: the API resolves the caller from the token and the project from the path.",
+        )}
       >
         {projectId ? (
           <p>
-            Open{" "}
+            {t("Open")}{" "}
             <Link href={`/projects/${encodeURIComponent(projectId)}`}>
               <span className="mono">{projectId}</span>
             </Link>{" "}
-            to register data, approve a plan, read the expert queue and export the report.
+            {t("to register data, approve a plan, read the expert queue and export the report.")}
           </p>
         ) : (
-          <p className="muted">No project open. Create one below, or set a project id in the panel at the bottom.</p>
+          <p className="muted">
+            {t("No project open. Create one below, or set a project id in the panel at the bottom.")}
+          </p>
         )}
       </Panel>
 
       <Panel
-        title="New project"
-        note="created_by is taken from the token you are holding, never typed in: an audit row that names a person has to name the person acting."
+        title={t("New project")}
+        note={t(
+          "created_by is taken from the token you are holding, never typed in: an audit row that names a person has to name the person acting.",
+        )}
       >
         <ProblemNote error={submit.error} />
         {submit.result ? (
           <Notice>
-            Created{" "}
+            {t("Created")}{" "}
             <span className="mono">{(submit.result as { project_id: string }).project_id}</span> —{" "}
             <Link
               href={`/projects/${encodeURIComponent((submit.result as { project_id: string }).project_id)}`}
             >
-              open it
+              {t("open it")}
             </Link>
           </Notice>
         ) : null}
@@ -111,7 +119,10 @@ export default function StartPage() {
               <input value={form.species} onChange={set("species")} placeholder="Homo sapiens" />
             </Field>
           </div>
-          <Field label="study_goal" hint="what the delivery has to answer; it scopes which candidates matter">
+          <Field
+            label="study_goal"
+            hint={t("what the delivery has to answer; it scopes which candidates matter")}
+          >
             <textarea rows={2} value={form.study_goal} onChange={set("study_goal")} />
           </Field>
           <div className="grid">
@@ -124,7 +135,7 @@ export default function StartPage() {
             </Field>
             <Field
               label="review_load_budget_hours_per_week"
-              hint="§13.4: this number is what the queue size has to fit inside"
+              hint={t("§13.4: this number is what the queue size has to fit inside")}
             >
               <input
                 value={form.review_load_budget_hours_per_week}
@@ -135,18 +146,21 @@ export default function StartPage() {
           </div>
           <Field
             label="privacy_tier"
-            hint={form.privacy_tier ? TIER_NOTE[form.privacy_tier as PrivacyTier] : "no default on purpose"}
+            hint={form.privacy_tier ? t(TIER_NOTE[form.privacy_tier as PrivacyTier]) : t("no default on purpose")}
           >
             <select value={form.privacy_tier} onChange={set("privacy_tier")}>
-              <option value="">choose</option>
+              <option value="">{t("choose")}</option>
               {TIERS.map((tier) => (
                 <option key={tier} value={tier}>
-                  {tier}
+                  {`${t(tier)} (${tier})`}
                 </option>
               ))}
             </select>
           </Field>
-          <Field label="regulatory_profile" hint="an hgr profile forces the tier to hgr_controlled or strict_local">
+          <Field
+            label="regulatory_profile"
+            hint={t("an hgr profile forces the tier to hgr_controlled or strict_local")}
+          >
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               {PROFILES.map((profile) => (
                 <label key={profile} style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -160,15 +174,15 @@ export default function StartPage() {
                       )
                     }
                   />
-                  <Chip>{profile}</Chip>
+                  <Chip title={profile}>{t(profile)}</Chip>
                 </label>
               ))}
             </div>
           </Field>
           <button type="submit" disabled={!caller || submit.busy}>
-            {submit.busy ? "creating…" : "Create project"}
+            {submit.busy ? t("creating…") : t("Create project")}
           </button>
-          {!caller ? <p className="muted">paste a token first</p> : null}
+          {!caller ? <p className="muted">{t("paste a token first")}</p> : null}
         </form>
       </Panel>
     </>

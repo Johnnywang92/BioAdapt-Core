@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { intentKey, projects as projectsApi, runs as runsApi, type Caller } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
 import type { Page, Project, ReproducibilityLevel, RunListItem, RunSummary } from "@/lib/types";
@@ -12,6 +13,7 @@ import type { Page, Project, ReproducibilityLevel, RunListItem, RunSummary } fro
 const LEVELS: ReproducibilityLevel[] = ["byte", "numeric", "conclusion"];
 
 export default function ProjectOverview({ params }: { params: { projectId: string } }) {
+  const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
   const project = useAsync<Project | null>(
     () => (caller ? projectsApi.read(caller, projectId) : Promise.resolve(null)),
@@ -24,7 +26,10 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
 
   if (!caller) {
     return (
-      <Panel title="Project overview" note="nothing is read until a token is set — the API resolves the caller from it">
+      <Panel
+        title={t("Project overview")}
+        note={t("nothing is read until a token is set — the API resolves the caller from it")}
+      >
         <p className="muted">{blocked}</p>
       </Panel>
     );
@@ -33,11 +38,13 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
   return (
     <>
       <Panel
-        title={`Project ${projectId}`}
-        note="the tier on this row is what every later screen inherits: it decides egress, model calls and whether an export is possible at all"
+        title={`${t("Project")} ${projectId}`}
+        note={t(
+          "the tier on this row is what every later screen inherits: it decides egress, model calls and whether an export is possible at all",
+        )}
         actions={
           <button className="secondary" type="button" onClick={() => { project.reload(); listed.reload(); }}>
-            re-read
+            {t("re-read")}
           </button>
         }
       >
@@ -45,27 +52,33 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
         <Loading on={project.loading} />
         {project.data && project.data.project_id ? (
           <dl className="facts">
-            <dt>study goal</dt>
+            <dt>{t("study goal")}</dt>
             <dd>{project.data.study_goal}</dd>
-            <dt>species</dt>
+            <dt>{t("species")}</dt>
             <dd>{project.data.species}</dd>
-            <dt>privacy tier</dt>
-            <dd>{project.data.privacy_tier}</dd>
-            <dt>regulatory profile</dt>
-            <dd>{project.data.regulatory_profile.join(", ") || "none declared"}</dd>
-            <dt>annotation target</dt>
+            <dt>{t("privacy tier")}</dt>
+            <dd>{t(project.data.privacy_tier)}</dd>
+            <dt>{t("regulatory profile")}</dt>
+            <dd>
+              {project.data.regulatory_profile.map((one) => t(one)).join(", ") || t("none declared")}
+            </dd>
+            <dt>{t("annotation target")}</dt>
             <dd>{project.data.annotation_granularity_target}</dd>
-            <dt>review budget</dt>
-            <dd>{project.data.review_load_budget_hours_per_week} h/week</dd>
-            <dt>thresholds</dt>
+            <dt>{t("review budget")}</dt>
+            <dd>{project.data.review_load_budget_hours_per_week} {t("h/week")}</dd>
+            <dt>{t("thresholds")}</dt>
             <dd>
               <span className="mono">{String(project.data.thresholds.version)}</span>
               {project.data.thresholds.confirmed === false ? (
-                <span className="chip">unconfirmed stage-0 cut set · sign-off and export are closed (§1.5)</span>
+                <span className="chip">
+                  {t("unconfirmed stage-0 cut set · sign-off and export are closed (§1.5)")}
+                </span>
               ) : null}
-              {` · expert queue cap ${String(project.data.thresholds.expert_queue_card_limit)} cards (§13.4)`}
+              {t(" · expert queue cap {cap} cards (§13.4)", {
+                cap: String(project.data.thresholds.expert_queue_card_limit),
+              })}
             </dd>
-            <dt>created</dt>
+            <dt>{t("created")}</dt>
             <dd>{project.data.created_at ?? "—"}</dd>
           </dl>
         ) : null}
@@ -74,8 +87,10 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
       <LaunchRun caller={caller} projectId={projectId} onLaunched={listed.reload} />
 
       <Panel
-        title="Runs"
-        note="a launch answers 202 with a queue position; results are read from the cards this run produced, never from this row"
+        title={t("Runs")}
+        note={t(
+          "a launch answers 202 with a queue position; results are read from the cards this run produced, never from this row",
+        )}
       >
         <ProblemNote error={listed.error} />
         <Loading on={listed.loading} />
@@ -83,11 +98,11 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
           <table>
             <thead>
               <tr>
-                <th>run</th>
-                <th>state</th>
-                <th>plan</th>
-                <th>queue</th>
-                <th>started</th>
+                <th>{t("run")}</th>
+                <th>{t("state")}</th>
+                <th>{t("plan")}</th>
+                <th>{t("queue")}</th>
+                <th>{t("started")}</th>
               </tr>
             </thead>
             <tbody>
@@ -98,18 +113,18 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
                       <span className="mono">{run.run_id}</span>
                     </Link>
                   </td>
-                  <td>{run.state}</td>
+                  <td>{t(run.state)}</td>
                   <td className="mono">
                     {run.plan_id} @ {run.plan_version}
                   </td>
-                  <td>{run.queue_position === null ? "not queued" : run.queue_position}</td>
+                  <td>{run.queue_position === null ? t("not queued") : run.queue_position}</td>
                   <td>{run.started_at ?? "—"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          !listed.loading && <Empty>This project has no runs yet.</Empty>
+          !listed.loading && <Empty>{t("This project has no runs yet.")}</Empty>
         )}
       </Panel>
     </>
@@ -126,6 +141,7 @@ function LaunchRun({
   projectId: string;
   onLaunched: () => void;
 }) {
+  const t = useT();
   const submit = useSubmit();
   const [form, setForm] = useState({
     plan_id: "",
@@ -174,15 +190,20 @@ function LaunchRun({
 
   return (
     <Panel
-      title="Launch a run"
-      note="the plan has to be recorded and its input assets registered first; a launch that names an unknown asset is refused, not guessed around"
+      title={t("Launch a run")}
+      note={t(
+        "the plan has to be recorded and its input assets registered first; a launch that names an unknown asset is refused, not guessed around",
+      )}
     >
       <ProblemNote error={submit.error} />
       {created ? (
         <Notice>
-          Queued <span className="mono">{created.run_id}</span> in state {created.state}, position{" "}
-          {created.queue_position ?? "—"}.{" "}
-          <Link href={`/projects/${projectId}/runs/${encodeURIComponent(created.run_id)}`}>open the run</Link>
+          {t("Queued")} <span className="mono">{created.run_id}</span>
+          {t(", in state")} {t(created.state)}
+          {t(", position")} {created.queue_position ?? "—"}.{" "}
+          <Link href={`/projects/${projectId}/runs/${encodeURIComponent(created.run_id)}`}>
+            {t("open the run")}
+          </Link>
         </Notice>
       ) : null}
       <form
@@ -199,33 +220,39 @@ function LaunchRun({
             <input value={form.plan_version} onChange={set("plan_version")} className="mono" />
           </Field>
         </div>
-        <Field label="input_asset_ids" hint="comma separated; each one has to be registered in this project">
+        <Field label="input_asset_ids" hint={t("comma separated; each one has to be registered in this project")}>
           <input value={form.input_asset_ids} onChange={set("input_asset_ids")} className="mono" />
         </Field>
         <div className="grid">
-          <Field label="tool_registry_snapshot" hint="the registry version the run is claimed reproducible against">
+          <Field
+            label="tool_registry_snapshot"
+            hint={t("the registry version the run is claimed reproducible against")}
+          >
             <input value={form.tool_registry_snapshot} onChange={set("tool_registry_snapshot")} className="mono" />
           </Field>
           <Field label="reproducibility_level_target">
             <select value={form.reproducibility_level_target} onChange={set("reproducibility_level_target")}>
               {LEVELS.map((level) => (
                 <option key={level} value={level}>
-                  {level}
+                  {`${t(level)} (${level})`}
                 </option>
               ))}
             </select>
           </Field>
         </div>
         <div className="grid">
-          <Field label="priority" hint="0 lowest, 9 highest">
+          <Field label="priority" hint={t("0 lowest, 9 highest")}>
             <input value={form.priority} onChange={set("priority")} inputMode="numeric" />
           </Field>
-          <Field label="Idempotency-Key" hint="a resend of this click replays the original run; a new intent gets a new key">
+          <Field
+            label="Idempotency-Key"
+            hint={t("a resend of this click replays the original run; a new intent gets a new key")}
+          >
             <input className="mono" value={key} onChange={(event) => setKey(event.target.value)} />
           </Field>
         </div>
         <button type="submit" disabled={submit.busy}>
-          {submit.busy ? "launching…" : "Launch"}
+          {submit.busy ? t("launching…") : t("Launch")}
         </button>
       </form>
     </Panel>

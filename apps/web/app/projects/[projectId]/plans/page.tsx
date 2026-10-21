@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Field, Notice, Panel, ProblemNote } from "@/components/ui";
 import { plans as plansApi, type Caller } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useSubmit } from "@/lib/useAsync";
 import type { AnalysisPlan, RecordedPlan } from "@/lib/types";
@@ -54,6 +55,7 @@ function template(projectId: string): string {
  * over, and the server's validators are the only thing between the two.
  */
 export default function PlansPage({ params }: { params: { projectId: string } }) {
+  const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
   const submit = useSubmit();
   const [body, setBody] = useState(() => template(projectId));
@@ -61,7 +63,7 @@ export default function PlansPage({ params }: { params: { projectId: string } })
 
   if (!caller) {
     return (
-      <Panel title="Plans" note="nothing is recorded until a token is set">
+      <Panel title={t("Plans")} note={t("nothing is recorded until a token is set")}>
         <p className="muted">{blocked}</p>
       </Panel>
     );
@@ -72,7 +74,7 @@ export default function PlansPage({ params }: { params: { projectId: string } })
     try {
       plan = JSON.parse(body) as AnalysisPlan;
     } catch (exc) {
-      setParseError(exc instanceof Error ? exc.message : "the body is not JSON");
+      setParseError(exc instanceof Error ? exc.message : t("the body is not JSON"));
       return;
     }
     setParseError(null);
@@ -83,22 +85,24 @@ export default function PlansPage({ params }: { params: { projectId: string } })
 
   return (
     <Panel
-      title="Record a plan"
-      note="recording stores the plan and its digest; it authorises nothing. A gated plan still needs a person's decision before a node runs (§9.6)."
+      title={t("Record a plan")}
+      note={t(
+        "recording stores the plan and its digest; it authorises nothing. A gated plan still needs a person's decision before a node runs (§9.6).",
+      )}
     >
       <p className="muted">
-        Three rules the contract enforces itself, so this form does not argue about them: a design
-        matrix needs a confounding check that has actually run, an ad-hoc tool node has to require
-        approval, and a node that emits a conclusion asset cannot be ungated.
+        {t(
+          "Three rules the contract enforces itself, so this form does not argue about them: a design matrix needs a confounding check that has actually run, an ad-hoc tool node has to require approval, and a node that emits a conclusion asset cannot be ungated.",
+        )}
       </p>
       {parseError ? <div className="error">{parseError}</div> : null}
       <ProblemNote error={submit.error} />
       {recorded ? (
         <Notice>
-          Recorded <span className="mono">{recorded.plan_id}</span> version{" "}
-          <span className="mono">{recorded.plan_version}</span> as digest{" "}
-          <span className="mono">{recorded.plan_sha256}</span>. Launch it from the project overview —
-          an approval is requested against the run, not against this row.
+          {t("Recorded")} <span className="mono">{recorded.plan_id}</span>
+          {t(", version")} <span className="mono">{recorded.plan_version}</span>
+          {t(" as digest")} <span className="mono">{recorded.plan_sha256}</span>.{" "}
+          {t("Launch it from the project overview — an approval is requested against the run, not against this row.")}
         </Notice>
       ) : null}
       <form
@@ -107,7 +111,7 @@ export default function PlansPage({ params }: { params: { projectId: string } })
           record(caller);
         }}
       >
-        <Field label="plan body" hint="the full contract; unknown keys are refused, not ignored">
+        <Field label={t("plan body")} hint={t("the full contract; unknown keys are refused, not ignored")}>
           <textarea
             rows={22}
             spellCheck={false}
@@ -117,12 +121,13 @@ export default function PlansPage({ params }: { params: { projectId: string } })
           />
         </Field>
         <button type="submit" disabled={submit.busy}>
-          {submit.busy ? "recording…" : "Record plan"}
+          {submit.busy ? t("recording…") : t("Record plan")}
         </button>
         <button className="secondary" type="button" onClick={() => setBody(template(projectId))}>
-          reset to template
+          {t("reset to template")}
         </button>
       </form>
     </Panel>
   );
 }
+

@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { Chip, Empty, Field, Loading, Panel, ProblemNote } from "@/components/ui";
 import { approvals as approvalsApi, type Caller } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { useWorkbench } from "@/lib/identity";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync } from "@/lib/useAsync";
@@ -13,6 +14,7 @@ import type { Approval, ApprovalState, Page } from "@/lib/types";
 const STATES: ApprovalState[] = ["pending", "approved", "rejected", "expired"];
 
 export default function ApprovalsPage({ params }: { params: { projectId: string } }) {
+  const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
   const { identity } = useWorkbench();
   const [state, setState] = useState<ApprovalState | "">("pending");
@@ -28,7 +30,7 @@ export default function ApprovalsPage({ params }: { params: { projectId: string 
 
   if (!caller) {
     return (
-      <Panel title="Approvals" note="nothing is read until a token is set">
+      <Panel title={t("Approvals")} note={t("nothing is read until a token is set")}>
         <p className="muted">{blocked}</p>
       </Panel>
     );
@@ -36,26 +38,28 @@ export default function ApprovalsPage({ params }: { params: { projectId: string 
 
   return (
     <Panel
-      title="Approval inbox"
-      note="a lapsed window removes permission; it never lets a run advance (§9.2). Only a person who did not ask for the gate can open it (§11.6)."
+      title={t("Approval inbox")}
+      note={t(
+        "a lapsed window removes permission; it never lets a run advance (§9.2). Only a person who did not ask for the gate can open it (§11.6).",
+      )}
       actions={
         <button className="secondary" type="button" onClick={listed.reload}>
-          re-read
+          {t("re-read")}
         </button>
       }
     >
       <div className="grid">
-        <Field label="state">
+        <Field label={t("state")}>
           <select value={state} onChange={(event) => setState(event.target.value as ApprovalState | "")}>
-            <option value="">any</option>
+            <option value="">{t("any")}</option>
             {STATES.map((one) => (
               <option key={one} value={one}>
-                {one}
+                {`${t(one)} (${one})`}
               </option>
             ))}
           </select>
         </Field>
-        <Field label="overdue only" hint="the overdue view of the same inbox">
+        <Field label={t("overdue only")} hint={t("the overdue view of the same inbox")}>
           <input
             type="checkbox"
             style={{ width: "auto" }}
@@ -80,7 +84,7 @@ export default function ApprovalsPage({ params }: { params: { projectId: string 
           ))}
         </div>
       ) : (
-        !listed.loading && <Empty>No gate is waiting in this inbox.</Empty>
+        !listed.loading && <Empty>{t("No gate is waiting in this inbox.")}</Empty>
       )}
     </Panel>
   );
@@ -106,6 +110,7 @@ function ApprovalRow({
   subjectId: string;
   onChanged: () => void;
 }) {
+  const t = useT();
   const [reason, setReason] = useState("");
   const [delegateTo, setDelegateTo] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -130,35 +135,38 @@ function ApprovalRow({
     <section className="panel">
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "baseline" }}>
         <span className="mono">{approval.approval_id}</span>
-        <Chip>{approval.kind}</Chip>
-        <Chip status={approval.state === "approved" ? "supported" : approval.state === "pending" ? "provisional" : "rejected"}>
-          {approval.state}
+        <Chip title={approval.kind}>{t(approval.kind)}</Chip>
+        <Chip
+          title={approval.state}
+          status={approval.state === "approved" ? "supported" : approval.state === "pending" ? "provisional" : "rejected"}
+        >
+          {t(approval.state)}
         </Chip>
-        {approval.overdue ? <Chip status="conflict">overdue</Chip> : null}
+        {approval.overdue ? <Chip status="conflict">{t("overdue")}</Chip> : null}
         <Link href={`/projects/${projectId}/runs/${encodeURIComponent(approval.run_id)}`} className="mono">
           {approval.run_id}
         </Link>
       </div>
       <dl className="facts">
-        <dt>asked for by</dt>
+        <dt>{t("asked for by")}</dt>
         <dd className="mono">{approval.requested_by}</dd>
-        <dt>assigned to</dt>
+        <dt>{t("assigned to")}</dt>
         <dd className="mono">
           {approval.assigned_to}
-          {approval.delegated_from ? ` · delegated from ${approval.delegated_from}` : ""}
+          {approval.delegated_from ? t(" · delegated from {who}", { who: approval.delegated_from }) : ""}
         </dd>
-        <dt>node</dt>
+        <dt>{t("node")}</dt>
         <dd className="mono">{approval.node_id ?? "—"}</dd>
-        <dt>decide by</dt>
+        <dt>{t("decide by")}</dt>
         <dd>
           {approval.sla_at}
           {approval.overdue_reason ? ` · ${approval.overdue_reason}` : ""}
         </dd>
-        <dt>decision</dt>
+        <dt>{t("decision")}</dt>
         <dd>
           {approval.decided_by ? (
             <span className="mono">
-              {approval.decided_by} · {approval.state} · {approval.decision_reason ?? "no reason recorded"}
+              {approval.decided_by} · {t(approval.state)} · {approval.decision_reason ?? t("no reason recorded")}
             </span>
           ) : (
             "—"
@@ -172,7 +180,7 @@ function ApprovalRow({
             event.preventDefault();
           }}
         >
-          <Field label="reason" hint="required: an approval without a reason is a missing audit row">
+          <Field label={t("reason")} hint={t("required: an approval without a reason is a missing audit row")}>
             <input value={reason} onChange={(event) => setReason(event.target.value)} />
           </Field>
           <div style={{ display: "flex", gap: 8 }}>
@@ -183,7 +191,7 @@ function ApprovalRow({
                 void act(() => approvalsApi.decide(caller, projectId, approval.approval_id, true, reason))
               }
             >
-              approve
+              {t("approve")}
             </button>
             <button
               className="secondary"
@@ -193,16 +201,17 @@ function ApprovalRow({
                 void act(() => approvalsApi.decide(caller, projectId, approval.approval_id, false, reason))
               }
             >
-              refuse
+              {t("refuse")}
             </button>
           </div>
           {approval.requested_by === subjectId ? (
             <p className="muted">
-              This gate was asked for by the subject you are acting as, so deciding it is refused here and
-              at the API: the requester cannot open their own gate (§11.6). Delegate it instead.
+              {t(
+                "This gate was asked for by the subject you are acting as, so deciding it is refused here and at the API: the requester cannot open their own gate (§11.6). Delegate it instead.",
+              )}
             </p>
           ) : null}
-          <Field label="delegate to" hint="moves the gate and records the move (§9.2)">
+          <Field label={t("delegate to")} hint={t("moves the gate and records the move (§9.2)")}>
             <div style={{ display: "flex", gap: 8 }}>
               <input className="mono" value={delegateTo} onChange={(event) => setDelegateTo(event.target.value)} />
               <button
@@ -211,7 +220,7 @@ function ApprovalRow({
                 disabled={busy || !delegateTo.trim()}
                 onClick={() => void act(() => approvalsApi.delegate(caller, projectId, approval.approval_id, delegateTo))}
               >
-                delegate
+                {t("delegate")}
               </button>
             </div>
           </Field>

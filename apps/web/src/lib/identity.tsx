@@ -64,15 +64,23 @@ export function parseIdentity(token: string): Identity {
   };
 }
 
-export function expiryNote(token: string): string | null {
+export interface ExpiryNote {
+  /** An English source string, which is also the dictionary key. `{n}` is filled from `vars`. */
+  text: string;
+  vars?: Record<string, string | number>;
+}
+
+export function expiryNote(token: string): ExpiryNote | null {
   try {
     const exp = decode(token).exp;
     if (!exp) return null;
     const seconds = exp - Math.floor(Date.now() / 1000);
     // Only the API can say whether a token still works, and a seeded demo server runs its own clock,
     // so this reports what *this* machine's clock reads rather than predicting the answer.
-    if (seconds <= 0) return `past its exp by this clock — whether the API still honours it is its own call`;
-    return `expires in ${Math.round(seconds / 60)} min`;
+    if (seconds <= 0) {
+      return { text: "past its exp by this clock — whether the API still honours it is its own call" };
+    }
+    return { text: "expires in {n} min", vars: { n: Math.round(seconds / 60) } };
   } catch {
     return null;
   }

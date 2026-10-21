@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { assets as assetsApi, type Caller } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
 import type { DataAsset, FilteringState, Page, RetentionClass, UpstreamPipeline, UsageScope } from "@/lib/types";
@@ -18,11 +19,12 @@ const SCOPE: UsageScope[] = [
 ];
 
 export default function DataPage({ params }: { params: { projectId: string } }) {
+  const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
 
   if (!caller) {
     return (
-      <Panel title="Data" note="nothing is read until a token is set">
+      <Panel title={t("Data")} note={t("nothing is read until a token is set")}>
         <p className="muted">{blocked}</p>
       </Panel>
     );
@@ -43,6 +45,7 @@ export default function DataPage({ params }: { params: { projectId: string } }) 
  * number was typed in wrong somewhere upstream.
  */
 function Register({ caller, projectId }: { caller: Caller; projectId: string }) {
+  const t = useT();
   const submit = useSubmit();
   const [bytes, setBytes] = useState<ArrayBuffer | null>(null);
   const [fileName, setFileName] = useState("");
@@ -128,13 +131,16 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
 
   return (
     <Panel
-      title="Register data"
-      note="client-side direct upload is the only write path for object bytes: the API hands out a short-lived PUT signature for a key it derived itself"
+      title={t("Register data")}
+      note={t(
+        "client-side direct upload is the only write path for object bytes: the API hands out a short-lived PUT signature for a key it derived itself",
+      )}
     >
       <ProblemNote error={submit.error} />
       {recorded ? (
         <Notice>
-          Recorded <span className="mono">{recorded.asset_id}</span> at <span className="mono">{recorded.uri}</span>
+          {t("Recorded")} <span className="mono">{recorded.asset_id}</span> {t("at")}{" "}
+          <span className="mono">{recorded.uri}</span>
         </Notice>
       ) : null}
       <form
@@ -143,12 +149,15 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
           register();
         }}
       >
-        <Field label="object to upload" hint="the digest is computed from these bytes; a mismatch at completion is a conflict, not a warning">
+        <Field
+          label={t("object to upload")}
+          hint={t("the digest is computed from these bytes; a mismatch at completion is a conflict, not a warning")}
+        >
           <input type="file" onChange={(event) => void pick(event.target.files?.[0])} />
         </Field>
         {fileName ? (
           <p className="muted mono">
-            {fileName} · {bytes?.byteLength ?? 0} bytes · sha256 {digest}
+            {fileName} · {bytes?.byteLength ?? 0} {t("bytes")} · sha256 {digest}
           </p>
         ) : null}
         <div className="grid">
@@ -165,23 +174,23 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
           </Field>
           <Field
             label="privacy_tier"
-            hint="leave it at the project tier unless this object is genuinely less sensitive"
+            hint={t("leave it at the project tier unless this object is genuinely less sensitive")}
           >
             <select value={form.privacy_tier} onChange={set("privacy_tier")}>
-              <option value="">choose</option>
-              <option value="public">public</option>
-              <option value="restricted">restricted</option>
-              <option value="strict_local">strict_local</option>
-              <option value="hgr_controlled">hgr_controlled</option>
+              <option value="">{t("choose")}</option>
+              <option value="public">{`${t("public")} (public)`}</option>
+              <option value="restricted">{`${t("restricted")} (restricted)`}</option>
+              <option value="strict_local">{`${t("strict_local")} (strict_local)`}</option>
+              <option value="hgr_controlled">{`${t("hgr_controlled")} (hgr_controlled)`}</option>
             </select>
           </Field>
         </div>
         <div className="grid">
-          <Field label="usage_scope" hint="cross_project_allowed is what lets another project read this row at all">
+          <Field label="usage_scope" hint={t("cross_project_allowed is what lets another project read this row at all")}>
             <select value={form.usage_scope} onChange={set("usage_scope")}>
               {SCOPE.map((one) => (
                 <option key={one} value={one}>
-                  {one}
+                  {`${t(one)} (${one})`}
                 </option>
               ))}
             </select>
@@ -190,7 +199,7 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
             <select value={form.retention_class} onChange={set("retention_class")}>
               {RETENTION.map((one) => (
                 <option key={one} value={one}>
-                  {one}
+                  {`${t(one)} (${one})`}
                 </option>
               ))}
             </select>
@@ -198,12 +207,12 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
         </div>
         <Field
           label="filtering_state"
-          hint="unknown requires upstream pipeline metadata, so it is deliberately not the default guess here"
+          hint={t("unknown requires upstream pipeline metadata, so it is deliberately not the default guess here")}
         >
           <select value={form.filtering_state} onChange={set("filtering_state")}>
             {FILTERING.map((one) => (
               <option key={one} value={one}>
-                {one}
+                {`${t(one)} (${one})`}
               </option>
             ))}
           </select>
@@ -211,14 +220,15 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
         {needsPipeline ? (
           <>
             <p className="muted">
-              This object is declared unfilterable-as-known, so the pipeline that produced it becomes part of the
-              record. All four fields go to the API verbatim.
+              {t(
+                "This object is declared unfilterable-as-known, so the pipeline that produced it becomes part of the record. All four fields go to the API verbatim.",
+              )}
             </p>
             <div className="grid">
-              <Field label="upstream pipeline name">
+              <Field label={t("upstream pipeline name")}>
                 <input value={form.pipeline_name} onChange={set("pipeline_name")} />
               </Field>
-              <Field label="version">
+              <Field label={t("version")}>
                 <input value={form.pipeline_version} onChange={set("pipeline_version")} />
               </Field>
             </div>
@@ -235,14 +245,17 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
             </div>
           </>
         ) : null}
-        <Field label="content_fingerprint" hint="defaults to the file digest; a dataset-level fingerprint may differ">
+        <Field
+          label="content_fingerprint"
+          hint={t("defaults to the file digest; a dataset-level fingerprint may differ")}
+        >
           <input className="mono" value={form.content_fingerprint} onChange={set("content_fingerprint")} />
         </Field>
         <button
           type="submit"
           disabled={!bytes || submit.busy || !form.asset_id || !form.privacy_tier || !pipelineWhole}
         >
-          {submit.busy ? "declaring, uploading, completing…" : "Register"}
+          {submit.busy ? t("declaring, uploading, completing…") : t("Register")}
         </button>
       </form>
     </Panel>
@@ -250,6 +263,7 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
 }
 
 function Registered({ caller, projectId }: { caller: Caller; projectId: string }) {
+  const t = useT();
   const listed = useAsync<Page<DataAsset>>(
     () => assetsApi.list(caller, projectId, { limit: 100 }),
     [caller.token, projectId],
@@ -269,11 +283,11 @@ function Registered({ caller, projectId }: { caller: Caller; projectId: string }
 
   return (
     <Panel
-      title="Registered assets"
-      note="a download link is a short-lived signature, handed out per request and never stored on the row"
+      title={t("Registered assets")}
+      note={t("a download link is a short-lived signature, handed out per request and never stored on the row")}
       actions={
         <button className="secondary" type="button" onClick={listed.reload}>
-          re-read
+          {t("re-read")}
         </button>
       }
     >
@@ -281,23 +295,22 @@ function Registered({ caller, projectId }: { caller: Caller; projectId: string }
       <Loading on={listed.loading} />
       {download ? (
         <Notice>
-          Signed for <span className="mono">{download.asset_id}</span> until{" "}
-          <span className="mono">{download.expires_at}</span> —{" "}
-          <a href={download.url}>use the link</a>
+          {t("Signed for")} <span className="mono">{download.asset_id}</span> {t("until")}{" "}
+          <span className="mono">{download.expires_at}</span> — <a href={download.url}>{t("use the link")}</a>
         </Notice>
       ) : null}
       {listed.data && listed.data.items.length ? (
         <table>
           <thead>
             <tr>
-              <th>asset</th>
-              <th>format</th>
-              <th>tier</th>
-              <th>scope</th>
-              <th>retention</th>
-              <th>filtering</th>
-              <th>bytes</th>
-              <th>produced by</th>
+              <th>{t("asset")}</th>
+              <th>{t("format")}</th>
+              <th>{t("tier")}</th>
+              <th>{t("scope")}</th>
+              <th>{t("retention")}</th>
+              <th>{t("filtering")}</th>
+              <th>{t("bytes")}</th>
+              <th>{t("produced by")}</th>
               <th />
             </tr>
           </thead>
@@ -306,15 +319,15 @@ function Registered({ caller, projectId }: { caller: Caller; projectId: string }
               <tr key={asset.asset_id}>
                 <td className="mono">{asset.asset_id}</td>
                 <td>{asset.format}</td>
-                <td>{asset.privacy_tier}</td>
-                <td>{asset.usage_scope}</td>
-                <td>{asset.retention_class}</td>
-                <td>{asset.filtering_state}</td>
+                <td>{t(asset.privacy_tier)}</td>
+                <td>{t(asset.usage_scope)}</td>
+                <td>{t(asset.retention_class)}</td>
+                <td>{t(asset.filtering_state)}</td>
                 <td>{asset.size_bytes}</td>
-                <td className="mono">{asset.created_by_run_id ?? "registered by hand"}</td>
+                <td className="mono">{asset.created_by_run_id ?? t("registered by hand")}</td>
                 <td>
                   <button className="secondary" type="button" onClick={() => void askFor(asset.asset_id)}>
-                    download
+                    {t("download")}
                   </button>
                 </td>
               </tr>
@@ -322,7 +335,7 @@ function Registered({ caller, projectId }: { caller: Caller; projectId: string }
           </tbody>
         </table>
       ) : (
-        !listed.loading && <Empty>Nothing is registered in this project yet.</Empty>
+        !listed.loading && <Empty>{t("Nothing is registered in this project yet.")}</Empty>
       )}
     </Panel>
   );

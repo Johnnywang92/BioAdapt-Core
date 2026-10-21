@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { exports_ as exportsApi, intentKey, projects as projectsApi, type Caller } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
 import type { ExportEnvelope, ExportKind, ExportRow, ExportStatus, Page, Project } from "@/lib/types";
@@ -19,11 +20,12 @@ const KINDS: ExportKind[] = ["tables", "figures", "code_bundle", "delivery_zip"]
  * empty list — an export screen that looks "nothing to deliver" would hide the reason.
  */
 export default function ExportsPage({ params }: { params: { projectId: string } }) {
+  const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
 
   if (!caller) {
     return (
-      <Panel title="Exports" note="nothing is read until a token is set">
+      <Panel title={t("Exports")} note={t("nothing is read until a token is set")}>
         <p className="muted">{blocked}</p>
       </Panel>
     );
@@ -38,6 +40,7 @@ export default function ExportsPage({ params }: { params: { projectId: string } 
 }
 
 function QueueExport({ caller, projectId }: { caller: Caller; projectId: string }) {
+  const t = useT();
   const submit = useSubmit();
   const [kind, setKind] = useState<ExportKind>("tables");
   const [runId, setRunId] = useState("");
@@ -55,14 +58,14 @@ function QueueExport({ caller, projectId }: { caller: Caller; projectId: string 
 
   return (
     <Panel
-      title="Queue an export"
-      note="filters narrow the artefact; an unknown run id is refused rather than answered with everything"
+      title={t("Queue an export")}
+      note={t("filters narrow the artefact; an unknown run id is refused rather than answered with everything")}
     >
       <ProblemNote error={submit.error} />
       {queued ? (
         <Notice>
-          <span className="mono">{queued.export_id}</span> is {queued.status} — poll{" "}
-          <span className="mono">{queued.poll}</span> until it reports READY.
+          <span className="mono">{queued.export_id}</span> {t("is")} {t(queued.status)} — {t("poll")}{" "}
+          <span className="mono">{queued.poll}</span> {t("until it reports READY.")}
         </Notice>
       ) : null}
       <form
@@ -72,29 +75,29 @@ function QueueExport({ caller, projectId }: { caller: Caller; projectId: string 
         }}
       >
         <div className="grid">
-          <Field label="kind">
+          <Field label={t("kind")}>
             <select value={kind} onChange={(event) => setKind(event.target.value as ExportKind)}>
               {KINDS.map((one) => (
                 <option key={one} value={one}>
-                  {one}
+                  {`${t(one)} (${one})`}
                 </option>
               ))}
             </select>
           </Field>
-          <Field label="run_id" hint="optional; limits the artefact to one run's products">
+          <Field label="run_id" hint={t("optional; limits the artefact to one run's products")}>
             <input className="mono" value={runId} onChange={(event) => setRunId(event.target.value)} />
           </Field>
         </div>
         <div className="grid">
-          <Field label="final_status" hint="optional; e.g. only the cards that reached supported">
+          <Field label="final_status" hint={t("optional; e.g. only the cards that reached supported")}>
             <input value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} />
           </Field>
-          <Field label="Idempotency-Key" hint="a resend of this click returns the original job">
+          <Field label="Idempotency-Key" hint={t("a resend of this click returns the original job")}>
             <input className="mono" value={key} onChange={(event) => setKey(event.target.value)} />
           </Field>
         </div>
         <button type="submit" disabled={submit.busy}>
-          {submit.busy ? "queueing…" : "Queue"}
+          {submit.busy ? t("queueing…") : t("Queue")}
         </button>
       </form>
     </Panel>
@@ -102,6 +105,7 @@ function QueueExport({ caller, projectId }: { caller: Caller; projectId: string 
 }
 
 function ExportList({ caller, projectId }: { caller: Caller; projectId: string }) {
+  const t = useT();
   const listed = useAsync<Page<ExportRow>>(
     () => exportsApi.list(caller, projectId, { limit: 50 }),
     [caller.token, projectId],
@@ -125,19 +129,21 @@ function ExportList({ caller, projectId }: { caller: Caller; projectId: string }
 
   return (
     <Panel
-      title="Exports"
-      note="a download link is handed out per read and expires; the row itself is the durable thing"
+      title={t("Exports")}
+      note={t("a download link is handed out per read and expires; the row itself is the durable thing")}
       actions={
         <button className="secondary" type="button" onClick={listed.reload}>
-          re-read
+          {t("re-read")}
         </button>
       }
     >
       <ProblemNote error={listed.error ?? error} />
       {tier.data?.privacy_tier === "strict_local" || tier.data?.privacy_tier === "hgr_controlled" ? (
         <div className="notice">
-          This project is {tier.data.privacy_tier}: the export route refuses it whatever the role of the caller
-          (§5.9). Delivery happens from the local side, so nothing is queued here.
+          {t(
+            "This project is {tier}: the export route refuses it whatever the role of the caller (§5.9). Delivery happens from the local side, so nothing is queued here.",
+            { tier: t(tier.data.privacy_tier) },
+          )}
         </div>
       ) : null}
       <Loading on={listed.loading} />
@@ -146,11 +152,11 @@ function ExportList({ caller, projectId }: { caller: Caller; projectId: string }
         <table>
           <thead>
             <tr>
-              <th>export</th>
-              <th>kind</th>
-              <th>status</th>
-              <th>requested by</th>
-              <th>created</th>
+              <th>{t("export")}</th>
+              <th>{t("kind")}</th>
+              <th>{t("status")}</th>
+              <th>{t("requested by")}</th>
+              <th>{t("created")}</th>
               <th />
             </tr>
           </thead>
@@ -158,15 +164,17 @@ function ExportList({ caller, projectId }: { caller: Caller; projectId: string }
             {listed.data.items.map((row) => (
               <tr key={row.export_id}>
                 <td className="mono">{row.export_id}</td>
-                <td>{row.kind}</td>
+                <td>{t(row.kind)}</td>
                 <td>
-                  <Chip status={statusTone(row.status)}>{row.status}</Chip>
+                  <Chip title={row.status} status={statusTone(row.status)}>
+                    {t(row.status)}
+                  </Chip>
                 </td>
                 <td className="mono">{row.requested_by}</td>
                 <td>{row.created_at ?? "—"}</td>
                 <td>
                   <button className="secondary" type="button" onClick={() => void poll(row)}>
-                    poll
+                    {t("poll")}
                   </button>
                 </td>
               </tr>
@@ -174,35 +182,40 @@ function ExportList({ caller, projectId }: { caller: Caller; projectId: string }
           </tbody>
         </table>
       ) : (
-        !listed.loading && <Empty>No export has been queued in this project.</Empty>
+        !listed.loading && <Empty>{t("No export has been queued in this project.")}</Empty>
       )}
     </Panel>
   );
 }
 
 function ExportDetail({ row }: { row: ExportRow }) {
+  const t = useT();
   return (
     <div className="panel">
       <dl className="facts">
-        <dt>export</dt>
+        <dt>{t("export")}</dt>
         <dd className="mono">{row.export_id}</dd>
-        <dt>status</dt>
+        <dt>{t("status")}</dt>
         <dd>
-          <Chip status={statusTone(row.status)}>{row.status}</Chip>
+          <Chip title={row.status} status={statusTone(row.status)}>
+            {t(row.status)}
+          </Chip>
         </dd>
-        <dt>artefact</dt>
-        <dd className="mono">{row.artifact_asset_id ?? "not written yet"}</dd>
-        <dt>failure reason</dt>
+        <dt>{t("artefact")}</dt>
+        <dd className="mono">{row.artifact_asset_id ?? t("not written yet")}</dd>
+        <dt>{t("failure reason")}</dt>
         <dd>{row.failure_reason ?? "—"}</dd>
-        <dt>download</dt>
+        <dt>{t("download")}</dt>
         <dd>
           {row.download_url ? (
             <>
-              <a href={row.download_url}>use the link</a>{" "}
-              <span className="muted mono">until {row.expires_at} ({row.ttl_seconds}s)</span>
+              <a href={row.download_url}>{t("use the link")}</a>{" "}
+              <span className="muted mono">
+                {t("until")} {row.expires_at} ({row.ttl_seconds}s)
+              </span>
             </>
           ) : (
-            <span className="muted">only a READY export has a link</span>
+            <span className="muted">{t("only a READY export has a link")}</span>
           )}
         </dd>
       </dl>

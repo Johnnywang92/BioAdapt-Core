@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { expiryNote, useIdentity } from "@/lib/identity";
+import { useT } from "@/lib/i18n";
 import { Chip, Field } from "@/components/ui";
 
 /**
@@ -14,6 +15,7 @@ import { Chip, Field } from "@/components/ui";
  * cannot show that rule working.
  */
 export function IdentityBar() {
+  const t = useT();
   const { identity, projectId, error, setToken, setProjectId, clear } = useIdentity();
   const [draftToken, setDraftToken] = useState("");
   const [draftProject, setDraftProject] = useState("");
@@ -43,42 +45,48 @@ export function IdentityBar() {
     setNote(null);
   }
 
+  const expiry = identity ? expiryNote(identity.token) : null;
+
   return (
     <div className="panel">
       <header>
         <div>
-          <h2>Acting as</h2>
+          <h2>{t("Acting as")}</h2>
           <p className="muted">
-            The token decides the role; this panel only says which token a person is holding. A
-            service account can draft, and can never sign off or decide an approval (§11.4).
+            {t(
+              "The token decides the role; this panel only says which token a person is holding. A service account can draft, and can never sign off or decide an approval (§11.4).",
+            )}
           </p>
         </div>
       </header>
 
-      {error ? <div className="error">{error}</div> : null}
-      {note ? <div className="notice">{note}</div> : null}
+      {error ? <div className="error">{t(error)}</div> : null}
+      {note ? <div className="notice">{t(note)}</div> : null}
 
       {identity ? (
         <div className="rows">
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <strong className="mono">{subject}</strong>
             {identity.roles.map((role) => (
-              <Chip key={role}>{role}</Chip>
+              <Chip key={role} title={role}>
+                {t(role)}
+              </Chip>
             ))}
-            <Chip>{identity.isServiceAccount ? "service account" : "human"}</Chip>
+            <Chip>{t(identity.isServiceAccount ? "service account" : "human")}</Chip>
             <Chip status={identity.mfaVerified ? "supported" : undefined}>
-              {identity.mfaVerified ? "mfa verified" : "no mfa"}
+              {t(identity.mfaVerified ? "mfa verified" : "no mfa")}
             </Chip>
             <button className="secondary" onClick={clear} type="button">
-              forget token
+              {t("forget token")}
             </button>
           </div>
-          <p className="muted mono">{expiryNote(identity.token) ?? "no expiry claim to show"}</p>
+          <p className="muted mono">{expiry ? t(expiry.text, expiry.vars) : t("no expiry claim to show")}</p>
           {!identity.projectIds.includes(projectId) && projectId ? (
             <div className="notice">
-              This token does not list project <span className="mono">{projectId}</span>. The API
-              scopes every read to the token, so the screens will report a denial rather than borrow
-              another project&apos;s rows (§11.2).
+              {t("This token does not list project")} <span className="mono">{projectId}</span>.{" "}
+              {t(
+                "The API scopes every read to the token, so the screens will report a denial rather than borrow another project's rows (§11.2).",
+              )}
             </div>
           ) : null}
         </div>
@@ -89,7 +97,10 @@ export function IdentityBar() {
             apply();
           }}
         >
-          <Field label="Compact JWS" hint="held in this tab only: sessionStorage, never localStorage, never a URL">
+          <Field
+            label={t("Compact JWS")}
+            hint={t("held in this tab only: sessionStorage, never localStorage, never a URL")}
+          >
             <textarea
               rows={3}
               spellCheck={false}
@@ -98,7 +109,7 @@ export function IdentityBar() {
               placeholder="header.payload.signature"
             />
           </Field>
-          <button type="submit">Use this token</button>
+          <button type="submit">{t("Use this token")}</button>
         </form>
       )}
 
@@ -109,7 +120,7 @@ export function IdentityBar() {
           openProject();
         }}
       >
-        <Field label="Project" hint="every route below is project scoped on the server">
+        <Field label={t("Project")} hint={t("every route below is project scoped on the server")}>
           <input
             value={draftProject}
             onChange={(event) => setDraftProject(event.target.value)}
@@ -117,11 +128,11 @@ export function IdentityBar() {
           />
         </Field>
         <button type="submit" disabled={!identity}>
-          Open project
+          {t("Open project")}
         </button>
         {projectId ? (
           <span className="muted" style={{ marginLeft: 8 }}>
-            current: <span className="mono">{projectId}</span>
+            {t("current")} <span className="mono">{projectId}</span>
           </span>
         ) : null}
       </form>
