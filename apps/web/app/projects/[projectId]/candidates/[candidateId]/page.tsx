@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote, StatusChip } from "@/components/ui";
-import { findings, type Caller } from "@/lib/api";
+import { findings, knowledge, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
 import type {
+  BioSuggestion,
   CardEvidenceRead,
   Evidence,
   EvidenceCard,
@@ -70,6 +71,30 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
   );
   const review = useSubmit();
   const signOff = useSubmit();
+  const [ragSuggestion, setRagSuggestion] = useState<BioSuggestion | null>(null);
+  const [queryingKnowledge, setQueryingKnowledge] = useState(false);
+
+  const handleQueryKnowledge = async () => {
+    if (!card) return;
+    setQueryingKnowledge(true);
+    try {
+      const markers = Object.values(card.evidence)
+        .map((e) => ((e.content as Record<string, unknown>)?.gene_symbol || (e.content as Record<string, unknown>)?.marker) as string)
+        .filter(Boolean);
+      const res = await knowledge.suggest(
+        caller,
+        projectId,
+        card.display_name || card.candidate_id,
+        markers.length > 0 ? markers : ["CD4", "CD8A", "FOXP3"],
+        card.candidate_label || "",
+      );
+      setRagSuggestion(res);
+    } catch {
+      // Ignored
+    } finally {
+      setQueryingKnowledge(false);
+    }
+  };
 
   function refresh() {
     read.reload();
@@ -178,6 +203,28 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
               <dt>{t("cross modal")}</dt>
               <dd>{t(card.cross_modal_status)}</dd>
             </dl>
+
+            {(card.cross_modal_status === "discordant" || card.unresolved_conflict) && (
+              <div
+                style={{
+                  background: "#fff1f2",
+                  border: "1px solid #fecdd3",
+                  color: "#9f1239",
+                  padding: "12px 16px",
+                  borderRadius: "8px",
+                  marginTop: "16px",
+                  marginBottom: "16px",
+                  fontSize: "0.95rem",
+                }}
+              >
+                <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                  <span>⚡</span> {t("Cross-Modal Conflict Alert")}
+                </div>
+                <div style={{ lineHeight: 1.5 }}>
+                  {t("Discordant signals between transcription and orthogonal modality")}
+                </div>
+              </div>
+            )}
 
             {read.data?.reviewer_memo ? (
               <div
@@ -298,6 +345,55 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                 </p>
               </details>
             ) : null}
+
+            <div style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                <h3 style={{ margin: 0, fontSize: "1.05rem", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span>📚</span> {t("Knowledge Base RAG Advice")}
+                </h3>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={queryingKnowledge}
+                  onClick={handleQueryKnowledge}
+                  style={{ fontSize: "0.85rem", padding: "4px 10px" }}
+                >
+                  {queryingKnowledge ? t("Querying knowledge base...") : `🔍 ${t("Consult Knowledge Base")}`}
+                </button>
+              </div>
+
+              {ragSuggestion && (
+                <div
+                  style={{
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: "8px",
+                    padding: "12px 16px",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px", flexWrap: "wrap" }}>
+                    <strong>{t("suggested cell types")}:</strong>
+                    {ragSuggestion.suggested_cell_types.map((ct, idx) => (
+                      <span key={idx} style={{ background: "#dcfce7", color: "#15803d", padding: "2px 8px", borderRadius: "4px", fontWeight: 600 }}>
+                        {ct}
+                      </span>
+                    ))}
+                    <span style={{ color: "var(--muted)", marginLeft: "auto", fontSize: "0.8rem" }}>
+                      {t("confidence")}: {Math.round(ragSuggestion.confidence * 100)}%
+                    </span>
+                  </div>
+                  <div style={{ color: "#334155", whiteSpace: "pre-wrap", lineHeight: 1.5, marginBottom: "8px" }}>
+                    {ragSuggestion.rationale}
+                  </div>
+                  {ragSuggestion.citations.length > 0 && (
+                    <div style={{ fontSize: "0.8rem", color: "var(--muted)", borderTop: "1px dashed #cbd5e1", paddingTop: "6px" }}>
+                      {t("citations")}: {ragSuggestion.citations.map((c) => `《${c.source_doc?.title || c.chunk.doc_id}》`).join(", ")}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="side">
@@ -639,7 +735,9 @@ function SignOffForm({
       </button>
       <p className="muted">
         {t("currently")} <Chip title={card.sign_off}>{t(card.sign_off)}</Chip>
-        {card.reviewer_id ? t(" · signed by {who}", { who: card.reviewer_id }) : t(" · not yet signed by a named person")}
+        {card.sign_off !== "not_signed" && card.reviewer_id
+          ? t(" · signed by {who}", { who: card.reviewer_id })
+          : t(" · not yet signed by a named person")}
       </p>
       <p className="muted">
         {t("this card can reach at most")} <StatusChip status={ceiling} />

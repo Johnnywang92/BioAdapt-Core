@@ -579,4 +579,12 @@ export const zh: Record<string, string> = {
   "suggested cell types": "推断细胞类型",
   "biological rationale": "生物学依据与文献溯源",
   "delete doc": "删除",
+
+  // 跨组学冲突与卡片知识库联动
+  "Cross-Modal Conflict Alert": "跨组学模态冲突预警",
+  "Discordant signals between transcription and orthogonal modality":
+    "转录组表达与正交组学（表面蛋白/染色质可及性）检测到显著矛盾。依据 §7.5 规则，系统已显式暴露冲突并硬阻断自动放行，禁止加权掩盖，必须由领域专家人工仲裁。",
+  "Consult Knowledge Base": "从私有知识库匹配先验建议",
+  "Querying knowledge base...": "正在检索私有文献与实验记录…",
+  "Knowledge Base RAG Advice": "私有知识库历史文献与先验建议",
 };

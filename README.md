@@ -483,22 +483,72 @@ curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/js
 
 ### 7.4 写操作：复核、签字、导出
 
+结论爬的是一架梯子：`rejected < unknown < conflict < provisional < supported`（[gates.py:30](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/schemas/src/bioadapt_schemas/gates.py#L30)）。每张卡还有**天花板**——它不是卡上的字段，是门禁拿这张卡自己的数字算出来的一次读数（`card_ceiling`），所以任何一条意见都抬不过它自己的数字。
+
+复核分三种 scope：`field` 改写卡上的字段（假设类型、候选标签、ontology 引用），`card` 动结论状态，`membership` 只记一条留给下一轮的意见。`decision` ∈ `approve` `revise` `return_for_analysis` `reject` `mark_conflict` `mark_unknown`。每个动作能落到哪一格是定死的：
+
+| scope + decision | 状态落到哪 |
+| --- | --- |
+| `card` + `approve` | 抬到天花板，但至多 `provisional` |
+| `card` + `revise` / `return_for_analysis` / `mark_unknown` | `unknown` |
+| `card` + `mark_conflict` | `conflict` |
+| `card` + `reject` | `rejected` |
+| 签字 `full` | 至多 `supported` |
+| 签字 `conditional` | 至多 `provisional` |
+
+草稿卡一律是 `unknown`（它还没写假设），所以先由 `field` scope 复核写出结论——这一步只改字段，状态不动：
+
 ```bash
-curl -s -X POST -H "Authorization: Bearer $EX" -H "Content-Type: application/json" \
-  -d '{"scope":"card","decision":"approve","rationale":"numbers match the products"}' \
-  $API/v1/projects/prj_scrnaseq/cards/card_21a8e85ab0cb/reviews     # → 200，回整张卡
+AN=$(python3 -c "import json;print(json.load(open('.workbench/tokens.json'))['analyst'])")
+EX=$(python3 -c "import json;print(json.load(open('.workbench/tokens.json'))['expert'])")
+
+curl -s -X POST -H "Authorization: Bearer $AN" -H "Content-Type: application/json" \
+  -d '{"scope":"field","decision":"revise","rationale":"monocytes: LYZ/CD14/FCGR3A rank top in this cluster",
+       "previous_value":{"hypothesis_type":"unknown","candidate_label":null,"label_level":"unknown_coarse",
+                         "ontology":{"term_id":null,"ontology_name":null,"ontology_version":null,"mapping_source":null,"mapping_confidence":null}},
+       "new_value":{"hypothesis_type":"cell_type","candidate_label":"CD14+ classical monocyte","label_level":"cell_type_broad",
+                    "ontology":{"term_id":"CL:0000576","ontology_name":"Cell Ontology","ontology_version":"2025-01-01",
+                                "mapping_source":"manual","mapping_confidence":0.9}}}' \
+  $API/v1/projects/prj_scrnaseq/cards/card_21a8e85ab0cb/reviews     # → 200，final_status 仍是 unknown
 ```
 
-`scope` ∈ `card` `field` `membership`；`decision` ∈ `approve` `revise` `return_for_analysis` `reject` `mark_conflict` `mark_unknown`。响应里 `final_status` 是复核后重算的结果（`supported` / `provisional` / `conflict` / `unknown` / `rejected`）——复核者的一条意见不会凭空把卡抬成 supported。
+写出结论和采纳结论是两步。`card` scope 的 `approve` 才是采纳：
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $AN" -H "Content-Type: application/json" \
+  -d '{"scope":"card","decision":"approve","rationale":"numbers match the products"}' \
+  $API/v1/projects/prj_scrnaseq/cards/card_21a8e85ab0cb/reviews
+```
+
+```json
+{"review_id": "rev_42c4db75b79e", "card_id": "card_21a8e85ab0cb",
+ "final_status": "provisional", "ceiling": "provisional",
+ "gate_reasons": ["no independent confirmation evidence", "not screened: batch_specific",
+                  "not screened: stress_cycle", "not screened: over_split", "no stability summary",
+                  "C3_rare_stable is missing its minimum evidence set: ['robustness protocol run', 'cross-donor consistency measured']"]}
+```
+
+`ceiling` 与 `gate_reasons` 是门禁的读数，**决定之前就看得见**：`GET …/candidates/{id}/evidence` 同样返回这两个字段（复核表单上写着「这张卡片最多只能到」）。评审者先知道这张卡能到哪、差什么，再决定按不按这个键。审计 `card:review:approve` 记 `from_status`/`to_status`/`ceiling`。
+
+对一张还没写出假设的卡直接 approve 是 409，不是「默默记一笔」：
+
+```json
+{"code": "conflict", "class": "conflict", "field": "hypothesis_type",
+ "message": "this card states no hypothesis, so there is no conclusion to approve; a field review has to name the candidate first"}
+```
+
+签字：
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $EX" -H "Content-Type: application/json" \
   -d '{"sign_off":"full"}' \
   $API/v1/projects/prj_scrnaseq/cards/card_21a8e85ab0cb/sign_off
-# → {"card_id": "card_21a8e85ab0cb", "sign_off": "full", "final_status": "unknown"}
+# → {"card_id": "card_21a8e85ab0cb", "sign_off": "full", "final_status": "provisional", "ceiling": "provisional"}
 ```
 
-签字（`full` / `conditional` / `not_signed`）与结论状态是两条独立记录：`sign_off=full` 不会把 `final_status` 从 `unknown` 改成 `supported`。签字还必须由非作者完成（§5.9 的 CARD_SIGN_OFF）。
+`full` 签字最多把卡顶到 `supported`，`conditional` 顶到 `provisional`，两种都还要过天花板这一关。上面这张卡停在 `provisional` 不是签字不顶用，是天花板本来就是 `provisional`：参考运行的五张卡全是 C3_rare_stable 且缺 C3 的最小证据集，`gate_reasons` 里写着差什么。要到 `supported` 得同时成立三件事——天花板本身是 `supported`（类证据集齐、有独立确认证据、无未决矛盾）、专家 `full` 签字、签字人不是作者。
+
+签字还必须由非作者完成（§5.9 的 CARD_SIGN_OFF），也过 §1.5 的阈值门。撤签 `{"sign_off":"not_signed","reason":"…"}`：`reason` 必填，把 `supported` 拉回 `provisional`（结论靠签字撑着，签字没了它也撑不住）。**签字人撤不掉自己签的卡**：签字会把他写进这张卡的 `reviewer_id`，他随即成了这张卡的作者，同一道作者检查就把他的撤签挡了（403「an analysis run author may not sign off its own conclusion」）——换一位专家来撤。
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
