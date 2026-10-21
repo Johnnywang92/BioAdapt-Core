@@ -16,6 +16,8 @@ AI 辅助单细胞多组学分析平台的实现仓库。本文给出**安装、
 
 `scripts/serve_workbench.py`、`tests/integration/`、`services/api/tests/` 是三个最可靠的"这段代码怎么用"来源。
 
+只想跑通一次分析的话，直接看 **§6.3**（从头做的完整顺序 + 示例数据的实测数字）和 **§6.4**（换成自己的数据会撞哪四面墙）。
+
 ---
 
 ## 2. 仓库结构
@@ -186,6 +188,98 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
 | `/projects/{id}/candidates/{candidateId}/alignment` | 跨轮对齐历史（§5.6） |
 | `/projects/{id}/approvals` | 审批收件箱 |
 | `/projects/{id}/exports` | 导出请求 |
+
+### 6.3 从头做一次单细胞分析（顺序 + 示例数据实测数字）
+
+这一节回答的是"我有一批细胞数据，怎么一路走到一个能交付的结论"。顺序就是 §5.1 的管线顺序，也就是工作台导航条的顺序：`阶段 0 判据 → 数据登记 → 写计划 → 人批计划 → run 与状态机 → 计算链 → 候选集 → 证据卡 → 专家队列 → 复核签字 → 导出`。
+
+**先把一句硬结论放在最前面**：在这份参考部署里，**只有种子 run `run_scrnaseq_01` 这一条路能一路走到证据卡**；从 HTTP/工作台新建的项目走不到计算，四个断点逐条写在 6.4。§12 那句"生产件缺件：……计算执行器"就是这件事，这里只补它对使用者的实际影响。
+
+本节全部数字是 2026-10-21 在本机把 [card_factories.py](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/card_factories.py) 的 `carded_run()`（11 节点全跑）完整执行一遍得到的。
+
+**示例数据是什么**
+
+仓库里**没有任何真实数据文件**（`.h5ad` `.h5` `.mtx` `.csv` `.tsv` `.npz` `.rds` 一个都没有，`.venv` 里也不装 `numpy`/`anndata`/`scanpy`）。唯一的示例是 [dataset.py:196](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/tests/dataset.py#L196) 的 `synthetic_dataset(seed=20260501)`，纯 Python 生成：
+
+- **128 cells × 105 genes**，GENCODE 44 / HGNC symbol；2 组 × 8 供者 × 4 群体 = `t_cell 48 / b_cell 32 / monocyte 24 / rare_state 24`，case 64 / control 64
+- 预埋缺陷各成对跨组：shallow 8、doublet 8、ambient 8、高线粒体 2（目标占比 0.45）
+- 分布刻意横跨全部 6 条 QC 界：library size **1099 / 9332 / 31063**（min/中位/max），detected genes **83 / 94 / 96**，mito fraction **0.034 / 0.0647 / 0.4634**
+- 群体是"构造真值"，不是标注列——所以簇号 `c000…c004` 是确定性聚类的输出，`c002`、`c001` 这两个常量是种子硬编码了自己的聚类结果（[driver_factories.py:154](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/driver_factories.py#L154)）
+
+**阶段 0：判据先于人**
+
+24 个判据的默认集是 `version="v0-unconfirmed"`、`confirmed=False`（[thresholds.py:13](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/schemas/src/bioadapt_schemas/thresholds.py#L13)）。确认它的是 `POST /v1/projects/{project_id}/thresholds/confirm`（[routes_data.py:94](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L94)）：仅 PI、需二次因子、请求体必须**重述全部 24 个字段**，`confirmed` 由平台置位（注册时自带 `confirmed` 直接被拒，[routes_data.py:71](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L71)）。未确认时计算、起草、排队照跑，只有**签字与导出**两个出口 403（§1.5）。工作台**没有这一页**，只能调 API。种子项目用的是 `ATTESTED_CUTS`（已确认），所以演示能一路签到底——你自己建的项目不行。
+
+**顺序、屏幕与端点**
+
+| # | 动作 | 屏 | 端点 | 关键点 |
+| --- | --- | --- | --- | --- |
+| 1 | 建项目 | `/` | `POST /v1/projects` | `privacy_tier` 故意无默认值；`created_by` 取自 token，不许手填 |
+| 2 | 登记数据 | `/data` | `POST …/assets` → 预签 PUT → `POST …/assets/{id}/complete`（[:139](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L139)、[:164](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L164)） | 浏览器算 SHA-256 并预填 `asset_id`/`content_fingerprint`；PUT 不带 bearer；**行只在 complete 成功后存在** |
+| 3 | 记录计划 | `/plans` | `POST …/plans` | 这一屏收**整份计划 JSON**，服务端校验器是唯一把关（不做静默规范化）；返回 `plan_sha256` |
+| 4 | 起 run | `/projects/{id}` 的 Launch a run | `POST …/runs`（`Idempotency-Key` 头必填，缺即 invalid，[routes_runs.py:79](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_runs.py#L79)） | 202 + `run_id = sha256(project\|key\|digest)[:12]`；同键不同体 409 |
+| 5 | 批准与推进 | `/approvals` | `POST …/runs/{id}/approvals` → `…/approvals/{aid}/decision` → `POST …/runs/{id}/transitions` | transitions 是**唯一**状态机入口；请求门的人不能自己批；服务账号永远不能批 |
+| 6 | 计算 | — | 进程内 driver | 见下表；**HTTP 侧没有执行器**（6.4 断点 1） |
+| 7 | 候选集与卡 | `/queue` | `POST …/runs/{id}/cards/draft` | 一簇一个 `CandidateSet`，成员指纹由 `derive_candidate` 复现 |
+| 8 | 排队 | `/queue` | `GET …/runs/{id}/cards/queue` | 分数 `impact(0-3) × uncertainty(0-3) + client ask(0/2)`（[queue/page.tsx:141](file:///Users/yifanwang/workspace/BioAdapt-Core/apps/web/app/projects/%5BprojectId%5D/queue/page.tsx#L141)），上限受 §13.4 的每周复核预算约束 |
+| 9 | 复核与签字 | `/candidates/{id}` | `POST …/cards/{card_id}/reviews` → `…/sign_off` | 起草或复核过这张卡的人**不能再签它**（§13.1）；标签、ontology 术语、最终状态只能由人写入 |
+| 10 | 导出 | `/exports` | `POST …/exports` → `GET …/exports/{id}` | 本仓无导出 worker，队列里的行永远 `QUEUED` |
+
+**计算链：11 个节点与实测输出**（实现在 [steps.py:151](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/steps.py#L151) 起，工具版本一律 `1.0.0`）
+
+| 节点 / 工具 | 参数 | 实测 |
+| --- | --- | --- |
+| `qc` `scrnaseq_qc` | 6 条规则全部 `mark`（不删细胞），`max_flagged_share=0.35` | flagged **18/128**：`shallow_library` 8、`few_genes` 8（这 8 个同时踩两条界）、`deep_library` 8、`mito_high` 2，dropped 0。**`doublet_like`/`ambient_like` 都是 0** ← 下面第一条坑 |
+| `normalize` `scrnaseq_normalize` | `target_sum=10000` | log2(CPM+1)，`tolerance=1e-6` |
+| `feature_selection` `scrnaseq_feature_selection` | `n_top=50, min_mean 0.5, max_mean 8.0, min_var 0.05, seed 7` | 50 个基因，前 12：CD3D CD3E S100A8 S100A9 MS4A1 CD79A LYZ IL7R CD14 HBB CD79B GATA1 |
+| `embedding` `scrnaseq_pca` | `n_components=10, seed 11`（幂迭代，不是 randomized SVD） | evr 0.2236 / 0.1547 / 0.1358 / 0.1270 / 0.0992 / …。**链里没有 UMAP**，平台展示的 2D 图不属于这条管线 |
+| `neighbors` `scrnaseq_neighbors` | `k=15, seed 13`，暴力 L2 | 1920 条边 |
+| `clustering` `scrnaseq_cluster` | `resolution=1.0, seed 17`，greedy modularity（**不是 Leiden**） | 5 簇：c000 32、c001 24、c002 24、c003 26、c004 22；modularity 0.6856，singleton 0 |
+| `markers` `scrnaseq_markers` | `top_n=4`，mean-difference 排名，`rank_only=True` | c002 = HBB 9.605、GATA1 9.003、PTPRC 6.788、MT-CO1 0.394 |
+| `pseudobulk_de` `scrnaseq_pseudobulk_de` | 200 permutations，BH within contrast，`unit=donor` | 4 vs 4 供者、unpaired、0 共享供者；**最小 padj = 0.5721 → 0 个基因过 fdr 0.05** |
+| `robustness` `scrnaseq_robustness` | `robustness_pbmc`：LOD、subsample 0.5、20 reps | 5 类扰动全 pass：seed cc_ari 1.000、resolution 0.961、leave-one-donor 0.950、subsampling 0.816、feature-subset 0.763；0 个 arm 消失 |
+| `coverage` `scrnaseq_coverage` | `knn=20, ratio_min=2.0` | candidate 中位距离 6.625 vs 校准中位 3.918 → **ratio 1.69 < 2.0**：参考覆盖到了，novelty 不成立 |
+| `state_axis` `scrnaseq_state_axis` | 轴 CD14 +1 / CD3D −1，`tail_quantile 0.95` | 对 c001：axis_explained 0.937、tail_share 1.000 → c001 是**单核细胞的轴尾状态**，不是一个新类型 |
+
+每个节点的产物都落成一个可复算 sha256 的资产：`counts as_dcc47c37cb36` → `qc_flags as_75527a488d6c` → `expression as_b98a02312b50` → `features as_4d6f476ff569` → `embedding as_90c4e3e58dad` → `graph as_d2c48be73384` → `clusters as_17a40752d23e` → `markers as_af6649b88d49` → `de_table as_30dc4312b3c5` → `stability as_a70ffd9f7679` / `coverage as_0433c5ed9a4d` / `state_axis as_9663191ea68d`。
+
+**最后这张卡长什么样**（焦点候选 c002，`card_eb0d741ac922`）：14 条证据（9 support / 1 contradict / 4 只够 trigger 一眼），`hypothesis_type=unknown`、`unknown_reason=quality_limited`、`composition_check="not run: the plan wires no composition test"`、`cross_modal_status=not_yet_validated`、`thresholds_version=v0-unconfirmed`、`final_status=unknown`、`sign_off=not_signed`。**这就是设计意图**：DE 一个基因都过不了、覆盖度又不支持 novelty，所以链有权拒绝给结论，而不是硬凑一个细胞名。
+
+**三条最容易踩的**
+
+1. **QC 分数不会自动生效。** 种子的计划只把 `counts` 接进 `qc` 节点（[driver_factories.py:168](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/driver_factories.py#L168)），而 `qc` 任务其实期望三个输入槽（`counts` 必连，`doublet_scores`、`ambient_scores` 可空，[implementation.py:444](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/implementation.py#L444)）。没连，那两条规则就**根本不评估**——预埋的 8 个 doublet、8 个 ambient 一个都没标出来。链自己会诚实地报 `warn: qc_rules_not_evaluated`（[steps.py:228](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/steps.py#L228)）。要真筛，就把 scrublet / decontam 的分数作为 `CellScoreProduct` 资产接成第二、第三个输入。
+2. **计划的契约不是建议。** 三条停止条件必须全在（`input_schema_invalid`、`critical_quality_failure`、`unresolved_design_confounding`，[plan.py:12](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/schemas/src/bioadapt_schemas/plan.py#L12)）；凡是输出结论类产物（`candidate_sets`/`evidence_cards`/`de_table_support`/`stability_summary`）的节点必须 `requires_approval=true`（[plan.py:108](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/schemas/src/bioadapt_schemas/plan.py#L108)）；`DesignMatrix` 至少一条 `PASS/FAIL` 的混杂检查；discovery 与 confirmation 分区不许重叠。
+3. **预算是三轴独立的**：算力分钟、模型成本 USD、迭代次数，取计划与项目配额的逐轴较小值，任一轴耗尽即 `BUDGET_EXCEEDED`（§9.7）。种子用的是 1 号种子：`max_iterations=1`、`max_compute_minutes=180`、`max_token_cost_usd=5.0`。
+
+**自己复现上面这些数字**
+
+```bash
+cd /Users/yifanwang/workspace/BioAdapt-Core && .venv/bin/python - <<'PY'
+import sys
+sys.path[:0] = ["tests/integration", "workflows/scrnaseq/tests"]
+import card_factories as CF, driver_factories as F
+made = CF.carded_run()                      # 11 节点全跑，并把 5 张卡起草入库
+qc = made.measured("qc_flags")
+print("cells", len(qc.rows), "flagged", qc.marked_cells, [(r.name, r.flagged) for r in qc.rules])
+print("clusters", {k: len(v) for k, v in made.measured("clusters").cells_by_cluster().items()})
+print("min padj", min(r.padj for r in made.measured("de_table").rows))
+card = made.draft(F.CANDIDATE_CLUSTER).card
+print(card.card_id, card.final_status, card.unknown_reason)
+PY
+```
+
+### 6.4 换成你自己的数据：四个断点（按硬度排）
+
+想把手上的一管数据跑成结论，下面四条都会挡路。前两条 README 别处没写清，值得先读：
+
+1. **HTTP 起的 run 没有人执行。** `InMemoryQueue` 的注释原话："Nothing here starts a run: the reference build has no worker, so an admitted run stays where its engine left it"（[deps.py:72](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/deps.py#L72)）。11 节点那条链只在进程内跑（种子的 driver、pytest），API 只负责受理、记账、状态机。
+2. **`tool_registry_snapshot` 没地方查，工具也没有注册入口。** `POST …/runs` 要求这个字段（[routes_runs.py:40](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_runs.py#L40)），但 `/openapi.json` 里唯一和工具相关的路由只有 ad-hoc 授予三条（[routes_tools.py:90](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_tools.py#L90)）；`Action.TOOL_REGISTER` 在策略层存在，没有任何 HTTP 消费者。执行侧还会因快照漂移直接 `POLICY_BLOCKED`。
+3. **对象平面到不了。** 预签 URL 的 host 写死 `https://object.internal/{key}?…`（[objectstore.py:108](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/storage/src/bioadapt_storage/objectstore.py#L108)），浏览器 PUT 不进去，于是 `complete` 永远 409 `nothing has been uploaded`。要接 MinIO/S3。
+4. **格式对不上，转换器没有入口。** 计算侧只认 `format == "json"`（平台自己的 product codec），h5ad 行会被拒（[runner.py:69](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L69)、[:744](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L744)）；`read_h5ad()` 确实存在（[scanpy_adapter.py:333](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/scanpy_adapter.py#L333)，obs 列名靠 `DEFAULT_OBS_KEYS` 映射），但它读的是**磁盘上的 AnnData**，既无路由也无 CLI，而 `anndata`/`numpy`/`scanpy` 都不在 `.venv` 里。
+
+最短补法（**尚未实现**，需要另排：它要动依赖）：写一个 `scripts/convert_h5ad.py`，`read_h5ad(path, genome=…) → ExpressionProduct`，再交给 [runner.py:233](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L233) 的 `write_asset()` 落成 `format="json"` 的行，然后把那个 `as_xxxx` 填进 `POST …/runs` 的 `input_asset_ids`。断点 1 与 2 不解决的话，这条路仍然只能到"资产入库"，跑不出产物。
+
+换组织时别忘了：`qc_pbmc_reference` 那 6 条判据是**血液**的界，参考实现自己在 spec 里写了"高线粒体组织（心、肌肉、肿瘤活检）需要规则覆盖而不是沿用血液界"。
 
 ---
 
@@ -573,6 +667,8 @@ app = create_app(ApiState(
 | `GET …/assets/{id}/download` 返回 `https://object.internal/…?sig=…` | 签名 URL 的 host 是占位。生产要接 MinIO/S3 并换签名器 |
 | 对上传 URL 发真实 `PUT` 拿不到 2xx | 没有可路由的对象存储。`POST …/assets/{id}/complete` 在字节缺失时报 409 `nothing has been uploaded to {key}`（§5.9 的完整性检查正在工作，不是坏掉） |
 | 导出永远 `QUEUED` | 没有导出 worker。`poll` 字段给出的就是最终状态 |
+| 在工作台点了 Launch a run，run 一直停在原地 | API 侧没有计算执行器，`InMemoryQueue` 的注释原话是 "Nothing here starts a run"（[deps.py:72](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/deps.py#L72)）。11 节点那条链只在进程内由 driver 跑，见 §6.3 |
+| 新项目填不出 `tool_registry_snapshot` | 没有任何路由能列出注册表，`Action.TOOL_REGISTER` 在策略层存在但没有 HTTP 消费者（§6.4 断点 2） |
 | 每次读证据卡都重新取产物、重算 sha256、重解析 | 这是 §5.9 的完整性控制本身（审查报告 P4，**有意不缓存**） |
 | `GET …/runs/{id}/events`（SSE）存在但没人用 | 批次二删掉了前端 `EventSource` 客户端，本仓已无消费者（P7 因此不修） |
 | `GET …/traces/{id}` 常 404 | 只有真实模型调用才会写 trace（`inv_…`）。种子 run 的卡由确定性 driver 产出，不含模型调用 |
@@ -634,3 +730,12 @@ conftest 冲突。在根目录跑全量，或逐包跑（见 §5.2）。
 
 **Q：登记数据后 `complete` 一直 409？**
 正常，见 §10 第二行。要在本地跑完整闭环，直接用 `serve_workbench.py` 的种子 run。
+
+**Q：我想从头跑自己的一批单细胞数据，照哪节做？**
+§6.3 给顺序与示例数据的实测数字，§6.4 给现在会撞的四面墙（执行器、快照、对象平面、h5ad 格式）。一句话结论：这份部署里只有种子 run 那一条路一路走到证据卡。
+
+**Q：3100 上每个页面都 500，报 `Cannot find module './682.js'`？**
+`.next` 里的编译产物与源码不同步（改过 `app/`、切过分支之后常见）。`rm -rf apps/web/.next` 再 `npm run dev -- -p 3100`。
+
+**Q：8000 上的 API 少了几条端点？**
+它是批次五/六之前起来的旧进程（§10 最后一行）。重启 `serve_workbench.py` 才会有 `thresholds/confirm` 与 ad-hoc 授予三条路由；重启会退回种子状态，丢掉内存里演示产生的行。
