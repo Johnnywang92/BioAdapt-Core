@@ -12,7 +12,7 @@ AI 辅助单细胞多组学分析平台的实现仓库。本文给出**安装、
 | --- | --- |
 | [AI辅助单细胞多组学分析平台建设方案-V2.0修订稿.md](file:///Users/yifanwang/workspace/BioAdapt-Core/AI%E8%BE%85%E5%8A%A9%E5%8D%95%E7%BB%86%E8%83%9E%E5%A4%9A%E7%BB%84%E5%AD%A6%E5%88%86%E6%9E%90%E5%B9%B3%E5%8F%B0%E5%BB%BA%E8%AE%BE%E6%96%B9%E6%A1%88-V2.0%E4%BF%AE%E8%AE%A2%E7%A8%BF.md) | 设计基线。代码与测试里的章节引用（`§5.7`、`§9.2`、`§11.6` …）全部指向它的编号 |
 | [建设方案V1.0-专家评审问题清单.md](file:///Users/yifanwang/workspace/BioAdapt-Core/%E5%BB%BA%E8%AE%BE%E6%96%B9%E6%A1%88V1.0-%E4%B8%93%E5%AE%B6%E8%AF%84%E5%AE%A1%E9%97%AE%E9%A2%98%E6%B8%85%E5%8D%95.md) | V1.0 评审遗留问题，V2.0 修订稿逐条回应 |
-| [审查报告-2026-10-20.md](file:///Users/yifanwang/workspace/BioAdapt-Core/%E5%AE%A1%E6%9F%A5%E6%8A%A5%E5%91%8A-2026-10-20.md) | 安全 / 架构 / 性能 / 测试四条线的审查结论与**批次一～四修复记录**，含遗留说明 |
+| [审查报告-2026-10-20.md](file:///Users/yifanwang/workspace/BioAdapt-Core/%E5%AE%A1%E6%9F%A5%E6%8A%A5%E5%91%8A-2026-10-20.md) | 安全 / 架构 / 性能 / 测试四条线的审查结论与**批次一～六修复记录**，含遗留说明 |
 
 `scripts/serve_workbench.py`、`tests/integration/`、`services/api/tests/` 是三个最可靠的"这段代码怎么用"来源。
 
@@ -93,15 +93,15 @@ npm install          # 或 npm ci，仓库里有 package-lock.json
 .venv/bin/pytest -q
 ```
 
-当前基线：**1341 passed**（本机约 2 分钟）。`testpaths` 已配置为 `packages`、`services`、`workflows`、`tests`，所以在仓库根目录直接跑 `pytest` 就会覆盖四层。
+当前基线：**1389 passed**（本机约 2.5 分钟）。`testpaths` 已配置为 `packages`、`services`、`workflows`、`tests`，所以在仓库根目录直接跑 `pytest` 就会覆盖四层。
 
 ### 5.2 分层 / 单包
 
 ```bash
-.venv/bin/pytest packages/storage/tests -q      # 86 passed（存储索引）
-.venv/bin/pytest services/api/tests -q          # 187 passed：单服务的路由×策略用例
+.venv/bin/pytest packages/storage/tests -q      # 95 passed（存储索引）
+.venv/bin/pytest services/api/tests -q          # 212 passed：单服务的路由×策略用例
 .venv/bin/pytest services/orchestrator -q       # 68 passed：状态机与审批门
-.venv/bin/pytest tests/integration -q           # 119 passed：真实 run → 证据卡 → 指标
+.venv/bin/pytest tests/integration -q           # 124 passed：真实 run → 证据卡 → 指标
 .venv/bin/pytest tests/redteam -q               # 45 passed：发布门禁，注入、越权、出境绕过
 .venv/bin/pytest packages/evaluation -q         # 评测集与质量门禁
 ```
@@ -196,8 +196,8 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
 - **认证**：`Authorization: Bearer <token>`。HS256 compact JWS，校验 `iss`/`aud`/`exp`；签名不对 401，`iss` 不受信 401，过期 401 `the bearer token has expired`。
 - **角色**：`platform_admin`、`principal_investigator`、`analyst`、`domain_expert`、`knowledge_curator`、`evaluation_lead`、`compliance_officer`、`service_agent`。三条与身份相关的硬规则（[access.py:154](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/policies/src/bioadapt_policies/access.py#L154) 起）：
   - **人类专属动作**（服务账号一律 403）：`card:sign_off`、`egress:approve`、`approval:decide`、`approval:delegate`、`tool:register`、`tool:grant_adhoc`、`tool:promote`、`evaluation:freeze_truth`、`iam:grant_role`、`policy:write`、`case_library:write`。这是 §11.6 控制 6——权限与审批状态只能由人的动作触达。
-  - **需要第二因子**（claims 的 `amr` 必须含 MFA 方式）：`egress:approve`、`tool:promote`、`asset:delete`、`iam:grant_role`、`policy:write`、`evaluation:freeze_truth`。
-  - **职责分离**：请求审批门的人不能自己批它；出境请求者也不能自己批。
+  - **需要第二因子**（claims 的 `amr` 必须含 MFA 方式）：`egress:approve`、`tool:grant_adhoc`、`tool:promote`、`asset:delete`、`iam:grant_role`、`policy:write`、`evaluation:freeze_truth`。`tool:grant_adhoc` 只有 `principal_investigator` 角色持有（§9.6 的一次性审批是 PI 的票，`platform_admin` 也没有它）。
+  - **职责分离**：请求审批门的人不能自己批它；出境请求者也不能自己批；发放 ad-hoc 授予的人也不能是提交那个工具的人（`tool:grant_adhoc` 必须带 `requesting_subject_id`，缺它直接拒绝）。
   - 服务账号只能持有 `service_agent` 角色，且只被允许 `run:read`、`run:update`、`asset:read`、`asset:write`、`model:call`。
   - `evaluation_lead` 与 `analyst`/`platform_admin` 互斥（§13.1：冻结 ground truth 的人不能同时是被测系统的建造者）。
 - **追踪**：每个请求返回 `X-Trace-Id`。入站头若合法（`^[A-Za-z0-9_.:-]{1,64}$`）则复用，否则替换成新生成的；畸形值绝不透传。每请求写一行脱敏访问日志，字段固定。
@@ -221,8 +221,8 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
   | 422 | `gate_blocked` / `card_gate_blocked` | 证据卡门禁：数值溯源不合规，或 `final_status` 超过了天花板 |
 
 - **分页**：列表统一 `{items, limit, offset, next_offset}`，`limit` 默认 50，`next_offset` 为 `null` 表示到底。
-- **幂等**：`POST /v1/projects/{p}/runs` 与 `POST …/exports` 必须带 `Idempotency-Key`；同键同体重放返回 200 + `Idempotency-Replayed: true`，同键不同体返回 409。状态机转换按 `attempt`/`approval_id` 幂等，重放同样返回 200。审批门按 `(run, kind, subject digest, node)` 定位，重复申请同一个门同样返回 200 + `Idempotency-Replayed: true`（见 7.3）。
-- **文档端点**：`/docs` 与 `/redoc` 被关闭（返回 404），`/openapi.json` 可用（`title: BioAdapt API, version: 1.0`；折叠后 41 个路径、47 个操作：46 条 `/v1` + 1 条 `/v0` 别名）。
+- **幂等**：`POST /v1/projects/{p}/runs` 与 `POST …/exports` 必须带 `Idempotency-Key`；同键同体重放返回 200 + `Idempotency-Replayed: true`，同键不同体返回 409。状态机转换按 `attempt`/`approval_id` 幂等，重放同样返回 200。审批门按 `(run, kind, subject digest, node)` 定位，重复申请同一个门同样返回 200 + `Idempotency-Replayed: true`（见 7.3）。ad-hoc 授予按 `(gate, tool, version, node)` 定位（`grant_id` 由这四者派生），同一扇门重放同一个 spec 返回 200 + 该头，重放不同 spec 返回 409（见 7.5）。
+- **文档端点**：`/docs` 与 `/redoc` 被关闭（返回 404），`/openapi.json` 可用（`title: BioAdapt API, version: 1.0`；折叠后 44 个路径、50 个操作：49 条 `/v1` + 1 条 `/v0` 别名）。
 - **弃用别名**：`GET /v0/projects/{p}/clusters/{cluster_id}/evidence?run_id=…` 仍可用，响应带 `Deprecation: true` 和 `Link: </v1/projects/{p}/evidence>; rel="successor-version"`。`cluster_id` 只在 run 内唯一，所以 `run_id` 必填。
 
 ### 7.2 读操作（以下返回值都是对本仓参考部署实测所得）
@@ -432,7 +432,57 @@ curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/js
 
 这是人类专属 + 二次因子 + 仅 PI 的动作（缺 `amr: ["totp"]` → 403「second factor」），并且必须**一次重述全部 24 个字段**：漏一个 400 并列出缺哪些，`confirmed` 由平台置位、调用方自填 400，version 为空白 400，与当前生效的同名 version 再确认一次 409。审计 `thresholds:confirm` 记 `from_version`/`to_version`/`rationale`。
 
-### 7.5 各写端点必填字段
+### 7.5 写操作：ad-hoc 工具的一次性授予（申请 → 决定 → 发放）
+
+§9.6 的 ad-hoc 通道是平台唯一让未注册代码进计算容器的入口，所以它被拆成三步、缺一不可，而 `tool_grant` 表**只有**第 3 步会写。以下 curl 与响应都是对本仓参考实现实测所得（示例里先把 run 指向一个含 `project_adhoc` 节点的 plan 版本）：
+
+```bash
+# 1) analyst 申请一扇 adhoc_tool 门，绑定 plan 里那个 ad-hoc 节点
+curl -s -X POST -H "Authorization: Bearer $AN" -H "Content-Type: application/json" \
+  -d '{"kind":"adhoc_tool","node_id":"adhoc_score","assigned_to":"user_pi_01"}' \
+  $API/v1/projects/prj_scrnaseq/runs/run_scrnaseq_01/approvals        # → 201，approval_id=apr_9248b45bdc25
+
+# 2) PI 答这扇门
+curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"approved":true,"reason":"sandboxed, one submission, results stay unregistered"}' \
+  $API/v1/projects/prj_scrnaseq/approvals/apr_9248b45bdc25/decision   # → 200，state=approved，decided_by=user_pi_01
+
+# 3) 答门的这位 PI（带 amr）发放授予：只给 approval_id + spec，其余由服务端构造
+curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"approval_id":"apr_9248b45bdc25","spec":{…完整 ToolSpec…},"valid_for_minutes":120}' \
+  $API/v1/projects/prj_scrnaseq/runs/run_scrnaseq_01/nodes/adhoc_score/adhoc-grants   # → 201
+```
+
+```json
+{"grant_id": "grn_1c6eed5f2c41", "project_id": "prj_scrnaseq", "run_id": "run_scrnaseq_01",
+ "node_id": "adhoc_score", "plan_id": "plan_scrnaseq", "plan_version": "6",
+ "approval_id": "apr_9248b45bdc25", "tool_name": "project_qc_probe", "tool_version": "0.1.0",
+ "spec_sha256": "0635cce1f39385ce3bc8dcbf47e46a596df6de69b412f355c8d36f2c8c779ebf",
+ "requested_by": "user_analyst_01", "approver_id": "user_pi_01",
+ "reason": "sandboxed, one submission, results stay unregistered",
+ "approved_at": "2026-06-01T09:00:00Z", "expires_at": "2026-06-01T11:00:00Z",
+ "max_uses": 1, "spent_at": null, "live": true}
+```
+
+响应里的 `spec` 是那一行存的完整提交（`spec_sha256` 就是它的 digest，服务端自己算）。谁走不到第 3 步：
+
+| 情况 | 实测响应 |
+| --- | --- |
+| 提交工具的 analyst 来发放 | 403 `authorization_denied`，文案同时给出 `no role of ['analyst'] grants tool:grant_adhoc` 与 `the subject that submitted an ad-hoc tool may not grant it` |
+| PI，但 token 的 `amr` 为空 | 403 `tool:grant_adhoc requires a second factor` |
+| 服务账号（`service_agent`） | 403 `must be performed by a human` |
+| 答门的是别的 PI | 403 `this grant must be issued by user_pi_01, who decided apr_…` |
+| 请求体自己写 `approver_id`/`requested_by`/`project_id`/`expires_at`/`spent_at` | 400 `invalid_request`，`field` 就是那个字段名（契约是 `extra="forbid"`）；这些值只能来自登录态、门本身和注入时钟 |
+| 门还 pending | 409 `a grant follows a decision, it does not stand in for one` |
+| 门是 `node`/`plan` 类、或绑定的是别的 run/节点 | 400，后者文案点名 `gate … is about run_scrnaseq_01/adhoc_score, not run_scrnaseq_01/cluster` |
+| spec 装不进笼子 | 400 `field=spec`，例如 `cpu 64 exceeds ad-hoc cap 8`。§9.6 的笼子（`DEFAULT_ADHOC_LIMITS`：8 核、32 GiB、240 分钟、无 GPU、闭网、无出口、`retry_limit=0`、`failure_policy=halt`）在**发放时**重算一遍，部署可通过 `ApiState.adhoc_limits` 收紧 |
+| 节点不是 `project_adhoc`，或工具名/版本与 plan 里那条不符 | 400，文案给出 plan 实际 planned as 的那个工具 |
+
+同一扇门重放同一份 spec → 200 + `Idempotency-Replayed: true`，台账仍只有一行；重放不同 spec → 409（第二次提交需要第二次决定）。读接口是 `GET …/runs/{id}/adhoc-grants`（分页，`?live_only=true` 滤掉已花与过期）和 `GET …/adhoc-grants/{grant_id}`，两者都只要 `approval:read`，跨项目读 404。审计写两行同一个 `resource_id`：`enforce` 的判定行与发放行（后者 details 带 `spec_sha256`、`requested_by`、`expires_at`）。
+
+一次性真正落在哪儿：runner 在 checkpoint 之后、执行之前，先问进程内的注册表，再对台账做一次 compare-and-set —— `UPDATE tool_grant SET spent_at = ? WHERE spent_at is null AND expires_at > ?`（[runner.py:639](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L639)、[catalog.py:841](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/storage/src/bioadapt_storage/catalog.py#L841)）。抢不到行就 `POLICY_BLOCKED`、一行产物都不写、`compute_minutes` 仍是 0，所以第二个 worker、第二次启动都花不掉同一份审批。引擎侧的注册表由 `list_tool_grants(live_only=True)` 水合（[driver_factories.py:425](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/driver_factories.py#L425) 是这条流程的可读实现）：已花或已过期的行不会被重新 admit，重启也就带不回一个已经用完的权限。
+
+### 7.6 各写端点必填字段
 
 从 `/openapi.json` 摘出，写 curl 或前端表单时按这个来：
 
@@ -448,6 +498,8 @@ curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/js
 | `POST …/runs/{id}/approvals` | `kind`（`plan`/`node`/`adhoc_tool`/`escalation`） |
 | `POST …/approvals/{id}/decision` | `approved` `reason` |
 | `POST …/approvals/{id}/delegation` | `to_subject` |
+| `POST …/runs/{id}/nodes/{node}/adhoc-grants` | `approval_id`（一扇已答的 `adhoc_tool` 门）`spec`（完整 `ToolSpec`）；可选 `reason` `valid_for_minutes`（只能缩短）。需 PI + 人类 + `amr`，且必须与门上的 `decided_by` 是同一个人 |
+| `GET …/runs/{id}/adhoc-grants`、`GET …/adhoc-grants/{grant_id}` | 需 `approval:read`；列表支持 `limit` `offset` `live_only` |
 | `POST …/cards/{id}/reviews` | `scope` `decision` `rationale` |
 | `POST …/cards/{id}/sign_off` | `sign_off` |
 | `POST …/exports` | `kind` + `Idempotency-Key` 头 |
@@ -480,6 +532,8 @@ app = create_app(ApiState(
     provider_terms=...,  # 供应商条款有效期
     stream_max_events=50,
     stream_poll_seconds=0.05,
+    adhoc_grant_ttl=timedelta(hours=24),  # §9.6：一份 ad-hoc 授予多久之内还可执行，路由只会缩短它
+    adhoc_limits=DEFAULT_ADHOC_LIMITS,    # §9.6 的笼子；发放时按它逐项复核提交物
 ))
 ```
 
@@ -497,6 +551,7 @@ app = create_app(ApiState(
 - 项目作用域靠 `catalog.session(project_id)` 返回的代理，每次调用重新绑定 scope；**线程没设 scope 就查询会抛 `ScopeError`（fail closed）**，不会返回上一个项目的行。
 - **索引里没有外键**（`schema.py`、`ddl.py`、`migrations/0001_core.sql` 均无 FK 约束）。孤儿行因此是可写入的，完整性靠写入路径与测试约束。这一点在审查报告 §四⑨ 的遗留说明里有记录。
 - 迁移文件 `packages/storage/migrations/0001_core.sql` 是**就地重生成**的。若已有部署库上线，需要另出增量迁移，而不是重跑 `0001`。
+- **`tool_grant` 是 ad-hoc 通道唯一的持久权限记录**（§9.6）：一行 = 一份已答的 `adhoc_tool` 门 + 它买下的那一次执行。`grant_id` 由 `(approval_id, tool_name, tool_version, node_id)` 派生，`spec_sha256` 必须等于 `spec` 那串字节的 digest（写库时校验，见 [orchestration.py 的 `_one_time`](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/schemas/src/bioadapt_schemas/orchestration.py)），`spent_at` 只由 [`spend_tool_grant`](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/storage/src/bioadapt_storage/catalog.py#L841) 的 compare-and-set 写。跨项目写被 scope 守卫拒绝，读只认本项目作用域。
 - 重新生成与漂移检查：
 
   ```bash
@@ -520,6 +575,7 @@ app = create_app(ApiState(
 | `GET …/runs/{id}/events`（SSE）存在但没人用 | 批次二删掉了前端 `EventSource` 客户端，本仓已无消费者（P7 因此不修） |
 | `GET …/traces/{id}` 常 404 | 只有真实模型调用才会写 trace（`inv_…`）。种子 run 的卡由确定性 driver 产出，不含模型调用 |
 | 工作台身份面板说 token "past its exp by this clock" | 面板拿浏览器真实时钟比较 `exp`，而参考部署的 `state.clock()` 是冻结在 2026-06-01 的（[deps.py:221](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/deps.py#L221)）。API 仍然接受它，两边说法不同是时钟不统一，不是 token 失效 |
+| 批次六的 ad-hoc 授予三条路由在**正在跑的**开发实例上是 404 | 那个 `serve_workbench.py` 起来于批次三之前，改完 API 需要重启它才会生效；重启会丢掉浏览器写进去的演示行，所以文档里的实测响应取自同一份装配的代码内 TestClient |
 | 状态全在内存 | `serve_workbench.py` 重启即回种子状态。要持久化，给 `Catalog` 传文件路径并接真对象存储 |
 | 无登录、无 TLS | 服务只绑 `127.0.0.1`。身份由 `Hs256Verifier` 的参考签发器模拟 |
 | 单连接线程池 | 所有 worker 线程共享一个 sqlite 连接，写读需串行；这是参考实现的容量上限，不是设计目标 |
@@ -535,7 +591,7 @@ app = create_app(ApiState(
 - **权限与审批状态不可由模型侧写路径触达**，只能经人工动作改变（§11.6）。服务账号永远不能决策审批门。
 - **未经确认的判据出不了结论**（§1.5/§14.4）：项目阈值 `confirmed` 为 false 时，签字与导出两个结论出口 403；打开它的 `thresholds:confirm` 是仅 PI 的人类动作且要求二次因子，请求体必须重述全部 24 个字段、`confirmed` 由平台置位。计算、起草、排队不受此门影响（附录 C1 要求阶段 0 先跑基线才能替换这些数）。
 - **预算是三条独立上限**：算力分钟、模型成本 USD、迭代次数。取计划与项目配额的逐轴较小值；任一轴耗尽即 `BUDGET_EXCEEDED`，模型成本不是算力分钟的注脚（§9.7）。
-- **ad-hoc 工具**只允许在非特权容器、只读输入、无网络、资源与时长配额下运行，且需要一次性 PI 审批。**注意**：这条闭环（H1）尚未实现，见下。
+- **ad-hoc 工具**只允许在非特权容器、只读输入、无网络、资源与时长配额下运行，且需要一次性 PI 审批。闭环已落地（批次六）：`tool:grant_adhoc` 只有 PI 角色持有、要求二次因子、要求发放人 ≠ 提交人，且必须由答那扇 `adhoc_tool` 门的人发出；笼子检查在发放时重算，`tool_grant` 行是一次性台账，引擎执行前用 CAS 抢它（见 7.5）。注册表只能从库水合，已花/过期的行带不回来。
 - **不允许大模型自由生成任意 Shell 并直接在生产计算节点执行。**
 - **密钥不写入 Prompt、代码仓库、运行参数或日志。** `.workbench/` 与其中的 token 永不提交。
 - **注入防御**在 `tests/redteam/` 有对应门禁用例集；改 egress、prompt 组装、工具绑定后必须重跑。
@@ -544,7 +600,10 @@ app = create_app(ApiState(
 
 ## 12. 已知未完成项
 
-- **H1：ad-hoc 工具授权闭环**（PI 专属 + 强制路由）仍未实现，是这条工作线上唯一开放的待办。在此之前，`adhoc_tool` 门只能被记录和校验，`require_node_approval` 只认 `NODE` 类门。
+- **H1 已关闭，但留了三条相关缺口**（详见审查报告批次六的「遗留说明」）：
+  1. **工作台没有 ad-hoc 授予页**：`POST …/adhoc-grants` 只有 API 入口，PI 在界面上看不到「哪扇门已答、还没有发放」，也发不出这一枪。
+  2. **授予必须先于 manifest 钉快照**：`tool_grant` 行会改变注册表快照（`snapshot_id()` 含授权键），而 §4.1 的 `_preflight` 拒绝快照与 manifest 不一致的 run。所以发放要排在 `POST …/runs` 写 manifest 之前；测试里用 `pin_registry_snapshot()` 显式重钉，生产流程还没有把这一步排进编排。
+  3. **进程内 `ToolRegistry.grant()` 仍是带外通道**：单元测试可以直接构造 `AdhocApproval`（现在它必须带 `requested_by` 与 `gate_approval_id`），部署不该用它。runner 因此把台账当作第二道问句：行存在却抢不到，一律 BLOCKED。
 - 生产件缺件：对象存储实现、计算执行器、导出 worker、真实 IdP、Postgres + RLS 部署、增量迁移。
 - 批次五修掉了本轮写文档时发现的两处（审批门响应与存储不一致、`Thresholds.confirmed` 无人消费），但留下三条相关的未完成项：
   1. **计算侧仍读代码常量**：判数、起草、队列与两个结论出口都读项目行的阈值，而节点参数里的 `thresholds` 由驱动直接取 `DEFAULT_THRESHOLDS`。要让"算的时候"也用项目那一套，需要把项目阈值穿过 `POST …/runs` → 编排器 → 工作流节点参数，涉及所有已注册 plan 的模板，单独排期。
