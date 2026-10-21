@@ -31,7 +31,7 @@ from bioadapt_scrnaseq import SLOT_COUNTS, TASK_QC, ExpressionProduct, read_prod
 from bioadapt_scrnaseq import runner as driver
 from bioadapt_scrnaseq.errors import transient
 from bioadapt_tool_registry.enums import ToolResultStatus
-from bioadapt_tool_registry.registry import ToolRegistry
+from bioadapt_tool_registry.registry import ToolRegistry, UnknownToolError
 
 import driver_factories as F
 
@@ -348,6 +348,64 @@ def test_an_expired_adhoc_grant_blocks_before_the_step_runs(harness_factory: Any
     assert stopped.state is RunState.POLICY_BLOCKED and stopped.stopped_at == "qc"
     assert "expired" in stopped.stopped_reason
     assert stopped.nodes == ()
+
+
+def ledger_harness(harness_factory: Any) -> tuple[F.Harness, Any]:
+    """The ad-hoc chain driven from the ledger alone, with no in-process grant to spend (§9.6).
+
+    This is what a launch actually does: fill the registry from the rows the grant route wrote, re-pin the
+    manifest to the registry that now holds them (§4.1), then approve the node the plan gates.
+    """
+    made = harness_factory(registry=F.reference_registry(), the_plan=F.plan(nodes=adhoc_nodes()))
+    grant = made.grant_adhoc("qc", F.adhoc_qc_spec())
+    F.hydrate(made.registry, made.catalog)
+    made.pin_registry_snapshot()
+    made.approve_node("qc")
+    return made, grant
+
+
+def test_a_ledger_grant_alone_buys_this_run_exactly_one_execution(harness_factory: Any) -> None:
+    h, grant = ledger_harness(harness_factory)
+    done = h.run()
+    assert done.completed
+    assert done.result_of("qc").unregistered is True, "section 9.6: an ad-hoc result is marked as one"
+    assert h.catalog.get_tool_grant(grant.grant_id).spent_at is not None
+
+
+def test_a_grant_another_worker_claimed_first_buys_nothing_here(harness_factory: Any) -> None:
+    """The row, not a counter in this process, is what outlives a restart and settles a race."""
+    h, grant = ledger_harness(harness_factory)
+    assert h.catalog.spend_tool_grant(grant.grant_id, at=h.clock()) is not None
+    stopped = h.run()
+    assert stopped.stopped_at == "qc" and stopped.state is RunState.POLICY_BLOCKED
+    assert "holds no unspent execution in the ledger" in stopped.stopped_reason
+    assert stopped.nodes == () and h.usage().compute_minutes == 0.0
+
+
+def test_a_resumed_run_never_asks_the_ledger_for_a_node_it_already_stored(harness_factory: Any) -> None:
+    """The spend sits after the checkpoint, or a run that recomputes nothing could not resume."""
+    h, grant = ledger_harness(harness_factory)
+    first = h.run()
+    assert first.completed and not first.node("qc").reused_checkpoint
+    assert h.catalog.get_tool_grant(grant.grant_id).spent_at is not None
+    second = h.run()
+    assert second.completed and second.node("qc").reused_checkpoint
+
+
+def test_a_spent_row_does_not_hydrate_back_into_a_restarted_registry(harness_factory: Any) -> None:
+    h, grant = ledger_harness(harness_factory)
+    assert h.catalog.spend_tool_grant(grant.grant_id, at=h.clock()) is not None
+    restarted = F.hydrate(F.reference_registry(), h.catalog)
+    with pytest.raises(UnknownToolError):
+        restarted.resolve(ADHOC_TOOL, ADHOC_VERSION, now=h.clock())
+
+
+def test_an_expired_row_does_not_hydrate_back_into_a_restarted_registry(harness_factory: Any) -> None:
+    h, _grant = ledger_harness(harness_factory)
+    h.clock.advance(days=30)
+    restarted = F.hydrate(F.reference_registry(), h.catalog)
+    with pytest.raises(UnknownToolError):
+        restarted.resolve(ADHOC_TOOL, ADHOC_VERSION, now=h.clock())
 
 
 def test_a_memory_budget_below_the_measured_peak_is_refused(harness_factory: Any) -> None:

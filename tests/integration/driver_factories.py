@@ -14,7 +14,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from bioadapt_orchestrator.approvals import ApprovalPolicy
 from bioadapt_orchestrator.service import ActorRef, Orchestrator
-from bioadapt_schemas.entities import DataAsset, Project, RunManifest
+from bioadapt_schemas.entities import DataAsset, Project, RunManifest, sha256_of_json
 from bioadapt_schemas.enums import (
     ApprovalKind,
     FilteringState,
@@ -26,6 +26,7 @@ from bioadapt_schemas.enums import (
     ToolClass,
     UsageScope,
 )
+from bioadapt_schemas.orchestration import AdhocToolGrant, new_tool_grant_id
 from bioadapt_schemas.plan import (
     MANDATORY_STOP_CONDITIONS,
     AnalysisPlan,
@@ -381,6 +382,10 @@ def follow_up_nodes(**overrides: Mapping[str, Any]) -> list[PlanNode]:
     return [node(node_id, **dict(overrides.get(node_id) or {})) for node_id in order]
 
 
+#: The ad-hoc gate a hand-built grant stands for when a test has not run the real decision (§9.6).
+ADHOC_GATE_ID = "apr_adhoc_qc_01"
+
+
 def adhoc_qc_spec(**overrides) -> ToolSpec:
     """A one-submission QC tool, built through §9.6's sandbox shape."""
     fields: dict[str, Any] = {
@@ -397,6 +402,8 @@ def adhoc_qc_spec(**overrides) -> ToolSpec:
 def adhoc_grant(**overrides) -> AdhocApproval:
     fields: dict[str, Any] = {
         "approver_id": PI,
+        "requested_by": ANALYST,
+        "gate_approval_id": ADHOC_GATE_ID,
         "project_id": PROJECT_ID,
         "plan_id": PLAN_ID,
         "node_id": "qc",
@@ -412,6 +419,20 @@ def reference_registry(**overrides) -> ToolRegistry:
     registry = ToolRegistry()
     for spec in reference_tool_specs(DEPLOYMENT, **overrides).values():
         registry.register(spec)
+    return registry
+
+
+def hydrate(registry: ToolRegistry, catalog: Catalog) -> ToolRegistry:
+    """Load every grant this project still holds into a registry, as a launch does (§9.6).
+
+    A spent or expired row is not admitted, so the permission a person granted a while ago cannot come
+    back by way of a restart: what the ledger says is live is the whole of what the engine may run. The
+    registry is the copy the compute plane works from, and this is the only supported way to fill its
+    ad-hoc side - the in-process ``grant()`` call that tests use stands in for a channel no deployment
+    has, which is why the ledger is consulted again at spend time.
+    """
+    for grant in catalog.list_tool_grants(live_only=True):
+        registry.admit_grant(grant)
     return registry
 
 
@@ -462,6 +483,58 @@ class Harness:
             approval.approval_id, actor=HUMAN_PI, approved=True, reason="cleared for this project"
         )
         return approval.approval_id
+
+    def grant_adhoc(
+        self, node_id: str, spec: ToolSpec, *, run_id: Optional[str] = None, valid_for_days: int = 7
+    ) -> AdhocToolGrant:
+        """Ask, answer, issue: the three steps §9.6 puts between a submission and an execution.
+
+        The row is built the way the grant route builds it - submitter and approver both read off the gate
+        that was just decided, the window taken from this clock - so a driver test meets the same ledger a
+        real launch finds, rather than a permission only the process that made it up can see.
+        """
+        run = run_id or self.run_id
+        gate = self.journal.request_approval(
+            run, ApprovalKind.ADHOC_TOOL, actor=HUMAN_ANALYST, node_id=node_id, assigned_to=PI
+        ).approval
+        decided = self.journal.decide_approval(
+            gate.approval_id,
+            actor=HUMAN_PI,
+            approved=True,
+            reason="sandboxed, one submission, results stay unregistered",
+        )
+        manifest = self.catalog.get_run(run)
+        dumped = spec.model_dump(mode="json")
+        now = self.clock()
+        grant = AdhocToolGrant(
+            grant_id=new_tool_grant_id(decided.approval_id, spec.tool_name, spec.tool_version, node_id),
+            project_id=PROJECT_ID,
+            run_id=run,
+            node_id=node_id,
+            plan_id=manifest.plan_id,
+            plan_version=manifest.plan_version,
+            approval_id=decided.approval_id,
+            tool_name=spec.tool_name,
+            tool_version=spec.tool_version,
+            spec=dumped,
+            spec_sha256=sha256_of_json(dumped),
+            requested_by=decided.requested_by,
+            approver_id=decided.decided_by,
+            reason=decided.decision_reason or "",
+            approved_at=now,
+            expires_at=now + timedelta(days=valid_for_days),
+        )
+        self.catalog.record_tool_grant(grant)
+        return grant
+
+    def pin_registry_snapshot(self, run_id: Optional[str] = None) -> str:
+        """Section 4.1: a grant that lands after the manifest was written changes the registry it names."""
+        snapshot = self.registry.snapshot_id()
+        self.catalog.conn.execute(
+            "update run_manifest set tool_registry_snapshot = ? where project_id = ? and run_id = ?",
+            (snapshot, PROJECT_ID, run_id or self.run_id),
+        )
+        return snapshot
 
     def approve_plan(self, run_id: str, *, plan_version: str = "1") -> str:
         approval = self.journal.request_approval(

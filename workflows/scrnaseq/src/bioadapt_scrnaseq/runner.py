@@ -637,10 +637,19 @@ class WorkflowRunner:
             )
 
     def _spend_adhoc_grant(self, run_id: str, node: PlanNode, manifest: RunManifest) -> Optional[_Stop]:
+        """Claim the one execution an ad-hoc node's grant is worth, and stop when it is not there to claim.
+
+        Two ledgers answer, in order. The registry says a permission was admitted into this process at all
+        and is still inside its window; the catalog says whether the row the grant route wrote is still
+        unspent (§9.6). Only when both agree is the in-process copy consumed, so a second launch - or a
+        second run - is refused by the row rather than by a counter that died with the process that held it.
+        A registry grant with no row is the out-of-band channel: it can only ever be spent once by the
+        process that holds it, which is why a deployment builds its registry from the catalog.
+        """
         if node.tool_class is not ToolClass.PROJECT_ADHOC:
             return None
         try:
-            self.registry.consume(
+            self.registry.check_adhoc(
                 node.tool_name, node.tool_version, now=self.clock(), project_id=manifest.project_id
             )
         except (AdhocExhaustedError, ForbiddenToolError, UnknownToolError) as error:
@@ -649,6 +658,18 @@ class WorkflowRunner:
                 f"node {node.node_id} may not execute: {error}; a one-time approval buys one execution "
                 "and cannot be re-spent by the engine",
             )
+        recorded = self.catalog.find_tool_grant(
+            node.tool_name, node.tool_version, run_id=run_id, node_id=node.node_id
+        )
+        if recorded is not None and self.catalog.spend_tool_grant(recorded.grant_id, at=self.clock()) is None:
+            return self._stop_for(
+                ErrorClass.POLICY_BLOCKED,
+                f"node {node.node_id} may not execute: ad-hoc grant {recorded.grant_id} holds no unspent "
+                "execution in the ledger, and the ledger is the record that outlives this process",
+            )
+        self.registry.consume(
+            node.tool_name, node.tool_version, now=self.clock(), project_id=manifest.project_id
+        )
         return None
 
     def _wiring_refusal(self, node: PlanNode, spec: ToolSpec, wires: Mapping[str, str]) -> Optional[_Stop]:
