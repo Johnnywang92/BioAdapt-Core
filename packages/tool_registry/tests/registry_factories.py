@@ -1,7 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
 
+from bioadapt_schemas.entities import sha256_of_json
 from bioadapt_schemas.enums import GenomeIdSystem, LicenseReviewStatus, ReproducibilityLevel, ToolClass
 from bioadapt_schemas.errors import ApiError, ErrorClass
+from bioadapt_schemas.orchestration import AdhocToolGrant, new_tool_grant_id
 from bioadapt_tool_registry.enums import FailurePolicy, ToolResultStatus
 from bioadapt_tool_registry import (
     AdhocApproval,
@@ -63,6 +65,8 @@ def adhoc_spec(**overrides):
 def approval(**overrides):
     fields = {
         "approver_id": "user_lead_01",
+        "requested_by": "user_analyst_01",
+        "gate_approval_id": "apr_adhoc_001",
         "project_id": "prj_001",
         "plan_id": "plan_001",
         "node_id": "adhoc_001",
@@ -72,6 +76,40 @@ def approval(**overrides):
     }
     fields.update(overrides)
     return AdhocApproval(**fields)
+
+
+def tool_grant(**overrides):
+    """The index row (§9.6) an in-memory approval is the working copy of.
+
+    Built from the same spec and the same two subjects as ``approval``, so a test can hand the registry a
+    stored grant and still expect the permission it carries to be the one it already knows.
+    """
+    spec = adhoc_spec()
+    dumped = spec.model_dump(mode="json")
+    fields = {
+        "project_id": "prj_001",
+        "run_id": "run_prj_001_01",
+        "node_id": "adhoc_001",
+        "plan_id": "plan_001",
+        "plan_version": "1",
+        "approval_id": "apr_adhoc_001",
+        "tool_name": spec.tool_name,
+        "tool_version": spec.tool_version,
+        "spec": dumped,
+        "spec_sha256": sha256_of_json(dumped),
+        "requested_by": "user_analyst_01",
+        "approver_id": "user_lead_01",
+        "reason": "project-specific marker scan before registration",
+        "approved_at": NOW,
+        "expires_at": NOW + timedelta(days=7),
+    }
+    fields.update(overrides)
+    if "spec" in overrides and "spec_sha256" not in overrides:
+        fields["spec_sha256"] = sha256_of_json(fields["spec"])
+    fields["grant_id"] = new_tool_grant_id(
+        fields["approval_id"], fields["tool_name"], fields["tool_version"], fields["node_id"]
+    )
+    return AdhocToolGrant(**fields)
 
 
 def execution(tool_version: str = "1.11.0", **overrides):

@@ -19,7 +19,7 @@ from bioadapt_tool_registry import (
     minimal_spec,
 )
 from bioadapt_tool_registry.enums import FailurePolicy, NetworkMode
-from registry_factories import NOW, adhoc_spec, approval, complete_spec
+from registry_factories import NOW, adhoc_spec, approval, complete_spec, tool_grant
 
 
 @pytest.fixture
@@ -75,6 +75,34 @@ class TestAdhocChannel:
             approval(reason="")
         with pytest.raises(ValidationError, match="positive"):
             approval(expires_at=NOW)
+
+    def test_the_subject_that_submitted_a_tool_cannot_approve_it(self):
+        with pytest.raises(ValidationError, match="other than the subject that submitted"):
+            approval(requested_by="user_lead_01")
+
+    def test_an_approval_that_names_no_gate_is_incomplete(self):
+        with pytest.raises(ValidationError):
+            approval(gate_approval_id="")
+
+    def test_a_stored_grant_hydrates_the_registry_with_its_provenance_intact(self, registry):
+        stored = tool_grant()
+        spec = registry.admit_grant(stored)
+        assert spec.tool_name == "local_marker_scan"
+        assert spec is registry.resolve(spec.tool_name, spec.tool_version, now=NOW)
+        back = registry.grant_of("local_marker_scan", "0.0.1")
+        assert (back.approver_id, back.requested_by, back.gate_approval_id) == (
+            stored.approver_id,
+            stored.requested_by,
+            stored.approval_id,
+        )
+        registry.consume("local_marker_scan", "0.0.1", now=NOW, project_id=stored.project_id)
+        with pytest.raises(AdhocExhaustedError, match="already used"):
+            registry.check_adhoc("local_marker_scan", "0.0.1", now=NOW, project_id=stored.project_id)
+
+    def test_a_hydrated_registry_re_runs_the_cage_over_the_stored_bytes(self, registry):
+        loose = adhoc_spec(resources=ResourceProfile(cpu=64, memory_mb=8192, max_minutes=60))
+        with pytest.raises(AdmissionError, match="ad-hoc sandbox violated"):
+            registry.admit_grant(tool_grant(spec=loose.model_dump(mode="json")))
 
     @pytest.mark.parametrize(
         "kwargs",

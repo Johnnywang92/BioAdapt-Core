@@ -9,6 +9,7 @@ from pydantic import Field, model_validator
 
 from bioadapt_schemas.entities import ImmutableContract, sha256_of_json
 from bioadapt_schemas.enums import LicenseReviewStatus, ToolClass
+from bioadapt_schemas.orchestration import AdhocToolGrant
 
 from .enums import FailurePolicy, NetworkMode
 from .spec import ContainerImage, LicenseInfo, ResourceProfile, SchemaRef, ToolSpec
@@ -67,9 +68,18 @@ DEFAULT_ADHOC_LIMITS = AdhocSandboxLimits()
 
 
 class AdhocApproval(ImmutableContract):
-    """One-time approval of a single ad-hoc tool submission (section 9.6)."""
+    """One-time approval of a single ad-hoc tool submission (section 9.6).
+
+    The two provenance fields are what make this more than a permission flag: a grant that does not name
+    the gate a person decided, and the subject that submitted the tool, cannot be told apart from one a
+    process made up for itself (§11.6).
+    """
 
     approver_id: str
+    #: The subject that asked for the tool. Section 9.6 gives the approval to the PI, so this is not them.
+    requested_by: str = Field(min_length=1)
+    #: The ad-hoc gate whose decision this grant executes (§9.4).
+    gate_approval_id: str = Field(min_length=1)
     project_id: str
     plan_id: str
     node_id: str
@@ -84,10 +94,32 @@ class AdhocApproval(ImmutableContract):
             raise ValueError("ad-hoc approval is granted per submission: max_uses must be 1")
         if self.expires_at <= self.approved_at:
             raise ValueError("ad-hoc approval window must be positive")
+        if self.approver_id == self.requested_by:
+            raise ValueError("ad-hoc approval must come from someone other than the subject that submitted the tool")
         return self
 
     def is_live(self, now: datetime) -> bool:
         return now < self.expires_at
+
+    @classmethod
+    def of_grant(cls, grant: AdhocToolGrant) -> "AdhocApproval":
+        """The approval a stored grant stands for, read back by whatever process is about to run it (§9.6).
+
+        This is the only path from the index row to the object the registry holds, so the approver, the
+        submitter and the gate all come off the record a person wrote rather than from the caller.
+        """
+        return cls(
+            approver_id=grant.approver_id,
+            requested_by=grant.requested_by,
+            gate_approval_id=grant.approval_id,
+            project_id=grant.project_id,
+            plan_id=grant.plan_id,
+            node_id=grant.node_id,
+            reason=grant.reason,
+            approved_at=grant.approved_at,
+            expires_at=grant.expires_at,
+            max_uses=grant.max_uses,
+        )
 
 
 class PromotionChecklist(ImmutableContract):
@@ -175,6 +207,16 @@ class ToolRegistry:
         self._specs[key] = spec
         self._grants[key] = approval
         return spec
+
+    def admit_grant(self, grant: AdhocToolGrant) -> ToolSpec:
+        """Put one stored ad-hoc grant (§9.6) into this registry, as an engine does when it starts.
+
+        The spec comes from the bytes the grant recorded, and ``grant`` re-runs the sandbox checks over
+        them, so a hydrated registry cannot end up holding a looser tool than the API agreed to write.
+        A spent or expired row is the caller's to filter: this admits the permission, not the question of
+        whether it is still live.
+        """
+        return self.grant(ToolSpec(**grant.spec), AdhocApproval.of_grant(grant))
 
     def check_adhoc(self, name: str, version: str, *, now: datetime, project_id: str) -> AdhocApproval:
         """Ask whether the grant would still let this tool run, without spending it (§9.6).

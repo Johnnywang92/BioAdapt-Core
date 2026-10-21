@@ -608,6 +608,8 @@ def test_a_node_that_emitted_fewer_slots_than_its_task_must_emit_writes_nothing(
 def adhoc_qc_grant() -> AdhocApproval:
     return AdhocApproval(
         approver_id="pi_01",
+        requested_by="analyst_01",
+        gate_approval_id="apr_adhoc_unit_01",
         project_id=PROJECT_ID,
         plan_id="plan_unit",
         node_id="qc",
