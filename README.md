@@ -213,7 +213,7 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
   | --- | --- | --- |
   | 400 | `validation` / `invalid_request` | 契约校验失败，`field` 指出哪个字段 |
   | 401 | `policy_blocked` / `unauthenticated` | 缺 token、签名不合法、过期 |
-  | 403 | `policy_blocked` / `authorization_denied` | 角色不授予该动作，或越出项目作用域 |
+  | 403 | `policy_blocked` / `authorization_denied` | 角色不授予该动作，或越出项目作用域；结论出口（签字、导出）也会因项目阈值未经确认而拒（§1.5，见 7.2） |
   | 403 | `policy_blocked` / `approval_refused` | 门已决、或不属于当前问责人 |
   | 404 | `not_found` | code 形如 `resource_not_found` / `trace_not_found`；资源不存在或不在本项目内 |
   | 409 | `conflict` | 幂等键复用、唯一约束、`illegal_transition` |
