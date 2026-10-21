@@ -1,9 +1,10 @@
 "use client";
 
-import { use, useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { knowledge } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
-import { useWorkbench } from "@/lib/identity";
+import { useProjectScope } from "@/lib/useProjectScope";
+import { Panel, ProblemNote } from "@/components/ui";
 import type { BioSuggestion, DocumentType, KnowledgeDocument, RagAnswer } from "@/lib/types";
 
 function getDocIcon(filename: string, docType: string): string {
@@ -16,14 +17,13 @@ function getDocIcon(filename: string, docType: string): string {
   return "📑";
 }
 
-export default function KnowledgePage({ params }: { params: Promise<{ projectId: string }> }) {
-  const { projectId } = use(params);
+export default function KnowledgePage({ params }: { params: { projectId: string } }) {
   const { t } = useLocale();
-  const { caller } = useWorkbench();
+  const { caller, projectId, blocked } = useProjectScope(params.projectId);
 
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   // Ingest mode: "dropzone" | "manual"
   const [uploadMode, setUploadMode] = useState<"dropzone" | "manual">("dropzone");
@@ -46,9 +46,9 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
   const [ragAnswer, setRagAnswer] = useState<RagAnswer | null>(null);
 
   // Cluster suggestion state
-  const [clusterId, setClusterId] = useState("cluster_01");
-  const [markersInput, setMarkersInput] = useState("FOXP3, IL2RA, CTLA4, CD4");
-  const [clusterTissue, setClusterTissue] = useState("Lung Tumor");
+  const [clusterId, setClusterId] = useState("");
+  const [markersInput, setMarkersInput] = useState("");
+  const [clusterTissue, setClusterTissue] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [suggestion, setSuggestion] = useState<BioSuggestion | null>(null);
 
@@ -60,7 +60,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
       const list = await knowledge.list(caller, projectId);
       setDocs(list);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
     } finally {
       setLoadingDocs(false);
     }
@@ -68,7 +68,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
 
   useEffect(() => {
     loadDocuments();
-  }, [caller, projectId]);
+  }, [caller?.token, projectId]);
 
   const processFiles = async (files: File[]) => {
     if (!caller || files.length === 0) return;
@@ -127,7 +127,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
       setUploadProgress(`✅ 成功入库 ${successCount} 篇文献/实验记录！切片与混合索引已就绪。`);
       setTimeout(() => setUploadProgress(null), 6000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
       setUploadProgress(null);
     } finally {
       setIngesting(false);
@@ -157,7 +157,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
       setUploadProgress("✅ 手输文档入库成功！已建立切片索引。");
       setTimeout(() => setUploadProgress(null), 4000);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
     } finally {
       setIngesting(false);
     }
@@ -169,7 +169,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
       await knowledge.delete(caller, projectId, docId);
       await loadDocuments();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
     }
   };
 
@@ -182,7 +182,7 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
       const res = await knowledge.ask(caller, projectId, query.trim());
       setRagAnswer(res);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
     } finally {
       setAsking(false);
     }
@@ -201,11 +201,13 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
       const res = await knowledge.suggest(caller, projectId, clusterId.trim(), markers, clusterTissue.trim());
       setSuggestion(res);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err);
     } finally {
       setSuggesting(false);
     }
   };
+
+  if (!caller) return <Panel title={t("private knowledge base")}><p>{blocked}</p></Panel>;
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "1200px", margin: "0 auto" }}>
@@ -214,15 +216,11 @@ export default function KnowledgePage({ params }: { params: Promise<{ projectId:
           📖 {t("private knowledge base")}
         </h1>
         <p style={{ color: "var(--muted)", margin: 0 }}>
-          本地私有知识库支持论文、实验记录与分析报告（PDF、Word .docx、Markdown .md）的无损解析与向量/FTS5混合检索。100% 离线私有化运行，保障数据与先验结论不出本地。
+          {t("Search project papers, lab notes and analysis reports. Parsing depends on the installed backends; inspect extracted citations before using a suggestion.")}
         </p>
       </header>
 
-      {error && (
-        <div style={{ padding: "0.75rem 1rem", background: "rgba(239, 68, 68, 0.1)", border: "1px solid #ef4444", borderRadius: "6px", color: "#ef4444", marginBottom: "1.5rem" }}>
-          ⚠️ {error}
-        </div>
-      )}
+      <ProblemNote error={error} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "2rem" }}>
         {/* RAG QA Panel */}

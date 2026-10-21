@@ -287,3 +287,16 @@ def test_asset_write_needs_a_role_that_holds_it(client, auth):
     )
     assert response.status_code == 403
     assert response.json()["code"] == "authorization_denied"
+
+
+def test_direct_upload_asset_endpoint(client, auth):
+    decl = _declaration(asset_id="as_direct_01")
+    response = client.post(
+        f"/v1/projects/{PROJECT_ID}/assets/direct-upload",
+        json={"asset": decl, "content_text": '{"cells": ["cell1"], "genes": ["CD4"]}'},
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    assert response.status_code == 201
+    assert response.json()["asset_id"] == "as_direct_01"
+    assert response.json()["uri"].startswith("s3://")
+

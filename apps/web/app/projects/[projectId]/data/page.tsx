@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
+import { DeploymentNotice, useDeployment } from "@/components/DeploymentStatus";
 import { assets as assetsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
@@ -47,6 +48,8 @@ export default function DataPage({ params }: { params: { projectId: string } }) 
 function Register({ caller, projectId }: { caller: Caller; projectId: string }) {
   const t = useT();
   const submit = useSubmit();
+  const deployment = useDeployment();
+  const unavailable = !deployment.error && deployment.data?.object_upload === "unavailable";
   const [bytes, setBytes] = useState<ArrayBuffer | null>(null);
   const [fileName, setFileName] = useState("");
   const [digest, setDigest] = useState("");
@@ -103,7 +106,7 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
   }
 
   function register() {
-    if (!bytes || !projectId) return;
+    if (!bytes || !projectId || unavailable) return;
     const declared: DataAsset = {
       asset_id: form.asset_id,
       project_id: projectId,
@@ -136,6 +139,7 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
         "client-side direct upload is the only write path for object bytes: the API hands out a short-lived PUT signature for a key it derived itself",
       )}
     >
+      <DeploymentNotice capability="object_upload" />
       <ProblemNote error={submit.error} />
       {recorded ? (
         <Notice>
@@ -253,7 +257,7 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
         </Field>
         <button
           type="submit"
-          disabled={!bytes || submit.busy || !form.asset_id || !form.privacy_tier || !pipelineWhole}
+          disabled={unavailable || !bytes || submit.busy || !form.asset_id || !form.privacy_tier || !pipelineWhole}
         >
           {submit.busy ? t("declaring, uploading, completing…") : t("Register")}
         </button>

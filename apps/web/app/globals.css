@@ -345,6 +345,56 @@ dl.facts dd {
   overflow-wrap: anywhere;
 }
 
+.deployment-status {
+  padding: 12px 16px;
+  margin-bottom: var(--gap);
+  background: #eef2fb;
+  border: 1px solid #c6d5ef;
+  border-radius: var(--radius);
+}
+
+.deployment-heading,
+.deployment-capabilities {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.deployment-capabilities {
+  margin-top: 8px;
+}
+
+.deployment-status p {
+  margin: 8px 0 0;
+}
+
+.privacy-details {
+  position: relative;
+  font-size: 12px;
+}
+
+.privacy-details summary {
+  cursor: pointer;
+}
+
+.privacy-content {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: min(340px, 80vw);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  z-index: 10;
+  box-shadow: 0 4px 12px #14181d20;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
 @media (max-width: 900px) {
   .card-screen {
     grid-template-columns: minmax(0, 1fr);
@@ -354,3 +404,4 @@ dl.facts dd {
     position: static;
   }
 }
+ 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Chip, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
+import { DeploymentNotice } from "@/components/DeploymentStatus";
 import { approvals as approvalsApi, runs as runsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
@@ -42,6 +43,25 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
   );
   const cancel = useSubmit();
   const [reason, setReason] = useState("");
+  const [executing, setExecuting] = useState(false);
+  const [execResult, setExecResult] = useState<string | null>(null);
+
+  const handleExecutePipeline = async () => {
+    setExecuting(true);
+    setExecResult(null);
+    try {
+      const res = await runsApi.execute(caller, projectId, runId, true);
+      setExecResult(
+        `✅ 执行成功！状态: ${res.state}，已执行 ${res.nodes_executed.length} 个节点，产出 ${res.assets_produced.length} 项资产，发现 ${res.candidate_count} 个候选亚群，生成 ${res.draft_count} 张证据卡！`,
+      );
+      read.reload();
+      budget.reload();
+    } catch (err: unknown) {
+      alert(`执行失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExecuting(false);
+    }
+  };
 
   return (
     <Panel
@@ -58,6 +78,57 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
         </div>
       }
     >
+      <DeploymentNotice capability="run_execution" />
+
+      {read.data && read.data.state !== "FAILED" && read.data.state !== "ANALYSIS_PASSED" && (
+        <div
+          style={{
+            marginTop: 12,
+            marginBottom: 16,
+            padding: "12px",
+            background: "rgba(37, 99, 235, 0.08)",
+            border: "1px solid #bfdbfe",
+            borderRadius: 6,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <strong style={{ color: "#1e40af" }}>⚡ {t("Run In-Process Analysis Execution (Phase 2 MVP)")}</strong>
+              <p style={{ margin: "2px 0 0", fontSize: "0.85rem", color: "var(--muted)" }}>
+                {t(
+                  "Execute DAG nodes (qc → normalize → pca → cluster → markers → pseudobulk_de → robustness), discover C1-C3 candidates, and draft evidence cards.",
+                )}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={executing}
+              onClick={handleExecutePipeline}
+              style={{
+                background: "#2563eb",
+                color: "#fff",
+                border: "none",
+                padding: "8px 16px",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: "0.9rem",
+              }}
+            >
+              {executing ? t("executing pipeline...") : `🚀 ${t("Execute Pipeline & Draft Cards")}`}
+            </button>
+          </div>
+          {execResult && (
+            <div style={{ marginTop: 10, fontSize: "0.85rem", color: "#16a34a", fontWeight: 600 }}>
+              {execResult}{" "}
+              <Link href={`/projects/${projectId}/queue?run_id=${encodeURIComponent(runId)}`} style={{ textDecoration: "underline" }}>
+                {t("Go to Expert Queue →")}
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+
       <ProblemNote error={read.error} />
       <Loading on={read.loading} />
       {read.data ? (

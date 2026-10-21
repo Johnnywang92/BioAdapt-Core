@@ -7,6 +7,14 @@
  * server may add later stays reachable through the index signatures on the looser records.
  */
 
+export type CapabilityStatus = "configured" | "unavailable" | "unknown";
+export interface DeploymentCapabilities {
+  mode: "reference" | "configured" | "unknown";
+  object_upload: CapabilityStatus;
+  run_execution: CapabilityStatus;
+  export_generation: CapabilityStatus;
+}
+
 export type PrivacyTier = "public" | "restricted" | "strict_local" | "hgr_controlled";
 export type RegulatoryProfile = "hgr" | "pipl" | "gdpr" | "hipaa" | "commercial_only";
 export type UsageScope =

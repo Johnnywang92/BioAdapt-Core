@@ -5,8 +5,13 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { IdentityBar } from "@/components/IdentityBar";
-import { LOCALES, useLocale } from "@/lib/i18n";
+import { DeploymentStatus } from "@/components/DeploymentStatus";
+import { Chip, ProblemNote } from "@/components/ui";
+import { projects, type Caller } from "@/lib/api";
+import { LOCALES, useLocale, useT } from "@/lib/i18n";
 import { useWorkbench } from "@/lib/identity";
+import { useAsync } from "@/lib/useAsync";
+import type { PrivacyTier } from "@/lib/types";
 
 const SCREENS: [string, string][] = [
   ["", "overview"],
@@ -41,24 +46,11 @@ export function Shell({ children }: { children: ReactNode }) {
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <div className="brand">BioAdapt</div>
           {project && (
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "0.75rem",
-                fontWeight: 600,
-                padding: "2px 8px",
-                borderRadius: "9999px",
-                background: "rgba(16, 185, 129, 0.12)",
-                color: "#059669",
-                border: "1px solid rgba(16, 185, 129, 0.3)",
-                letterSpacing: "0.02em",
-              }}
-              title={t("strict local privacy tier")}
-            >
-              🔒 STRICT_LOCAL
-            </span>
+            <ProjectPrivacy
+              key={`${project}:${identity?.token ?? "anonymous"}`}
+              projectId={fromPath ? decodeURIComponent(fromPath) : remembered}
+              caller={identity ? { token: identity.token, subjectId: identity.subjectId } : null}
+            />
           )}
         </div>
         <nav>
@@ -98,9 +90,35 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </div>
       <main className="main">
+        <DeploymentStatus />
         {children}
         <IdentityBar />
       </main>
     </div>
+  );
+}
+
+const PRIVACY_NOTES: Record<PrivacyTier, string> = {
+  public: "External model calls and exports remain subject to project policies and provider terms.",
+  restricted: "Raw data cannot leave the project. Only permitted aggregate derivations may be used externally; cloud calls are checked field by field.",
+  strict_local: "Local processing only. Cloud model calls and this export route are blocked by project policy.",
+  hgr_controlled: "Human genetic resources are controlled. Cloud model calls and this export route are blocked by project policy.",
+};
+
+function ProjectPrivacy({ caller, projectId }: { caller: Caller | null; projectId: string }) {
+  const t = useT();
+  const read = useAsync(() => caller ? projects.read(caller, projectId) : Promise.resolve(null), [caller?.token, projectId]);
+  const tier = !read.loading && !read.error ? read.data?.privacy_tier : undefined;
+  return (
+    <details className="privacy-details">
+      <summary><Chip title={tier}>{tier ? t(tier) : t("Privacy policy not confirmed")}</Chip></summary>
+      <div className="privacy-content">
+        <strong>{t("privacy tier")}</strong>
+        <p>{tier ? t(PRIVACY_NOTES[tier]) : t("The project privacy policy has not been read successfully. Do not assume local-only processing.")}</p>
+        {tier ? <p className="mono">{tier}</p> : null}
+        <ProblemNote error={read.error} />
+        <button type="button" className="secondary" disabled={!caller || read.loading} onClick={read.reload}>{t("re-read")}</button>
+      </div>
+    </details>
   );
 }

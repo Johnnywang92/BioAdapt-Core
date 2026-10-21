@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
+import { DeploymentNotice } from "@/components/DeploymentStatus";
 import { exports_ as exportsApi, intentKey, projects as projectsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
@@ -61,11 +62,12 @@ function QueueExport({ caller, projectId }: { caller: Caller; projectId: string 
       title={t("Queue an export")}
       note={t("filters narrow the artefact; an unknown run id is refused rather than answered with everything")}
     >
+      <DeploymentNotice capability="export_generation" />
       <ProblemNote error={submit.error} />
       {queued ? (
         <Notice>
-          <span className="mono">{queued.export_id}</span> {t("is")} {t(queued.status)} — {t("poll")}{" "}
-          <span className="mono">{queued.poll}</span> {t("until it reports READY.")}
+          <span className="mono">{queued.export_id}</span> {t("is")} {t(queued.status)}.
+          {" "}{t("The request was recorded. A download is available only after a worker generates the file; see the deployment status above.")}
         </Notice>
       ) : null}
       <form

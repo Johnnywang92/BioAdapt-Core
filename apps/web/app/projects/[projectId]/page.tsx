@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
+import { DeploymentNotice } from "@/components/DeploymentStatus";
 import { intentKey, projects as projectsApi, runs as runsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
@@ -84,6 +85,10 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
         ) : null}
       </Panel>
 
+      {project.data && (
+        <ThresholdsConfirmPanel caller={caller} project={project.data} onConfirmed={project.reload} />
+      )}
+
       <LaunchRun caller={caller} projectId={projectId} onLaunched={listed.reload} />
 
       <Panel
@@ -144,10 +149,10 @@ function LaunchRun({
   const t = useT();
   const submit = useSubmit();
   const [form, setForm] = useState({
-    plan_id: "",
-    plan_version: "",
-    input_asset_ids: "",
-    tool_registry_snapshot: "",
+    plan_id: "plan_scrnaseq",
+    plan_version: "1",
+    input_asset_ids: "as_counts",
+    tool_registry_snapshot: "6ab935c8c9aa698b582cfc2fd8e1570b995890d9dcd2e81d13709b47030e4730",
     priority: "5",
     reproducibility_level_target: "conclusion" as ReproducibilityLevel,
   });
@@ -195,6 +200,7 @@ function LaunchRun({
         "the plan has to be recorded and its input assets registered first; a launch that names an unknown asset is refused, not guessed around",
       )}
     >
+      <DeploymentNotice capability="run_execution" />
       <ProblemNote error={submit.error} />
       {created ? (
         <Notice>
@@ -255,6 +261,104 @@ function LaunchRun({
           {submit.busy ? t("launching…") : t("Launch")}
         </button>
       </form>
+    </Panel>
+  );
+}
+
+function ThresholdsConfirmPanel({
+  caller,
+  project,
+  onConfirmed,
+}: {
+  caller: Caller;
+  project: Project;
+  onConfirmed: () => void;
+}) {
+  const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const [version, setVersion] = useState("v1-measured");
+  const [rationale, setRationale] = useState("根据历史单细胞项目实测基线核准判据集合，正式解除阶段 1 结论出口门禁");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const confirmed = Boolean(project.thresholds && project.thresholds.confirmed);
+  const curVersion = String((project.thresholds && project.thresholds.version) || "v0-unconfirmed");
+
+  const handleConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!version.trim() || !rationale.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const copy: Record<string, unknown> = { ...(project.thresholds || {}), version: version.trim() };
+      delete copy.confirmed;
+      await projectsApi.confirmThresholds(caller, project.project_id, copy, rationale.trim());
+      onConfirmed();
+      setExpanded(false);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel
+      title={confirmed ? `✅ ${t("Decision Thresholds Baseline (Phase 1 Confirmed)")}` : `⚠️ ${t("Stage 0 Baseline Unconfirmed (Exit Gates Closed)")}`}
+      note={confirmed
+        ? t("Thresholds confirmed by PI; sign-off and export gates are open (§1.5).")
+        : t("Exit gates (sign-off and export) are hard-blocked until PI reviews and confirms the measured thresholds (§1.5/§14.4).")}
+      actions={
+        <button className="secondary" type="button" onClick={() => setExpanded(!expanded)}>
+          {expanded ? t("Collapse") : t("View / Edit Thresholds")}
+        </button>
+      }
+    >
+      <ProblemNote error={error} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <span style={{ fontWeight: 600 }}>{t("Active Cut-Set Version")}: </span>
+          <span className="mono" style={{ fontSize: "1rem" }}>{curVersion}</span>
+          <span style={{ marginLeft: "12px", color: confirmed ? "#16a34a" : "#dc2626", fontWeight: 700 }}>
+            {confirmed ? `🔒 ${t("CONFIRMED (Stage 1 Ready)")}` : `🚫 ${t("UNCONFIRMED (Locked)")}`}
+          </span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ marginTop: "1rem", borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "8px", maxHeight: "200px", overflowY: "auto", background: "var(--bg)", padding: "10px", borderRadius: "6px", marginBottom: "1rem" }}>
+            {Object.entries(project.thresholds || {})
+              .filter(([k]) => k !== "confirmed" && k !== "version")
+              .map(([key, val]) => (
+                <div key={key} style={{ fontSize: "0.8rem" }}>
+                  <span style={{ color: "var(--muted)" }}>{key}: </span>
+                  <strong>{String(val)}</strong>
+                </div>
+              ))}
+          </div>
+
+          {!confirmed && (
+            <form onSubmit={handleConfirm} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "10px" }}>
+                <Field label={t("New Confirmed Version Name")} hint={t("e.g. v1-measured")}>
+                  <input value={version} onChange={(e) => setVersion(e.target.value)} required className="mono" />
+                </Field>
+                <Field label={t("Confirmation Rationale / Source")} hint={t("Required audit justification (§1.5)")}>
+                  <input value={rationale} onChange={(e) => setRationale(e.target.value)} required />
+                </Field>
+              </div>
+              <button
+                type="submit"
+                disabled={busy || !version.trim() || !rationale.trim()}
+                style={{ alignSelf: "flex-start", background: "#16a34a", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "4px", cursor: "pointer", fontWeight: 600 }}
+              >
+                {busy ? t("confirming...") : `✅ ${t("PI Confirm Thresholds & Unlock Gates")}`}
+              </button>
+            </form>
+          )}
+        </div>
+      )}
     </Panel>
   );
 }

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote, StatusChip } from "@/components/ui";
 import { findings, knowledge, type Caller } from "@/lib/api";
+import { evidenceMarkers, queryMarkers } from "@/lib/evidencePresentation";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
@@ -55,7 +56,7 @@ export default function CardPage({ params }: { params: { projectId: string; cand
     );
   }
 
-  return <Card caller={caller} projectId={projectId} candidateId={candidateId} />;
+  return <Card key={`${projectId}:${candidateId}:${caller.token}`} caller={caller} projectId={projectId} candidateId={candidateId} />;
 }
 
 function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: string; candidateId: string }) {
@@ -71,36 +72,12 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
   );
   const review = useSubmit();
   const signOff = useSubmit();
-  const [ragSuggestion, setRagSuggestion] = useState<BioSuggestion | null>(null);
-  const [queryingKnowledge, setQueryingKnowledge] = useState(false);
   const [prefillReview, setPrefillReview] = useState<{
     decision?: ReviewDecision;
     rationale?: string;
     newValue?: string;
     scope?: ReviewScope;
   } | null>(null);
-
-  const handleQueryKnowledge = async () => {
-    if (!card) return;
-    setQueryingKnowledge(true);
-    try {
-      const markers = Object.values(card.evidence)
-        .map((e) => ((e.content as Record<string, unknown>)?.gene_symbol || (e.content as Record<string, unknown>)?.marker) as string)
-        .filter(Boolean);
-      const res = await knowledge.suggest(
-        caller,
-        projectId,
-        card.display_name || card.candidate_id,
-        markers.length > 0 ? markers : ["CD4", "CD8A", "FOXP3"],
-        card.candidate_label || "",
-      );
-      setRagSuggestion(res);
-    } catch {
-      // Ignored
-    } finally {
-      setQueryingKnowledge(false);
-    }
-  };
 
   function refresh() {
     read.reload();
@@ -210,28 +187,18 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
               <dd>{t(card.cross_modal_status)}</dd>
             </dl>
 
-            {(card.cross_modal_status === "discordant" || card.unresolved_conflict) && (
-              <div
-                style={{
-                  background: "#fff1f2",
-                  border: "1px solid #fecdd3",
-                  color: "#9f1239",
-                  padding: "12px 16px",
-                  borderRadius: "8px",
-                  marginTop: "16px",
-                  marginBottom: "16px",
-                  fontSize: "0.95rem",
-                }}
-              >
-                <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                  <span>⚡</span> {t("Cross-Modal Conflict Alert")}
-                </div>
-                <div style={{ lineHeight: 1.5, marginBottom: "8px" }}>
-                  {t("Discordant signals between transcription and orthogonal modality")}
-                </div>
-                <CrossModalScatterChart card={card} />
+            {card.cross_modal_status === "discordant" ? (
+              <div className="error" role="alert">
+                <strong>{t("Cross-Modal Conflict Alert")}</strong>
+                <p>{t("The card reports discordant modalities. Review the source evidence before drawing a conclusion; the alert alone does not establish a mechanism or statistical significance.")}</p>
               </div>
-            )}
+            ) : card.unresolved_conflict ? (
+              <div className="error" role="alert">
+                <strong>{t("Unresolved evidence conflict")}</strong>
+                <p>{t("This card has an unresolved conflict. It is not necessarily a cross-modal conflict; inspect its contradicting evidence and gate reasons.")}</p>
+              </div>
+            ) : null}
+            <CrossModalSummary card={card} />
 
             {read.data?.reviewer_memo ? (
               <div
@@ -316,7 +283,9 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                       onClick={() => {
                         setPrefillReview({
                           decision: "revise",
-                          rationale: `根据 AI 生信审查备忘录操作建议：${read.data?.reviewer_memo?.recommended_action}`,
+                          scope: "card",
+                          newValue: "",
+                          rationale: t("Review memo suggestion: {action}", { action: read.data?.reviewer_memo?.recommended_action ?? "" }),
                         });
                       }}
                       style={{
@@ -331,7 +300,7 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                         marginLeft: "12px",
                       }}
                     >
-                      ✨ {t("Adopt AI Memo Action")}
+                      {t("Fill review draft")}
                     </button>
                   </div>
                 ) : null}
@@ -380,79 +349,14 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
               </details>
             ) : null}
 
-            <div style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <h3 style={{ margin: 0, fontSize: "1.05rem", display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span>📚</span> {t("Knowledge Base RAG Advice")}
-                </h3>
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={queryingKnowledge}
-                  onClick={handleQueryKnowledge}
-                  style={{ fontSize: "0.85rem", padding: "4px 10px" }}
-                >
-                  {queryingKnowledge ? t("Querying knowledge base...") : `🔍 ${t("Consult Knowledge Base")}`}
-                </button>
-              </div>
-
-              {ragSuggestion && (
-                <div
-                  style={{
-                    background: "#f0fdf4",
-                    border: "1px solid #bbf7d0",
-                    borderRadius: "8px",
-                    padding: "12px 16px",
-                    fontSize: "0.9rem",
-                  }}
-                >
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px", flexWrap: "wrap" }}>
-                    <strong>{t("suggested cell types")}:</strong>
-                    {ragSuggestion.suggested_cell_types.map((ct, idx) => (
-                      <span key={idx} style={{ background: "#dcfce7", color: "#15803d", padding: "2px 8px", borderRadius: "4px", fontWeight: 600 }}>
-                        {ct}
-                      </span>
-                    ))}
-                    <span style={{ color: "var(--muted)", marginLeft: "auto", fontSize: "0.8rem" }}>
-                      {t("confidence")}: {Math.round(ragSuggestion.confidence * 100)}%
-                    </span>
-                  </div>
-                  <div style={{ color: "#334155", whiteSpace: "pre-wrap", lineHeight: 1.5, marginBottom: "10px" }}>
-                    {ragSuggestion.rationale}
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "8px" }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const topType = ragSuggestion.suggested_cell_types[0] || card.candidate_label || "Candidate Population";
-                        setPrefillReview({
-                          decision: "revise",
-                          scope: "field",
-                          newValue: JSON.stringify({ candidate_label: topType }),
-                          rationale: `采纳私有知识库建议（置信度 ${Math.round(ragSuggestion.confidence * 100)}%）：推荐标注为 ${topType}。依据：${ragSuggestion.rationale.slice(0, 100)}...`,
-                        });
-                      }}
-                      style={{
-                        background: "#0284c7",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: "4px",
-                        padding: "4px 10px",
-                        cursor: "pointer",
-                        fontSize: "0.8rem",
-                      }}
-                    >
-                      ✨ {t("Adopt Knowledge Suggestion")}
-                    </button>
-                  </div>
-                  {ragSuggestion.citations.length > 0 && (
-                    <div style={{ fontSize: "0.8rem", color: "var(--muted)", borderTop: "1px dashed #cbd5e1", paddingTop: "6px" }}>
-                      {t("citations")}: {ragSuggestion.citations.map((c) => `《${c.source_doc?.title || c.chunk.doc_id}》`).join(", ")}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <KnowledgeAdvice
+              key={`${card.card_id}:${caller.token}:${JSON.stringify(evidenceMarkers(card.evidence))}`}
+              card={card}
+              caller={caller}
+              projectId={projectId}
+              clusterId={read.data?.cluster_id ?? ""}
+              onPrefill={setPrefillReview}
+            />
           </div>
 
           <div className="side">
@@ -597,6 +501,110 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
   );
 }
 
+function KnowledgeAdvice({ card, caller, projectId, clusterId, onPrefill }: {
+  card: EvidenceCard;
+  caller: Caller;
+  projectId: string;
+  clusterId: string;
+  onPrefill: (value: { decision: ReviewDecision; scope: ReviewScope; newValue: string; rationale: string }) => void;
+}) {
+  const t = useT();
+  const recordedMarkers = evidenceMarkers(card.evidence);
+  const [input, setInput] = useState(recordedMarkers.join(", "));
+  const [tissue, setTissue] = useState("");
+  const [result, setResult] = useState<BioSuggestion | null>(null);
+  const [selectedType, setSelectedType] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const [filled, setFilled] = useState(false);
+  const markers = queryMarkers(input);
+
+  function clearResult() {
+    setResult(null);
+    setSelectedType("");
+    setError(null);
+    setFilled(false);
+  }
+
+  async function query() {
+    if (!markers.length || !clusterId || busy) return;
+    clearResult();
+    setBusy(true);
+    try {
+      const answer = await knowledge.suggest(caller, projectId, clusterId, markers, tissue.trim());
+      setResult(answer);
+      setSelectedType(answer.suggested_cell_types[0] ?? "");
+    } catch (exc) {
+      setError(exc);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="evidence" aria-label={t("Knowledge Base RAG Advice")}>
+      <h3>{t("Knowledge Base RAG Advice")}</h3>
+      <p className="muted">{t("Markers are read from marker-specificity evidence, including discovery signals. They are retrieval inputs, not proof of identity.")}</p>
+      {recordedMarkers.length ? (
+        <p className="mono">{t("Recorded markers")}: {recordedMarkers.join(", ")}</p>
+      ) : <Notice>{t("No marker genes are recorded on this card. Enter verified markers to query; no example genes will be substituted.")}</Notice>}
+      <form onSubmit={(event) => { event.preventDefault(); void query(); }}>
+        <Field label={t("Markers for this query")} hint={t("The first eight distinct genes are used. Check the exact query below before submitting.")}>
+          <textarea rows={2} value={input} disabled={busy} onChange={(event) => { setInput(event.target.value); clearResult(); }} />
+        </Field>
+        <Field label={t("Tissue (optional)")} hint={t("Tissue is not supplied by this card. Leave blank unless you know the source; a cell label is not a tissue.")}>
+          <input value={tissue} disabled={busy} onChange={(event) => { setTissue(event.target.value); clearResult(); }} />
+        </Field>
+        <p>{t("Query preview")}: <span className="mono">{clusterId || "—"} · {markers.join(", ") || "—"} · {tissue.trim() || t("Tissue not supplied")}</span></p>
+        <button type="submit" disabled={busy || !markers.length || !clusterId}>{busy ? t("Querying knowledge base...") : t("Consult Knowledge Base")}</button>
+        {!clusterId ? <Notice>{t("The source cluster is missing. Refresh the card before querying.")}</Notice> : null}
+      </form>
+      <ProblemNote error={error} />
+      {error ? <p className="muted">{t("The query failed; no suggestion was applied. Check the error and retry.")}</p> : null}
+      {result ? (
+        <div className="rows" style={{ marginTop: 12 }}>
+          <p>{t("Queried markers")}: <span className="mono">{result.markers.join(", ")}</span></p>
+          {!result.citations.length ? <Notice>{t("No matching knowledge-base citations were found. Any proposed cell types are heuristic leads, not literature-backed conclusions.")}</Notice> : null}
+          <p className="muted">{t("Retrieval heuristic score")}: {Math.round(result.confidence * 100)}% · {t("This score is based on retrieved matches, not a calibrated probability that a cell label is correct.")}</p>
+          <div style={{ whiteSpace: "pre-wrap" }}>{result.rationale}</div>
+          {result.citations.length ? (
+            <details>
+              <summary>{t("citations")} ({result.citations.length})</summary>
+              {result.citations.map((citation, index) => (
+                <blockquote key={`${citation.chunk.chunk_id}:${index}`}>
+                  <strong>{citation.source_doc?.title ?? citation.chunk.doc_id}</strong> · {citation.chunk.section_path}
+                  <p>{citation.chunk.content}</p>
+                </blockquote>
+              ))}
+            </details>
+          ) : null}
+          {result.suggested_cell_types.length ? (
+            <>
+              <Field label={t("Suggested label for review")}>
+                <select value={selectedType} onChange={(event) => { setSelectedType(event.target.value); setFilled(false); }}>
+                  {result.suggested_cell_types.map((label) => <option key={label} value={label}>{label}</option>)}
+                </select>
+              </Field>
+              <p>{t("Draft change")}: {card.candidate_label ?? t("no label")} → {selectedType}</p>
+              <p className="muted">{t("Only the label is prefilled. Complete hypothesis and ontology fields before submitting; this button does not save a review or sign a conclusion.")}</p>
+              <button type="button" disabled={!result.citations.length || !selectedType} onClick={() => {
+                onPrefill({
+                  decision: "revise",
+                  scope: "field",
+                  newValue: JSON.stringify({ candidate_label: selectedType }),
+                  rationale: t("Knowledge-base suggestion for review: {label}. Rationale: {rationale}", { label: selectedType, rationale: result.rationale }),
+                });
+                setFilled(true);
+              }}>{t("Fill review draft")}</button>
+              {filled ? <Notice>{t("Review draft filled. Inspect and submit it in the Review panel; nothing has been saved yet.")}</Notice> : null}
+            </>
+          ) : <Notice>{t("The retrieved evidence is insufficient to suggest a cell label.")}</Notice>}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function EvidenceRow({ evidence, card, contra }: { evidence: Evidence; card: EvidenceCard; contra?: boolean }) {
   const t = useT();
   const independent =
@@ -670,26 +678,27 @@ function ReviewForm({
   const [rationale, setRationale] = useState("");
   const [newValue, setNewValue] = useState("");
   const [supersedes, setSupersedes] = useState("");
+  const [parseError, setParseError] = useState<string | null>(null);
 
   useEffect(() => {
     if (prefill) {
       if (prefill.decision) setDecision(prefill.decision);
       if (prefill.rationale) setRationale(prefill.rationale);
-      if (prefill.newValue) {
-        setNewValue(prefill.newValue);
-        setScope("field");
-      } else if (prefill.scope) {
-        setScope(prefill.scope);
-      }
+      if (prefill.newValue !== undefined) setNewValue(prefill.newValue);
+      if (prefill.scope) setScope(prefill.scope);
     }
   }, [prefill]);
 
   function send() {
+    setParseError(null);
     let parsed: Record<string, unknown> | undefined;
     if (scope === "field") {
       try {
-        parsed = JSON.parse(newValue) as Record<string, unknown>;
+        const value: unknown = JSON.parse(newValue);
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+        parsed = value as Record<string, unknown>;
       } catch {
+        setParseError(t("Review changes must be a valid JSON object. No review was submitted."));
         return;
       }
     }
@@ -755,6 +764,7 @@ function ReviewForm({
       >
         <input className="mono" value={supersedes} onChange={(event) => setSupersedes(event.target.value)} />
       </Field>
+      {parseError ? <div className="error" role="alert">{parseError}</div> : null}
       <button type="submit" disabled={submit.busy || !rationale.trim() || (scope === "field" && !newValue.trim())}>
         {submit.busy ? t("recording…") : t("Record review")}
       </button>
@@ -845,57 +855,29 @@ function preview(value: unknown): string {
   return entries.map(([key, one]) => `${key}=${typeof one === "object" ? JSON.stringify(one) : String(one)}`).join(" · ") || "—";
 }
 
-function CrossModalScatterChart({ card }: { card: EvidenceCard }) {
+function CrossModalSummary({ card }: { card: EvidenceCard }) {
   const t = useT();
-  const crossEv = Object.values(card.evidence).filter((e) => e.kind === "cross_modal");
-  const firstEv = crossEv[0];
-  const gene = ((firstEv?.content as Record<string, unknown>)?.gene_symbol as string) || "Marker";
-  const isConflict = card.cross_modal_status === "discordant" || card.unresolved_conflict;
-
+  const evidence = Object.values(card.evidence).filter((item) => item.kind === "cross_modal");
+  if (!evidence.length && card.cross_modal_status !== "discordant") return null;
+  const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? String(value) : "—";
+  const text = (value: unknown) => typeof value === "string" && value ? value : "—";
   return (
-    <div style={{ background: "#fff", border: "1px solid #fed7aa", borderRadius: "6px", padding: "10px", marginTop: "10px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-        <strong style={{ fontSize: "0.85rem", color: "#9a3412" }}>
-          📊 {t("Cross-Modal Scatter (RNA vs ADT)")}: {gene}
-        </strong>
-        <span style={{ fontSize: "0.75rem", color: isConflict ? "#e11d48" : "#16a34a", fontWeight: 700 }}>
-          {isConflict ? `⚠️ ${t("Conflict Quadrant")}` : `✅ ${t("Concordant Quadrant")}`}
-        </span>
-      </div>
-      <svg viewBox="0 0 320 140" style={{ width: "100%", height: "130px", background: "#f8fafc", borderRadius: "4px" }}>
-        <line x1="36" y1="110" x2="300" y2="110" stroke="#94a3b8" strokeWidth="1" />
-        <line x1="36" y1="15" x2="36" y2="110" stroke="#94a3b8" strokeWidth="1" />
-        <text x="168" y="128" fontSize="9" fill="#64748b" textAnchor="middle">mRNA log2(Count+1)</text>
-        <text x="12" y="65" fontSize="9" fill="#64748b" textAnchor="middle" transform="rotate(-90 12,65)">ADT / ATAC</text>
-
-        <line x1="168" y1="15" x2="168" y2="110" stroke="#cbd5e1" strokeDasharray="3 3" />
-        <line x1="36" y1="62" x2="300" y2="62" stroke="#cbd5e1" strokeDasharray="3 3" />
-
-        {isConflict ? (
-          <>
-            <rect x="168" y="62" width="132" height="48" fill="rgba(244, 63, 94, 0.15)" rx="3" />
-            <circle cx="220" cy="95" r="3.5" fill="#e11d48" opacity="0.85" />
-            <circle cx="240" cy="100" r="4" fill="#e11d48" opacity="0.85" />
-            <circle cx="215" cy="88" r="3" fill="#e11d48" opacity="0.85" />
-            <circle cx="255" cy="98" r="4" fill="#e11d48" opacity="0.85" />
-            <circle cx="195" cy="102" r="3.5" fill="#e11d48" opacity="0.85" />
-            <text x="234" y="82" fontSize="8" fill="#be123c" fontWeight="700" textAnchor="middle">
-              High mRNA / Negative ADT
-            </text>
-          </>
-        ) : (
-          <>
-            <rect x="168" y="15" width="132" height="47" fill="rgba(34, 197, 94, 0.15)" rx="3" />
-            <circle cx="220" cy="38" r="3.5" fill="#16a34a" opacity="0.85" />
-            <circle cx="240" cy="32" r="4" fill="#16a34a" opacity="0.85" />
-            <circle cx="215" cy="42" r="3" fill="#16a34a" opacity="0.85" />
-            <circle cx="255" cy="28" r="4" fill="#16a34a" opacity="0.85" />
-            <text x="234" y="55" fontSize="8" fill="#15803d" fontWeight="700" textAnchor="middle">
-              Concordant Co-expression
-            </text>
-          </>
-        )}
-      </svg>
-    </div>
+    <section className="evidence" aria-label={t("Cross-modal measured summary")}>
+      <h3>{t("Cross-modal measured summary")}</h3>
+      <p className="muted">{t("Only aggregate measurements are available, not paired cell observations. No scatter plot is drawn. Units, transformations and thresholds must be checked in the source asset.")}</p>
+      {!evidence.length ? <Empty>{t("No cross-modal measurements are attached to this card.")}</Empty> : evidence.map((item) => (
+        <div key={item.evidence_id} style={{ marginBottom: 12 }}>
+          <strong>{text(item.content.gene_symbol)}</strong> · <Chip title={text(item.content.target_modality)}>{item.content.target_modality === "protein" ? "RNA / ADT" : item.content.target_modality === "atac" ? "RNA / ATAC" : text(item.content.target_modality)}</Chip>
+          <div className="table-scroll">
+            <table>
+              <thead><tr><th>{t("RNA mean")}</th><th>{t("Target modality mean")}</th><th>Spearman ρ</th><th>{t("agreement")}</th></tr></thead>
+              <tbody><tr><td>{number(item.content.rna_expression_mean)}</td><td>{number(item.content.target_modality_mean)}</td><td>{number(item.content.spearman_rho)}</td><td>{t(text(item.content.agreement))}</td></tr></tbody>
+            </table>
+          </div>
+          {typeof item.content.conflict_rationale === "string" ? <p>{item.content.conflict_rationale}</p> : null}
+          <p className="muted mono">{item.evidence_id} · {sourceLabel(item)}</p>
+        </div>
+      ))}
+    </section>
   );
 }

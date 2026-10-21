@@ -1,8 +1,8 @@
 """Request wiring: identity, project scope, authorization, audit (plan V2.0 sections 9.7, 11.2, 13.1).
 
-Every route runs inside a :class:`Session` that has already resolved the caller, opened a catalog
-connection scoped to one project (the row level security predicate), and records one audit row per
-authorization decision - allowed or denied.
+Project-scoped routes run inside a :class:`Session` that has already resolved the caller, opened a
+catalog connection scoped to one project (the row level security predicate), and records one audit row
+per authorization decision - allowed or denied.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Annotated, Any, Callable, Optional, Protocol
+from typing import Annotated, Any, Callable, Literal, Optional, Protocol
 
 from fastapi import Depends, Request
 
@@ -111,6 +111,16 @@ class InMemoryQueue:
             return admitted
 
 
+@dataclass(frozen=True)
+class DeploymentCapabilities:
+    """Explicit deployment declarations, not health checks or authorization switches."""
+
+    mode: Literal["reference", "configured", "unknown"] = "unknown"
+    object_upload: Literal["configured", "unavailable", "unknown"] = "unknown"
+    run_execution: Literal["configured", "unavailable", "unknown"] = "unknown"
+    export_generation: Literal["configured", "unavailable", "unknown"] = "unknown"
+
+
 @dataclass
 class ApiState:
     catalogs: CatalogProvider
@@ -134,6 +144,7 @@ class ApiState:
     #: same question the API was when it wrote them, and a second copy in code could drift from the first.
     adhoc_grant_ttl: timedelta = timedelta(hours=24)
     adhoc_limits: AdhocSandboxLimits = DEFAULT_ADHOC_LIMITS
+    deployment: DeploymentCapabilities = field(default_factory=DeploymentCapabilities)
 
 
 @dataclass

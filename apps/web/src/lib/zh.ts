@@ -602,4 +602,31 @@ export const zh: Record<string, string> = {
   "strict local privacy tier": "严格本地执行 (STRICT_LOCAL)：零外部大模型调用，数据与文献 100% 留存本地",
   "Click or drag files here": "点击选择文件或将文件拖拽至此处",
   "Successfully ingested documents": "已成功解析并建立本地混合索引！",
+
+  // 阶段 1 & 阶段 2 核心闭环
+  "Decision Thresholds Baseline (Phase 1 Confirmed)": "判据基线状态 (阶段 1 已确认)",
+  "Stage 0 Baseline Unconfirmed (Exit Gates Closed)": "阶段 0 未确认基线 (结论出口已锁定)",
+  "Thresholds confirmed by PI; sign-off and export gates are open (§1.5).":
+    "判据集合已由 PI 审核确认，结论签字与成果导出通道已放行 (§1.5)。",
+  "Exit gates (sign-off and export) are hard-blocked until PI reviews and confirms the measured thresholds (§1.5/§14.4).":
+    "依据 §1.5 与 §14.4 规范，结论出口（签字与导出）在 PI 复核并确认实测阈值前硬阻断，防止占位数值直接流出平台。",
+  "Collapse": "收起判据明细",
+  "View / Edit Thresholds": "查看 / 审核 24 项指标",
+  "Active Cut-Set Version": "生效判据集合版本",
+  "CONFIRMED (Stage 1 Ready)": "已确认 (阶段 1 就绪)",
+  "UNCONFIRMED (Locked)": "未确认 (出口锁定)",
+  "New Confirmed Version Name": "新确认版本标识",
+  "Confirmation Rationale / Source": "确认依据 / 实测来源说明",
+  "PI Confirm Thresholds & Unlock Gates": "作为 PI 确认基线并解锁结论出口",
+  "confirming...": "正在签署确认…",
+  "Ad-hoc Tool Approved by PI": "PI 已批准临时工具 (Ad-hoc)",
+  "This sandbox gate was approved. Issue the one-time ledger execution grant to authorize run (§9.6).":
+    "该沙箱审批门已通过。发放一次性台账执行凭据以授权计算节点执行 (§9.6)。",
+  "Issue Execution Grant": "发放一次性执行凭据",
+  "Run In-Process Analysis Execution (Phase 2 MVP)": "启动分析计算执行器 (阶段 2 MVP)",
+  "Execute DAG nodes (qc → normalize → pca → cluster → markers → pseudobulk_de → robustness), discover C1-C3 candidates, and draft evidence cards.":
+    "顺序执行计算节点 (QC → 标准化 → 降维 → 聚类 → Marker → 差异表达 → 鲁棒性)，自动识别 C1-C3 候选亚群并起草证据卡。",
+  "Execute Pipeline & Draft Cards": "执行生信流水线并起草证据卡",
+  "executing pipeline...": "正在执行计算分析…",
+  "Go to Expert Queue →": "前往专家审查队列 →",
 };

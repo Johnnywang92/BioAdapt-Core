@@ -14,7 +14,7 @@ from time import perf_counter
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
-from .deps import ApiState, get_claims, open_session
+from .deps import ApiState, DeploymentCapabilities, StateDep, get_claims, open_session
 from .errors import register_handlers
 from .observability import emit, new_trace_id
 from .routes_annotations import router as annotations_router
@@ -58,6 +58,11 @@ def create_app(state: ApiState) -> FastAPI:
             latency_ms=round((perf_counter() - started) * 1000, 3),
         )
         return response
+
+    @app.get("/v1/deployment")
+    def deployment(state: StateDep) -> DeploymentCapabilities:
+        """Anonymous, non-sensitive declarations only; ``configured`` is not a health check."""
+        return state.deployment
 
     for router in (
         data_router,

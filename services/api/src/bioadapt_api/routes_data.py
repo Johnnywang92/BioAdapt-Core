@@ -7,6 +7,8 @@ plane reports the digest and size the client declared.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -180,6 +182,43 @@ def complete_upload(asset_id: str, body: DataAsset, session: SessionDep) -> dict
     recorded = session.catalog.record_asset(body.model_copy(update={"uri": f"s3://{key}"}))
     session.audit("asset:record", recorded, details={"key": key, "file_sha256": head.sha256})
     return {"asset_id": recorded, "key": key, "uri": f"s3://{key}", "content_fingerprint": body.content_fingerprint}
+
+
+class DirectAssetUploadRequest(Contract):
+    asset: DataAsset
+    content_b64: Optional[str] = None
+    content_text: Optional[str] = None
+
+
+@router.post("/projects/{project_id}/assets/direct-upload", status_code=201)
+def direct_upload_asset(body: DirectAssetUploadRequest, session: SessionDep) -> dict:
+    """Direct upload of asset bytes into local/in-memory object store, bypassing unreachable presigned URLs."""
+    asset = body.asset
+    _declared_in_path(session, asset)
+    session.enforce(
+        Action.ASSET_WRITE, asset.asset_id, "asset", privacy_tier=asset.privacy_tier, usage_scope=asset.usage_scope
+    )
+    if body.content_b64:
+        content_bytes = base64.b64decode(body.content_b64)
+    elif body.content_text:
+        content_bytes = body.content_text.encode("utf-8")
+    else:
+        raise invalid("content", "Either content_b64 or content_text must be provided")
+
+    file_sha256 = hashlib.sha256(content_bytes).hexdigest()
+    key = object_key_for(session.project_id, asset)
+    session.state.objects.put(key, content_bytes)
+    recorded = session.catalog.record_asset(
+        asset.model_copy(
+            update={
+                "uri": f"s3://{key}",
+                "size_bytes": len(content_bytes),
+                "file_sha256": file_sha256,
+            }
+        )
+    )
+    session.audit("asset:record", recorded, details={"key": key, "direct_upload": True, "file_sha256": file_sha256})
+    return {"asset_id": recorded, "key": key, "uri": f"s3://{key}", "content_fingerprint": asset.content_fingerprint}
 
 
 @router.get("/projects/{project_id}/assets")

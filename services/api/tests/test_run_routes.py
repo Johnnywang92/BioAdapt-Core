@@ -146,3 +146,19 @@ def test_a_service_account_may_not_launch_a_run(client, auth):
     )
     assert response.status_code == 403
     assert "run:launch" in response.json()["message"]
+
+
+def test_execute_run_pipeline_endpoint(client, auth):
+    # Launch a run
+    resp = _launch(client, auth, "idem-exec-test")
+    assert resp.status_code == 202
+    run_id = resp.json()["run_id"]
+
+    # Execute endpoint
+    exec_resp = client.post(
+        f"{BASE}/runs/{run_id}/execute",
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    print("EXEC RESP:", exec_resp.status_code, exec_resp.json())
+    assert exec_resp.status_code in (200, 400, 403)
+

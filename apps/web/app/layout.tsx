@@ -5,6 +5,7 @@ import "./globals.css";
 import { IdentityProvider } from "@/lib/identity";
 import { LocaleProvider } from "@/lib/i18n";
 import { Shell } from "@/components/Shell";
+import { DeploymentProvider } from "@/components/DeploymentStatus";
 
 export const metadata: Metadata = {
   title: "BioAdapt workbench",
@@ -20,7 +21,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <IdentityProvider>
           <LocaleProvider>
-            <Shell>{children}</Shell>
+            <DeploymentProvider>
+              <Shell>{children}</Shell>
+            </DeploymentProvider>
           </LocaleProvider>
         </IdentityProvider>
       </body>

@@ -134,6 +134,10 @@ class CatalogSession:
     def project_id(self) -> str:
         return self._project_id
 
+    @property
+    def scope(self) -> str:
+        return self._project_id
+
     def __getattr__(self, name: str) -> Any:
         attribute = getattr(self._catalog, name)
         if not callable(attribute):
@@ -454,6 +458,14 @@ class Catalog:
         cur = self.conn.execute(
             "update run_manifest set plan_version = ?, tool_versions = ? where project_id = ? and run_id = ?",
             (plan_version, self._encode("run_manifest", "tool_versions", tool_versions), self.scope, run_id),
+        )
+        if cur.rowcount != 1:
+            raise LookupError(f"run {run_id} not found in project {self.scope}")
+
+    def set_run_tool_registry_snapshot(self, run_id: str, snapshot: str) -> None:
+        cur = self.conn.execute(
+            "update run_manifest set tool_registry_snapshot = ? where project_id = ? and run_id = ?",
+            (snapshot, self.scope, run_id),
         )
         if cur.rowcount != 1:
             raise LookupError(f"run {run_id} not found in project {self.scope}")

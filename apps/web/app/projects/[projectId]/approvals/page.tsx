@@ -174,6 +174,72 @@ function ApprovalRow({
         </dd>
       </dl>
       <ProblemNote error={error} />
+      {approval.kind === "adhoc_tool" && approval.state === "approved" ? (
+        <div style={{ marginTop: 14, padding: "12px", background: "rgba(16, 185, 129, 0.08)", border: "1px solid #a7f3d0", borderRadius: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <strong style={{ color: "#065f46", fontSize: "0.95rem" }}>⚡ {t("Ad-hoc Tool Approved by PI")}</strong>
+              <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "var(--muted)" }}>
+                {t("This sandbox gate was approved. Issue the one-time ledger execution grant to authorize run (§9.6).")}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                const sampleSpec = {
+                  tool_name: "project_qc_probe",
+                  tool_version: "0.1.0",
+                  task: "qc",
+                  deployment: {
+                    container_repository: "registry.internal/bioadapt/scrnaseq-reference",
+                    container_tag: "1.0.0",
+                    container_digest: "sha256:" + "ab".repeat(32),
+                    tool_version: "0.1.0",
+                    species: ["human"],
+                    cpu: 2,
+                    memory_mb: 4096,
+                    max_minutes: 60,
+                    measured_peak_memory_mb: 2048,
+                    measured_on: "synthetic_pbmc_v1",
+                    license_spdx_id: "BSD-3-Clause",
+                    license_display_name: "Scanpy reference steps",
+                    license_reviewed_at: "2026-05-04",
+                    license_review_note: "reviewed against licence matrix",
+                  },
+                  reason: approval.decision_reason || "Ad-hoc QC tool execution authorized by PI",
+                };
+                void act(async () => {
+                  const res = await approvalsApi.grantAdhoc(
+                    caller,
+                    projectId,
+                    approval.run_id,
+                    approval.node_id || "qc",
+                    {
+                      approval_id: approval.approval_id,
+                      spec: sampleSpec,
+                      valid_for_minutes: 1440,
+                    }
+                  );
+                  alert(`✅ 台账凭据发放成功！Grant ID: ${res.grant_id}`);
+                });
+              }}
+              style={{
+                background: "#16a34a",
+                color: "#fff",
+                border: "none",
+                padding: "8px 14px",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: "0.85rem",
+              }}
+            >
+              🚀 {t("Issue Execution Grant")}
+            </button>
+          </div>
+        </div>
+      ) : null}
       {!decided ? (
         <form
           onSubmit={(event) => {

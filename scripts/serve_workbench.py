@@ -8,11 +8,12 @@ This is a development entry point, not a deployment. It does three things in one
 3. mounts :func:`bioadapt_api.app.create_app` over that index and object plane and mints reference
    IdP tokens for the roles the workbench has to show apart.
 
-Two honest limits of a single-process reference:
+Three honest limits of a single-process reference, declared by ``/v1/deployment``:
 
 * The object plane is in memory and its signed URLs point at ``object.internal``, which nothing here
   resolves. A browser can therefore exercise a registration up to the declaration and the completion
   refusal (409 "nothing has been uploaded"), but a real PUT needs MinIO or S3.
+* No compute worker executes runs submitted through the API; the in-memory queue only tracks slots.
 * The export worker is not part of this process, so a queued export stays QUEUED. The route contract
   - 202, then a download URL only at READY - is what the screens are written against.
 
@@ -35,7 +36,7 @@ import card_factories as CF  # noqa: E402 - the root tree that joins the layers 
 import driver_factories as F  # noqa: E402
 
 from bioadapt_api.app import create_app  # noqa: E402
-from bioadapt_api.deps import ApiState, InMemoryQueue, SingleNodeCatalogs  # noqa: E402
+from bioadapt_api.deps import ApiState, DeploymentCapabilities, InMemoryQueue, SingleNodeCatalogs  # noqa: E402
 from bioadapt_api.identity import Hs256Verifier, IdTokenClaims  # noqa: E402
 from bioadapt_api.observability import MemoryLogSink  # noqa: E402
 from bioadapt_api.quota import ProjectQuotas, StaticQuotas  # noqa: E402
@@ -118,6 +119,12 @@ def build() -> tuple[object, dict[str, str], CF.Carded]:
         log_sink=MemoryLogSink(),
         clock=harness.clock,
         approval_policy=ApprovalPolicy(working_days=3),
+        deployment=DeploymentCapabilities(
+            mode="reference",
+            object_upload="unavailable",
+            run_execution="unavailable",
+            export_generation="unavailable",
+        ),
     )
     return create_app(state), tokens(verifier, harness.clock()), made
 

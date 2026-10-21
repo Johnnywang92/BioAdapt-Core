@@ -10,6 +10,7 @@ dist/
 # web app
 node_modules/
 .next/
+.next-dev/
 out/
 *.tsbuildinfo
 
