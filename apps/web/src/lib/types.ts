@@ -110,12 +110,11 @@ export interface Project {
 }
 
 /**
- * What a caller may send when opening a project. `thresholds` and `created_at` are left out: the
- * server fills them, and §7.3 keeps the cut set a deployment input rather than something a screen
- * can pick. `regulatory_profile` has a server-side default, so it is optional here.
+ * What a caller may send when opening a project. `thresholds`, `created_at` and `regulatory_profile`
+ * are left out: the server fills them, and §7.3 keeps the cut set a deployment input rather than
+ * something a screen can pick.
  */
-export type ProjectCreate = Omit<Project, "thresholds" | "created_at"> &
-  Partial<Pick<Project, "regulatory_profile">>;
+export type ProjectCreate = Omit<Project, "thresholds" | "created_at" | "regulatory_profile">;
 
 /**
  * A row of the identity directory (§11.2): the key an admin authorised, and what a login with it is

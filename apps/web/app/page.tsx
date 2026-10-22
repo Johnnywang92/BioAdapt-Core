@@ -9,10 +9,9 @@ import { projects, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useIdentity } from "@/lib/identity";
 import { useAsync, useSubmit } from "@/lib/useAsync";
-import type { Page, PrivacyTier, Project, ProjectCreate, RegulatoryProfile } from "@/lib/types";
+import type { Page, PrivacyTier, Project, ProjectCreate } from "@/lib/types";
 
 const TIERS: PrivacyTier[] = ["public", "restricted", "strict_local", "hgr_controlled"];
-const PROFILES: RegulatoryProfile[] = ["hgr", "pipl", "gdpr", "hipaa", "commercial_only"];
 
 const TIER_NOTE: Record<PrivacyTier, string> = {
   public: "model calls and exports are allowed within the provider terms",
@@ -61,7 +60,6 @@ export default function StartPage() {
     annotation_granularity_target: "",
     review_load_budget_hours_per_week: "4",
   });
-  const [profiles, setProfiles] = useState<RegulatoryProfile[]>([]);
 
   const set = (key: keyof typeof form) => (event: { target: { value: string } }) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
@@ -84,7 +82,6 @@ export default function StartPage() {
       species: form.species,
       privacy_tier: form.privacy_tier as PrivacyTier,
       created_by: caller.subjectId,
-      regulatory_profile: profiles,
       annotation_granularity_target: form.annotation_granularity_target,
       review_load_budget_hours_per_week: Number(form.review_load_budget_hours_per_week),
     };
@@ -277,28 +274,6 @@ export default function StartPage() {
                 </option>
               ))}
             </select>
-          </Field>
-          <Field
-            label="regulatory_profile"
-            hint={t("an hgr profile forces the tier to hgr_controlled or strict_local")}
-          >
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              {PROFILES.map((profile) => (
-                <label key={profile} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: "auto" }}
-                    checked={profiles.includes(profile)}
-                    onChange={(event) =>
-                      setProfiles((current) =>
-                        event.target.checked ? [...current, profile] : current.filter((one) => one !== profile),
-                      )
-                    }
-                  />
-                  <Chip title={profile}>{t(profile)}</Chip>
-                </label>
-              ))}
-            </div>
           </Field>
           <button
             type="submit"

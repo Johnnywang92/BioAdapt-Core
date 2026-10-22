@@ -85,10 +85,6 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
             <dd>{project.data.species}</dd>
             <dt>{t("privacy tier")}</dt>
             <dd>{t(project.data.privacy_tier)}</dd>
-            <dt>{t("regulatory profile")}</dt>
-            <dd>
-              {project.data.regulatory_profile.map((one) => t(one)).join(", ") || t("none declared")}
-            </dd>
             <dt>{t("annotation target")}</dt>
             <dd>{project.data.annotation_granularity_target}</dd>
             <dt>{t("review budget")}</dt>

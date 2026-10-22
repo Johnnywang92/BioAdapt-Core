@@ -92,8 +92,6 @@ export const zh: Record<string, string> = {
   "§13.4: this number is what the queue size has to fit inside": "§13.4：队列的规模必须能装进这个数字里",
   "no default on purpose": "故意不设默认值",
   choose: "请选择",
-  "an hgr profile forces the tier to hgr_controlled or strict_local":
-    "带 hgr 画像时，层级只能选 hgr_controlled 或 strict_local",
   "creating…": "创建中…",
   "Create project": "创建项目",
   "paste a token first": "先粘贴 token",
@@ -109,11 +107,6 @@ export const zh: Record<string, string> = {
     "原始数据与敏感派生一律留在本地；完全不调用云端模型",
   "human genetic resource controlled: local compute, export refused, approval required":
     "人类遗传资源受控：本地计算、导出直接拒绝、必须走审批",
-  hgr: "人类遗传资源",
-  pipl: "个人信息保护法",
-  gdpr: "GDPR",
-  hipaa: "HIPAA",
-  commercial_only: "仅商业条款",
   "This token reaches no registered project yet. Create one below, or ask for a token scoped to the project you work on.":
     "这个 token 还到达不了任何已登记的项目。可以在下方新建一个，或索取一个 scoped 到你正在做的项目的 token。",
   "project id": "项目 id",
@@ -551,7 +544,6 @@ export const zh: Record<string, string> = {
   "study goal": "研究目标",
   species: "物种",
   "privacy tier": "隐私层级",
-  "regulatory profile": "监管画像",
   "none declared": "未声明",
   "annotation target": "注释目标",
   "review budget": "评审预算",

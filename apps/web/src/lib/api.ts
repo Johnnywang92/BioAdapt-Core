@@ -172,8 +172,7 @@ export const projects = {
   create: (caller: Caller, body: ProjectCreate) =>
     call<{ project_id: string; privacy_tier: string }>(caller, "/projects", {
       method: "POST",
-      // The request models forbid unknown keys, so a blank optional list is left out rather than sent empty.
-      body: body.regulatory_profile?.length ? body : { ...body, regulatory_profile: undefined },
+      body,
     }),
   confirmThresholds: (
     caller: Caller,
