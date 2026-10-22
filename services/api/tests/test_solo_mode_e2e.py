@@ -127,3 +127,12 @@ def test_solo_mode_adhoc_tool_grant_self_approval(client, auth, catalog):
     assert grant_res.json()["approver_id"] == "user_solo_operator"
     assert grant_res.json()["live"] is True
 
+    # 4. The project's tool catalog has to keep answering: the launch screen reads it, and hydrating the
+    # live grant must not turn a self-approved row into an invalid approval (§9.6).
+    tools_res = client.get(f"{BASE}/tools", headers=solo_headers)
+    assert tools_res.status_code == 200, tools_res.json()
+    rows = tools_res.json()["tools"]
+    assert any(
+        row["tool_name"] == "project_qc_probe" and row["tool_class"] == "project_adhoc" for row in rows
+    )
+

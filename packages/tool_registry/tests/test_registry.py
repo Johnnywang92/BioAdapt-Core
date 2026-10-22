@@ -99,6 +99,14 @@ class TestAdhocChannel:
         with pytest.raises(AdhocExhaustedError, match="already used"):
             registry.check_adhoc("local_marker_scan", "0.0.1", now=NOW, project_id=stored.project_id)
 
+    def test_a_solo_grant_hydrates_even_when_its_approver_is_the_submitter(self, registry):
+        #: §11.6: solo mode is one person wearing both hats, and the route issues that grant. Reading the
+        #: row back must not be the one place that refuses it.
+        stored = tool_grant(approver_id="user_solo_01", requested_by="user_solo_01", solo_mode=True)
+        spec = registry.admit_grant(stored)
+        assert spec.tool_name == stored.tool_name
+        assert registry.grant_of(stored.tool_name, stored.tool_version).solo_mode is True
+
     def test_a_hydrated_registry_re_runs_the_cage_over_the_stored_bytes(self, registry):
         loose = adhoc_spec(resources=ResourceProfile(cpu=64, memory_mb=8192, max_minutes=60))
         with pytest.raises(AdmissionError, match="ad-hoc sandbox violated"):

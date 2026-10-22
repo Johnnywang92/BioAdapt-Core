@@ -87,6 +87,9 @@ class AdhocApproval(ImmutableContract):
     approved_at: datetime
     expires_at: datetime
     max_uses: int = Field(ge=1, default=1)
+    #: Solo mode makes one person the submitter and the approver (§11.6). The grant row already carries
+    #: that fact, so hydration has to read it back rather than refuse a permission the route has issued.
+    solo_mode: bool = False
 
     @model_validator(mode="after")
     def _one_time(self) -> "AdhocApproval":
@@ -94,7 +97,7 @@ class AdhocApproval(ImmutableContract):
             raise ValueError("ad-hoc approval is granted per submission: max_uses must be 1")
         if self.expires_at <= self.approved_at:
             raise ValueError("ad-hoc approval window must be positive")
-        if self.approver_id == self.requested_by:
+        if self.approver_id == self.requested_by and not self.solo_mode:
             raise ValueError("ad-hoc approval must come from someone other than the subject that submitted the tool")
         return self
 
@@ -119,6 +122,7 @@ class AdhocApproval(ImmutableContract):
             approved_at=grant.approved_at,
             expires_at=grant.expires_at,
             max_uses=grant.max_uses,
+            solo_mode=grant.solo_mode,
         )
 
 
