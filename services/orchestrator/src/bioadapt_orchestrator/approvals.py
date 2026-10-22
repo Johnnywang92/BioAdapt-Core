@@ -51,21 +51,24 @@ class ApprovalPolicy:
         return f"open {int(overdue.total_seconds() // 3600)} h past its {self.working_days}-working-day window"
 
 
-def assert_decidable(approval: Approval, *, actor_id: str, actor_kind: SubjectKind) -> None:
+def assert_decidable(
+    approval: Approval, *, actor_id: str, actor_kind: SubjectKind, solo_mode: bool = False
+) -> None:
     if approval.state is not ApprovalState.PENDING:
         raise ApprovalRefused(f"approval {approval.approval_id} is already {approval.state}")
     if actor_kind is not SubjectKind.HUMAN:
         raise ApprovalRefused("an approval is a human decision; a service account cannot record one")
-    if actor_id == approval.requested_by:
-        raise ApprovalRefused(
-            "the subject that requested the gate may not open it (section 9.2: approval is never the "
-            "submitter's own act)"
-        )
-    if actor_id != approval.assigned_to:
-        raise ApprovalRefused(
-            f"approval {approval.approval_id} is accountable to {approval.assigned_to}; "
-            "delegate it to move the accountability"
-        )
+    if not solo_mode:
+        if actor_id == approval.requested_by:
+            raise ApprovalRefused(
+                "the subject that requested the gate may not open it (section 9.2: approval is never the "
+                "submitter's own act)"
+            )
+        if actor_id != approval.assigned_to:
+            raise ApprovalRefused(
+                f"approval {approval.approval_id} is accountable to {approval.assigned_to}; "
+                "delegate it to move the accountability"
+            )
 
 
 def assert_delegatable(

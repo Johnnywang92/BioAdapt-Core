@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { Chip, Field, Notice, Panel, ProblemNote } from "@/components/ui";
+import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { projects, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-import { useWorkbench } from "@/lib/identity";
-import { useSubmit } from "@/lib/useAsync";
-import type { PrivacyTier, ProjectCreate, RegulatoryProfile } from "@/lib/types";
+import { useIdentity } from "@/lib/identity";
+import { useAsync, useSubmit } from "@/lib/useAsync";
+import type { Page, PrivacyTier, Project, ProjectCreate, RegulatoryProfile } from "@/lib/types";
 
 const TIERS: PrivacyTier[] = ["public", "restricted", "strict_local", "hgr_controlled"];
 const PROFILES: RegulatoryProfile[] = ["hgr", "pipl", "gdpr", "hipaa", "commercial_only"];
@@ -20,17 +21,37 @@ const TIER_NOTE: Record<PrivacyTier, string> = {
   hgr_controlled: "human genetic resource controlled: local compute, export refused, approval required",
 };
 
+/** A readable id from the words of the goal, offered so nobody has to invent one; it stays editable. */
+function suggestProjectId(goal: string): string {
+  const slug = goal
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40)
+    .replace(/_+$/, "");
+  return slug ? `prj_${slug}` : "";
+}
+
 /**
  * Starting a project (plan V2.0 section 5.8).
  *
  * The tier is asked for here, once, because every later screen inherits its limits from it: a
  * strict-local project has no cloud path to choose from, and the export screen will refuse rather
  * than offer one (§11.2). Choosing the tier is a person's decision, so this form has no default.
+ *
+ * The id is never something to look up in another system: `GET /projects` lists what this token can
+ * open, and a new project is picked from the ids the token already carries, because §11.2 answers a
+ * write outside that scope with a refusal no screen can talk the server out of.
  */
 export default function StartPage() {
   const t = useT();
-  const { identity, projectId, setProjectId } = useWorkbench();
+  const router = useRouter();
+  const { identity, projectId, setProjectId, enterSoloMode } = useIdentity();
   const caller: Caller | null = identity ? { token: identity.token, subjectId: identity.subjectId } : null;
+  const listed = useAsync<Page<Project>>(
+    () => (caller ? projects.list(caller, { limit: 100 }) : Promise.resolve({ items: [], limit: 0, offset: 0 })),
+    [caller?.token],
+  );
   const submit = useSubmit();
   const [form, setForm] = useState({
     project_id: "",
@@ -45,10 +66,20 @@ export default function StartPage() {
   const set = (key: keyof typeof form) => (event: { target: { value: string } }) =>
     setForm((current) => ({ ...current, [key]: event.target.value }));
 
-  function create() {
+  const known = new Set(listed.data?.items.map((one) => one.project_id) ?? []);
+  const isGlobal = identity?.projectIds.includes("*") ?? false;
+  const openable = (identity?.projectIds ?? []).filter((one) => one !== "*" && !known.has(one));
+  const suggested = suggestProjectId(form.study_goal);
+
+  function open(next: string) {
+    setProjectId(next);
+    router.push(`/projects/${encodeURIComponent(next)}`);
+  }
+
+  function create(id: string) {
     if (!caller) return;
     const body: ProjectCreate = {
-      project_id: form.project_id,
+      project_id: id,
       study_goal: form.study_goal,
       species: form.species,
       privacy_tier: form.privacy_tier as PrivacyTier,
@@ -60,12 +91,44 @@ export default function StartPage() {
     void submit.run(async () => {
       const created = await projects.create(caller, body);
       setProjectId(created.project_id);
+      listed.reload();
+      router.push(`/projects/${encodeURIComponent(created.project_id)}`);
       return created;
     });
   }
 
   return (
     <>
+      <Panel
+        title={t("⚡ Solo Mode Quickstart")}
+        note={t("For solo researchers, evaluators, and full-pipeline walkthroughs without SoD blocks.")}
+      >
+        <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap", justifyContent: "space-between" }}>
+          <div style={{ maxWidth: "680px" }}>
+            <p style={{ margin: 0, fontWeight: 500, lineHeight: 1.5 }}>
+              {t("Experience BioAdapt as a unified Solo Operator (PI + Analyst + Expert). Bypass separation-of-duties blocks to self-request, self-approve gates, issue adhoc execution grants, and sign off findings.")}
+            </p>
+            {identity?.isSolo ? (
+              <p style={{ margin: "8px 0 0 0", color: "#059669", fontSize: "0.85rem", fontWeight: 600 }}>
+                ✨ {t("Solo Mode Active")}: <span className="mono">{identity.subjectId}</span>
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <button
+              type="button"
+              style={{ background: "#10b981", borderColor: "#059669", color: "#fff", fontWeight: 700, padding: "8px 16px" }}
+              onClick={async () => {
+                await enterSoloMode("prj_scrnaseq");
+                open("prj_scrnaseq");
+              }}
+            >
+              🚀 {t("Launch Reference Project in Solo Mode")}
+            </button>
+          </div>
+        </div>
+      </Panel>
+
       <Panel
         title={t("Start or open a project")}
         note={t(
@@ -80,11 +143,49 @@ export default function StartPage() {
             </Link>{" "}
             {t("to register data, approve a plan, read the expert queue and export the report.")}
           </p>
-        ) : (
-          <p className="muted">
-            {t("No project open. Create one below, or set a project id in the panel at the bottom.")}
-          </p>
-        )}
+        ) : null}
+        <ProblemNote error={listed.error} />
+        <Loading on={listed.loading} />
+        {caller && listed.data ? (
+          listed.data.items.length ? (
+            <table>
+              <thead>
+                <tr>
+                  <th>{t("study goal")}</th>
+                  <th>{t("species")}</th>
+                  <th>{t("privacy tier")}</th>
+                  <th>{t("created")}</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {listed.data.items.map((one) => (
+                  <tr key={one.project_id}>
+                    <td>
+                      <Link href={`/projects/${encodeURIComponent(one.project_id)}`}>{one.study_goal}</Link>
+                      <div className="mono muted">{one.project_id}</div>
+                    </td>
+                    <td>{one.species}</td>
+                    <td>
+                      <Chip title={one.privacy_tier}>{t(one.privacy_tier)}</Chip>
+                    </td>
+                    <td>{one.created_at ?? "—"}</td>
+                    <td>
+                      <button className="secondary" type="button" onClick={() => open(one.project_id)}>
+                        {t("open it")}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <Empty>
+              {t("This token reaches no registered project yet. Create one below, or ask for a token scoped to the project you work on.")}
+            </Empty>
+          )
+        ) : null}
+        {!caller ? <p className="muted">{t("paste a token first")}</p> : null}
       </Panel>
 
       <Panel
@@ -94,44 +195,51 @@ export default function StartPage() {
         )}
       >
         <ProblemNote error={submit.error} />
-        {submit.result ? (
+        {openable.length > 0 && (
+          <Field
+            label={t("project id")}
+            hint={t("only the ids this token is scoped to can be opened here; anything else is refused before a row is written (§11.2)")}
+          >
+            <select value={form.project_id} onChange={set("project_id")}>
+              <option value="">{t("choose")}</option>
+              {openable.map((one) => (
+                <option key={one} value={one}>
+                  {one}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {isGlobal && (
+          <Field
+            label={t("project id")}
+            hint={t("this token carries every project, so the id is yours to name; the suggestion comes from the study goal and you can change it")}
+          >
+            <input
+              value={form.project_id}
+              onChange={(event) => setForm((current) => ({ ...current, project_id: event.target.value }))}
+              placeholder={suggested || t("prj_…")}
+              className="mono"
+            />
+          </Field>
+        )}
+        {!caller && <p className="muted">{t("paste a token first")}</p>}
+        {caller && !isGlobal && openable.length === 0 && (
           <Notice>
-            {t("Created")}{" "}
-            <span className="mono">{(submit.result as { project_id: string }).project_id}</span> —{" "}
-            <Link
-              href={`/projects/${encodeURIComponent((submit.result as { project_id: string }).project_id)}`}
-            >
-              {t("open it")}
-            </Link>
+            {t(
+              "This token is scoped only to projects that already exist, so no new project can be written with it. Every screen below is still reachable from the list above.",
+            )}
           </Notice>
-        ) : null}
+        )}
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            create();
+            create(form.project_id.trim() || suggested);
           }}
         >
           <div className="grid">
-            <Field label="project_id">
-              <input value={form.project_id} onChange={set("project_id")} placeholder="prj_reference_pbmc" />
-            </Field>
             <Field label="species">
               <input value={form.species} onChange={set("species")} placeholder="Homo sapiens" />
-            </Field>
-          </div>
-          <Field
-            label="study_goal"
-            hint={t("what the delivery has to answer; it scopes which candidates matter")}
-          >
-            <textarea rows={2} value={form.study_goal} onChange={set("study_goal")} />
-          </Field>
-          <div className="grid">
-            <Field label="annotation_granularity_target">
-              <input
-                value={form.annotation_granularity_target}
-                onChange={set("annotation_granularity_target")}
-                placeholder="cell_type_broad"
-              />
             </Field>
             <Field
               label="review_load_budget_hours_per_week"
@@ -144,6 +252,19 @@ export default function StartPage() {
               />
             </Field>
           </div>
+          <Field
+            label="study_goal"
+            hint={t("what the delivery has to answer; it scopes which candidates matter")}
+          >
+            <textarea rows={2} value={form.study_goal} onChange={set("study_goal")} />
+          </Field>
+          <Field label="annotation_granularity_target">
+            <input
+              value={form.annotation_granularity_target}
+              onChange={set("annotation_granularity_target")}
+              placeholder="cell_type_broad"
+            />
+          </Field>
           <Field
             label="privacy_tier"
             hint={form.privacy_tier ? t(TIER_NOTE[form.privacy_tier as PrivacyTier]) : t("no default on purpose")}
@@ -179,10 +300,25 @@ export default function StartPage() {
               ))}
             </div>
           </Field>
-          <button type="submit" disabled={!caller || submit.busy}>
+          <button
+            type="submit"
+            disabled={
+              !caller ||
+              submit.busy ||
+              !(form.project_id.trim() || suggested) ||
+              !form.study_goal.trim() ||
+              !form.species.trim() ||
+              !form.annotation_granularity_target.trim() ||
+              !form.privacy_tier
+            }
+          >
             {submit.busy ? t("creating…") : t("Create project")}
           </button>
-          {!caller ? <p className="muted">{t("paste a token first")}</p> : null}
+          <p className="muted">
+            {t(
+              "A project cannot attest its own cut set: until a principal investigator confirms the thresholds, the analysis still runs but signing a conclusion and exporting stay closed (§1.5).",
+            )}
+          </p>
         </form>
       </Panel>
     </>

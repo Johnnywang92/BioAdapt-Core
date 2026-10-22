@@ -22,6 +22,21 @@ class TestLint:
         assert not is_secret_column_name("input_tokens")
         assert not is_secret_column_name("content_fingerprint")
 
+    def test_a_public_verifier_is_the_one_exception_and_the_whole_of_it(self):
+        """§11.2 keeps secret material out of the index; a login key's public half is not secret.
+
+        The exception matches on the exact name, so nothing shaped like a secret slips through beside it.
+        """
+        assert not is_secret_column_name("public_key")
+        assert is_secret_column_name("private_key")
+        assert is_secret_column_name("public_key_secret")
+
+    def test_the_identity_directory_holds_a_verifier_and_no_secret(self):
+        directory = table("iam_credential")
+        assert directory.column("public_key") is not None
+        assert directory.project_scoped
+        assert not any(is_secret_column_name(col.name) for col in directory.cols)
+
     def test_a_secret_column_is_a_violation(self):
         audit = table("audit_log")
         bad = (table("project"), replace(audit, cols=audit.cols + (Col("api_key", "text"),)))

@@ -108,3 +108,15 @@ def test_a_delegated_approval_names_the_person_it_moved_to():
         approval(assigned_to=PI, delegated_from=PI, delegated_at=NOW)
     moved = approval(assigned_to=DEPUTY, delegated_from=PI, delegated_at=NOW)
     assert moved.assigned_to == DEPUTY and moved.delegated_from == PI
+
+
+def test_solo_mode_allows_self_deciding_and_non_assigned_deciding():
+    appr = approval(requested_by=ANALYST, assigned_to=PI)
+    # 严格模式下，申请人自批报 ApprovalRefused
+    with pytest.raises(ApprovalRefused, match="requested the gate"):
+        assert_decidable(appr, actor_id=ANALYST, actor_kind=SubjectKind.HUMAN, solo_mode=False)
+
+    # 单人模式下，申请人自批成功通过
+    assert_decidable(appr, actor_id=ANALYST, actor_kind=SubjectKind.HUMAN, solo_mode=True)
+    # 单人模式下，非 assigned_to 决策也成功通过
+    assert_decidable(appr, actor_id="user_solo", actor_kind=SubjectKind.HUMAN, solo_mode=True)

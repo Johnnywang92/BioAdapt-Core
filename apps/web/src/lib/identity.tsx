@@ -26,6 +26,7 @@ export interface Identity {
   projectIds: string[];
   isServiceAccount: boolean;
   mfaVerified: boolean;
+  isSolo: boolean;
 }
 
 /** The claims a screen may branch on; the API re-derives all of them from the signature. */
@@ -36,6 +37,7 @@ interface Claims {
   roles?: string[];
   project_ids?: string[];
   is_service_account?: boolean;
+  solo_mode?: boolean;
   amr?: string[];
   exp?: number;
 }
@@ -61,6 +63,7 @@ export function parseIdentity(token: string): Identity {
     projectIds: claims.project_ids ?? [],
     isServiceAccount: claims.is_service_account === true,
     mfaVerified: (claims.amr ?? []).some((method) => MFA_METHODS.has(method)),
+    isSolo: claims.solo_mode === true || claims.sub === "user_solo_operator",
   };
 }
 
@@ -93,6 +96,10 @@ interface IdentityContextValue {
   setToken: (token: string) => void;
   setProjectId: (projectId: string) => void;
   clear: () => void;
+  devTokens: Record<string, string>;
+  enterSoloMode: (targetProject?: string) => Promise<boolean>;
+  exitSoloMode: () => Promise<boolean>;
+  selectPreset: (roleKey: string, targetProject?: string) => Promise<boolean>;
 }
 
 const IdentityContext = createContext<IdentityContextValue | null>(null);
@@ -150,6 +157,63 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, []);
 
+  const [devTokens, setDevTokens] = useState<Record<string, string>>({});
+
+  const fetchTokens = useCallback(async (): Promise<Record<string, string>> => {
+    try {
+      const res = await fetch("/core-api/v1/development/tokens");
+      if (res.ok) {
+        const data = (await res.json()) as Record<string, string>;
+        if (data && typeof data === "object") {
+          setDevTokens(data);
+          return data;
+        }
+      }
+    } catch {
+      // offline / quiet
+    }
+    return {};
+  }, []);
+
+  useEffect(() => {
+    void fetchTokens();
+  }, [fetchTokens]);
+
+  const selectPreset = useCallback(
+    async (roleKey: string, targetProject?: string): Promise<boolean> => {
+      let tokensMap = devTokens;
+      if (!tokensMap[roleKey]) {
+        tokensMap = await fetchTokens();
+      }
+      const targetToken = tokensMap[roleKey];
+      if (targetToken) {
+        setToken(targetToken);
+        if (targetProject) {
+          rememberProject(targetProject);
+        } else if (!projectId) {
+          rememberProject("prj_scrnaseq");
+        }
+        return true;
+      }
+      return false;
+    },
+    [devTokens, fetchTokens, setToken, rememberProject, projectId],
+  );
+
+  const enterSoloMode = useCallback(
+    async (targetProject?: string): Promise<boolean> => {
+      return selectPreset("solo", targetProject);
+    },
+    [selectPreset],
+  );
+
+  const exitSoloMode = useCallback(
+    async (): Promise<boolean> => {
+      return selectPreset("analyst");
+    },
+    [selectPreset],
+  );
+
   const identity = useMemo(() => {
     if (!token) return null;
     try {
@@ -160,8 +224,19 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
   }, [token]);
 
   const value = useMemo(
-    () => ({ identity, projectId, error, setToken, setProjectId: rememberProject, clear }),
-    [identity, projectId, error, setToken, rememberProject, clear],
+    () => ({
+      identity,
+      projectId,
+      error,
+      setToken,
+      setProjectId: rememberProject,
+      clear,
+      devTokens,
+      enterSoloMode,
+      exitSoloMode,
+      selectPreset,
+    }),
+    [identity, projectId, error, setToken, rememberProject, clear, devTokens, enterSoloMode, exitSoloMode, selectPreset],
   );
 
   return <IdentityContext.Provider value={value}>{children}</IdentityContext.Provider>;

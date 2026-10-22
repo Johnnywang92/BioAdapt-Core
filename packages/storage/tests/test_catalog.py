@@ -20,7 +20,7 @@ from bioadapt_schemas.enums import (
 )
 from bioadapt_schemas.orchestration import AdhocToolGrant, Approval, new_tool_grant_id
 from bioadapt_schemas.thresholds import Thresholds
-from bioadapt_storage import REUSABLE_SCOPES, Catalog, ConcurrentWriteError, ScopeError, lint
+from bioadapt_storage import PLATFORM_SCOPE, REUSABLE_SCOPES, Catalog, ConcurrentWriteError, ScopeError, lint
 from storage_factories import (
     NOW,
     OTHER_PROJECT_ID,
@@ -672,6 +672,66 @@ class TestAdHocToolGrants:
         assert catalog.spend_tool_grant(made.grant_id) is None
         with pytest.raises(LookupError):
             catalog.get_tool_grant(made.grant_id)
+
+
+class TestIdentityDirectory:
+    """The rows a login key is checked against (§11.2): one place, stamped, never a secret."""
+
+    FIELDS = {
+        "algorithm": "ed25519",
+        "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n",
+        "fingerprint": "SHA256:AAAA",
+        "roles": ["analyst"],
+        "project_ids": [PROJECT_ID],
+        "amr": ["pwd+mfa"],
+        "solo_mode": False,
+        "is_service_account": False,
+        "label": "workstation",
+        "created_by": "user_platform_admin_01",
+    }
+
+    def register(self, catalog, kid: str, **overrides):
+        catalog.set_scope(PLATFORM_SCOPE)
+        catalog.register_credential(kid=kid, subject_id="user_analyst_01", **{**self.FIELDS, **overrides})
+        return kid
+
+    def test_a_revocation_is_a_stamp_on_the_row_that_granted(self, catalog):
+        kid = self.register(catalog, "key_1")
+        row = catalog.active_credential(kid)
+        assert row["roles"] == ["analyst"] and row["revoked_at"] is None
+        #: Whether a key belongs to a person or to a pipeline is a fact of the row, because §11.4 reads
+        #: the human-only gate from the session this row is turned into.
+        assert row["is_service_account"] is False
+        engine = self.register(
+            catalog, "key_engine", roles=["service_agent"], is_service_account=True, fingerprint="SHA256:ENGINE"
+        )
+        assert catalog.active_credential(engine)["is_service_account"] is True
+        revoked = catalog.revoke_credential(kid, revoked_by="user_platform_admin_02")
+        assert revoked["revoked_by"] == "user_platform_admin_02" and revoked["revoked_at"] == NOW
+        #: The key stops working, the record does not disappear - an audit of who held what survives.
+        assert catalog.active_credential(kid) is None
+        assert catalog.get_credential(kid)["public_key"] == self.FIELDS["public_key"]
+        with pytest.raises(LookupError):
+            catalog.revoke_credential(kid, revoked_by="user_platform_admin_02")
+
+    def test_two_keys_for_one_subject_are_two_rows_and_one_key_material_is_not_two(self, catalog):
+        first = self.register(catalog, "key_1")
+        second = self.register(catalog, "key_2", fingerprint="SHA256:BBBB")
+        assert {row["kid"] for row in catalog.list_credentials(subject_id="user_analyst_01", limit=10)} == {
+            first,
+            second,
+        }
+        with pytest.raises(sqlite3.IntegrityError):
+            self.register(catalog, "key_3")
+
+    def test_a_project_scoped_session_cannot_read_the_directory(self, catalog):
+        """A scoped read here would return the one project's keys and call that the whole list."""
+        self.register(catalog, "key_1")
+        catalog.set_scope(PROJECT_ID)
+        with pytest.raises(ScopeError):
+            catalog.list_credentials(limit=10)
+        with pytest.raises(ScopeError):
+            catalog.active_credential("key_1")
 
 
 def evidence_invocation():

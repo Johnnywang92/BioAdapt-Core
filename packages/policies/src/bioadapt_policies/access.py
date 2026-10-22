@@ -213,9 +213,12 @@ class Actor(ImmutableContract):
     project_ids: list[str] = Field(default_factory=list)
     is_service_account: bool = False
     mfa_verified: bool = False
+    solo_mode: bool = False
 
     @model_validator(mode="after")
     def _separation_of_duties(self) -> "Actor":
+        if self.solo_mode:
+            return self
         conflicts = role_conflicts(set(self.roles))
         if conflicts:
             raise ValueError("; ".join(conflicts))
@@ -272,6 +275,8 @@ def authorize(
     #: Section 5.8: content shared into the case library is readable across projects by scope, not by grant.
     reusable_read = action is Action.ASSET_READ and resource.usage_scope in REUSABLE_SCOPES
 
+    is_solo = actor.solo_mode
+
     if not granted:
         denials.append(
             f"no role of {sorted(str(role) for role in actor.roles)} grants {action}"
@@ -287,19 +292,19 @@ def authorize(
     if action in MFA_REQUIRED_ACTIONS and not actor.mfa_verified:
         denials.append(f"{action} requires a second factor")
 
-    if action is Action.EGRESS_APPROVE:
+    if action is Action.EGRESS_APPROVE and not is_solo:
         if requesting_subject_id is None:
             denials.append("egress approval needs the requesting subject for separation of duties")
         elif requesting_subject_id == actor.subject_id:
             denials.append("egress requester and approver must be different subjects")
 
-    if action is Action.APPROVAL_DECIDE:
+    if action is Action.APPROVAL_DECIDE and not is_solo:
         if requesting_subject_id is None:
             denials.append("approval:decide needs the subject that asked for the gate, for separation of duties")
         elif requesting_subject_id == actor.subject_id:
             denials.append("approval:decide: the subject that requested a gate may not open it")
 
-    if action is Action.TOOL_GRANT_ADHOC:
+    if action is Action.TOOL_GRANT_ADHOC and not is_solo:
         #: Section 9.6 + 11.6: the one-time approval is the PI's, and the analyst or agent that submitted
         #: the tool is not a PI wearing a second hat. The grant's approver is the authenticated actor, so
         #: this is where that pair stops being something the caller asserts about itself.
@@ -308,7 +313,7 @@ def authorize(
         elif requesting_subject_id == actor.subject_id:
             denials.append("tool:grant_adhoc: the subject that submitted an ad-hoc tool may not grant it")
 
-    if action is Action.CARD_SIGN_OFF:
+    if action is Action.CARD_SIGN_OFF and not is_solo:
         authored = resource.attributes.get("authored_by")
         if authored == actor.subject_id:
             denials.append("an analysis run author may not sign off its own conclusion")

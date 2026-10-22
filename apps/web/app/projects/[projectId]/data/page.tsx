@@ -3,12 +3,13 @@
 import { useState } from "react";
 
 import { Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
+import { DataWizard } from "@/components/DataWizard";
 import { DeploymentNotice, useDeployment } from "@/components/DeploymentStatus";
-import { assets as assetsApi, type Caller } from "@/lib/api";
+import { assets as assetsApi, projects as projectsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
-import type { DataAsset, FilteringState, Page, RetentionClass, UpstreamPipeline, UsageScope } from "@/lib/types";
+import type { DataAsset, FilteringState, Page, Project, RetentionClass, UpstreamPipeline, UsageScope } from "@/lib/types";
 
 const FILTERING: FilteringState[] = ["none", "barcode_filtered", "gene_filtered", "both_filtered", "unknown"];
 const RETENTION: RetentionClass[] = ["ephemeral", "run_linked", "deliverable", "archive"];
@@ -22,6 +23,12 @@ const SCOPE: UsageScope[] = [
 export default function DataPage({ params }: { params: { projectId: string } }) {
   const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
+  // The wizard defaults the object's tier to the project's own, so it has to read the project rather
+  // than assume one.
+  const project = useAsync<Project | null>(
+    () => (caller ? projectsApi.read(caller, projectId) : Promise.resolve(null)),
+    [caller?.token, projectId],
+  );
 
   if (!caller) {
     return (
@@ -33,7 +40,13 @@ export default function DataPage({ params }: { params: { projectId: string } }) 
 
   return (
     <>
-      <Register caller={caller} projectId={projectId} />
+      {project.data ? <DataWizard caller={caller} projectId={projectId} project={project.data} /> : null}
+      <Loading on={project.loading} />
+      <ProblemNote error={project.error} />
+      <details className="advanced">
+        <summary>{t("declare every field myself")}</summary>
+        <Register caller={caller} projectId={projectId} />
+      </details>
       <Registered caller={caller} projectId={projectId} />
     </>
   );

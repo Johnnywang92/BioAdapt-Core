@@ -15,9 +15,16 @@ LOGICAL_TYPES = ("text", "int", "float", "bool", "json", "timestamp")
 SECRET_SUBSTRINGS = ("secret", "password", "credential", "api_key", "apikey", "private_key", "auth_header")
 SECRET_SEGMENTS = frozenset({"secret", "token", "password", "credential", "credentials", "key", "apikey"})
 
+#: The one exception, matched on the whole name rather than a segment: §11.2 keeps *secret* material out
+#: of the index, and the public half of a login key is not secret - it is what lets a revocation be a
+#: write. `private_key`, `public_key_secret` and every token-shaped name still trip the guard above.
+NON_SECRET_KEY_COLUMNS = frozenset({"public_key"})
+
 
 def is_secret_column_name(name: str) -> bool:
     lowered = name.lower()
+    if lowered in NON_SECRET_KEY_COLUMNS:
+        return False
     if any(bad in lowered for bad in SECRET_SUBSTRINGS):
         return True
     return any(segment in SECRET_SEGMENTS for segment in lowered.split("_"))
@@ -375,6 +382,33 @@ APP_SCHEMA: tuple[TableSpec, ...] = (
         C("created_at", "timestamp", nullable=False),
         indexes=(("project_id",), ("purpose",)),
         append_only=True,
+    ),
+    _t(
+        #: Section 11.2 + 11.6: the identity directory a login key is checked against. It holds the
+        #: *public* half of each key, so revoking a person's access is a write here rather than a wait
+        #: for a bearer token to expire - and the roles below are what a session is granted, never what
+        #: the presenting key claims.
+        "iam_credential",
+        C("kid", "text", primary_key=True),
+        C("project_id", "text", nullable=False),
+        C("subject_id", "text", nullable=False),
+        C("algorithm", "text", nullable=False),
+        C("public_key", "text", nullable=False),
+        C("fingerprint", "text", nullable=False),
+        C("roles", "json", nullable=False),
+        C("project_ids", "json", nullable=False),
+        C("amr", "json", nullable=False),
+        C("solo_mode", "bool", nullable=False),
+        #: §11.4 decides who is a person from the token, not from the role name, so the directory has to
+        #: say it too: an engine that signs in with a key file is still an engine.
+        C("is_service_account", "bool", nullable=False),
+        C("label", "text"),
+        C("created_by", "text", nullable=False),
+        C("created_at", "timestamp", nullable=False),
+        C("revoked_by", "text"),
+        C("revoked_at", "timestamp"),
+        unique_groups=(("algorithm", "fingerprint"),),
+        indexes=(("subject_id",), ("fingerprint",), ("revoked_at",)),
     ),
     _t(
         "audit_log",

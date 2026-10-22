@@ -8,7 +8,6 @@ with the same body returns the original run instead of starting a second one. Lo
 from __future__ import annotations
 
 import json
-from datetime import date
 from time import sleep
 from typing import Optional
 
@@ -32,13 +31,12 @@ from bioadapt_schemas.enums import (
 from bioadapt_schemas.identifiers import derive_candidate, sha256_hex
 from bioadapt_schemas.plan import AnalysisPlan
 from bioadapt_scrnaseq import AssetDefaults, WorkflowRunner, read_product
-from bioadapt_scrnaseq.specs import Deployment, reference_tool_specs
-from bioadapt_tool_registry.registry import ToolRegistry
 
 from .deps import SessionDep
 from .errors import conflict, invalid, not_found
 from .paging import Page, page_params
 from .quota import TERMINAL_RUN_STATES, check_active_runs, check_plan_budget
+from .toolset import reference_registry
 
 router = APIRouter(tags=["runs"])
 LAUNCH_ROUTE = "POST /v1/projects/{project_id}/runs"
@@ -227,11 +225,7 @@ def stream_run_events(
 
 
 @router.post("/projects/{project_id}/runs/{run_id}/execute")
-def execute_run_pipeline(
-    run_id: str,
-    session: SessionDep,
-    auto_approve_gates: bool = Query(True, description="Automatically approve required gates during pipeline execution"),
-) -> dict:
+def execute_run_pipeline(run_id: str, session: SessionDep) -> dict:
     """Execute the reference scRNA analysis DAG on this run, discover C1-C3 candidates, and draft evidence cards."""
     session.enforce(Action.RUN_UPDATE, run_id, "run")
     manifest = session.catalog.get_run(run_id)
@@ -241,79 +235,80 @@ def execute_run_pipeline(
     if current_state in TERMINAL_VALUES:
         raise conflict(f"run {run_id} is in terminal state {current_state}")
 
-    # Build reference tool registry and hydrate live ad-hoc grants
-    dep = Deployment(
-        container_repository="registry.internal/bioadapt/scrnaseq-reference",
-        container_tag="1.0.0",
-        container_digest="sha256:" + "ab" * 32,
-        tool_version="1.0.0",
-        species=(session.catalog.get_project().species or "human",),
-        cpu=2,
-        memory_mb=4096,
-        max_minutes=60,
-        measured_peak_memory_mb=2048,
-        measured_on="synthetic_pbmc_v1",
-        license_spdx_id="BSD-3-Clause",
-        license_display_name="Scanpy reference steps",
-        license_reviewed_at=date(2026, 5, 4),
-        license_review_note="reviewed against licence matrix",
-    )
-    registry = ToolRegistry()
-    for spec in reference_tool_specs(dep).values():
-        registry.register(spec)
-    for grant in session.catalog.list_tool_grants(live_only=True):
-        registry.admit_grant(grant)
-
-    # Ensure snapshot alignment
-    reg_snapshot = registry.snapshot_id()
-    if manifest.tool_registry_snapshot != reg_snapshot:
-        session.catalog.set_run_tool_registry_snapshot(run_id, reg_snapshot)
+    registry = reference_registry(session.catalog)
+    #: §4.1: a run executes with the tool set it was approved against. Rewriting the pinned snapshot to
+    #: whatever this process can hydrate is the one edit that makes the record mean nothing, so a drift
+    #: here is a refusal, and the person launches again against the snapshot the tool catalog reports.
+    if manifest.tool_registry_snapshot != registry.snapshot_id():
+        raise conflict(
+            f"this run pins registry snapshot {manifest.tool_registry_snapshot!r} and this deployment "
+            f"hydrates {registry.snapshot_id()!r}; read GET /v1/projects/{session.project_id}/tools and "
+            "launch a run against the snapshot it reports"
+        )
 
     # Resolve root input
+    if len(plan.root_inputs) > 1:
+        raise invalid(
+            "root_inputs",
+            f"this workflow fills one root slot and the plan names {list(plan.root_inputs)}; a second "
+            "root input has no slot-to-asset mapping on the launch to resolve it from",
+        )
     root_input_slot = plan.root_inputs[0] if plan.root_inputs else "counts"
-    root_asset_id = None
-    if manifest.input_hashes:
-        root_asset_id = list(manifest.input_hashes.keys())[0]
-    else:
-        for a in session.catalog.list_assets():
-            root_asset_id = a.asset_id
-            break
-
-    if not root_asset_id:
-        raise invalid("input_asset_ids", "no input counts asset found for run")
-
+    #: §4.1: the plan says what it consumes and the caller said which bytes answer it. With more than one
+    #: input on the manifest there is no honest way to pick the one behind this slot, so this refuses
+    #: instead of guessing - and it never reaches for an unlisted asset.
+    if len(manifest.input_hashes) != 1:
+        raise invalid(
+            "input_asset_ids",
+            f"slot {root_input_slot!r} needs exactly one input asset, and this run carries "
+            f"{len(manifest.input_hashes)}",
+        )
+    root_asset_id = next(iter(manifest.input_hashes))
     root = {root_input_slot: root_asset_id}
+
     actor = ActorRef(session.actor.subject_id, SubjectKind.HUMAN)
 
-    # Transition state to running if currently CREATED
-    if current_state == str(RunState.CREATED):
-        try:
-            session.orchestrator.transition(run_id, RunState.PREFLIGHT_RUNNING, actor=actor, reason="executing run")
-            session.orchestrator.transition(run_id, RunState.PREFLIGHT_PASSED, actor=actor, reason="preflight ok")
-            session.orchestrator.transition(run_id, RunState.ANALYSIS_RUNNING, actor=actor, reason="running pipeline nodes")
-        except Exception:
-            pass
+    #: §11.6: PLAN_APPROVED is an approval-gated state, so a run reaches work only over a plan gate a
+    #: person has decided - and holding that decision is not this route's to invent. The check comes
+    #: before anything moves, so a refusal leaves the run where it was instead of half-walked.
+    plan_gate = session.orchestrator.granted_for(run_id, ApprovalKind.PLAN)
+    if plan_gate is None or not plan_gate.is_granted():
+        raise conflict(
+            f"run {run_id} is not approved to execute: the plan gate over "
+            f"{plan.plan_id}@{plan.plan_version} is "
+            f"{'not requested' if plan_gate is None else str(plan_gate.state)}. Request it with "
+            "POST /approvals and have a second subject decide it (§9.6)."
+        )
 
-    # If auto_approve_gates, pre-approve gates so gated nodes can run
-    if auto_approve_gates:
-        for n in plan.nodes:
-            if n.requires_approval:
-                try:
-                    res = session.orchestrator.request_approval(
-                        run_id,
-                        ApprovalKind.NODE,
-                        actor=actor,
-                        node_id=n.node_id,
-                        assigned_to=session.actor.subject_id,
-                    )
-                    session.orchestrator.decide_approval(
-                        res.approval.approval_id,
-                        actor=actor,
-                        approved=True,
-                        reason="auto approved for execution",
-                    )
-                except Exception:
-                    pass
+    #: §9.2: a run parked in CREATED is not on the chain, and moving it is the state machine's act. A
+    #: refusal here is reported rather than swallowed, because working a run against a state its journal
+    #: does not hold is the ledger mismatch the check exists to prevent.
+    if current_state == str(RunState.CREATED):
+        for target, reason, approval_id in (
+            (RunState.PREFLIGHT_RUNNING, "preflight started for this execute request", None),
+            (RunState.PREFLIGHT_PASSED, "preflight ok", None),
+            (RunState.PLAN_DRAFTED, "the plan this run pins is what it executes", None),
+            (RunState.PLAN_APPROVED, f"plan gate {plan_gate.approval_id} granted", plan_gate.approval_id),
+            (RunState.ANALYSIS_RUNNING, "running pipeline nodes", None),
+        ):
+            try:
+                session.orchestrator.transition(
+                    run_id, target, actor=actor, reason=reason, approval_id=approval_id
+                )
+            except Exception as exc:
+                raise conflict(f"run {run_id} could not move to {target}: {exc}") from exc
+
+    #: A node the plan gates stays gated (§9.1, §11.6): this route reports what waits on a person, it
+    #: does not become that person. Approval and its decision are separate calls on separate subjects.
+    gated_nodes = sorted(
+        node.node_id
+        for node in plan.nodes
+        if node.requires_approval
+        and (
+            (held := session.orchestrator.granted_for(run_id, ApprovalKind.NODE, node_id=node.node_id)) is None
+            or not held.is_granted()
+        )
+    )
 
     defaults = AssetDefaults(
         privacy_tier=session.catalog.get_project().privacy_tier,
@@ -378,12 +373,11 @@ def execute_run_pipeline(
         draft_count = len(drafts)
 
     final_state = session.catalog.run_state(run_id)
-    if final_state == str(RunState.ANALYSIS_RUNNING):
-        try:
-            session.orchestrator.transition(run_id, RunState.ANALYSIS_PASSED, actor=actor, reason="all nodes completed successfully")
-            final_state = str(RunState.ANALYSIS_PASSED)
-        except Exception:
-            pass
+    if outcome.completed and final_state == str(RunState.ANALYSIS_RUNNING):
+        #: §9.2: QC_REVIEW is the only edge out of a finished analysis, and it is the honest one - the
+        #: numbers are done, and whether they are acceptable is the next state's question.
+        session.orchestrator.transition(run_id, RunState.QC_REVIEW, actor=actor, reason="all nodes completed")
+        final_state = str(RunState.QC_REVIEW)
 
     session.audit(
         "run:execute",
@@ -391,6 +385,7 @@ def execute_run_pipeline(
         details={
             "completed": outcome.completed,
             "nodes": [n.node_id for n in outcome.nodes],
+            "gated_nodes": gated_nodes,
             "candidate_count": candidate_count,
             "draft_count": draft_count,
         },
@@ -405,4 +400,9 @@ def execute_run_pipeline(
         "candidate_count": candidate_count,
         "draft_count": draft_count,
         "warnings": list(outcome.warnings),
+        #: The sentence the driver stopped with, and the nodes that are waiting for a person's decision.
+        "stopped_at": outcome.stopped_at,
+        "reason": outcome.stopped_reason,
+        "requires_human_action": outcome.requires_human_action,
+        "gated_nodes": gated_nodes,
     }

@@ -24,11 +24,11 @@ from .errors import unauthorized
 MFA_METHODS = frozenset({"mfa", "totp", "pwd+mfa", "otp"})
 
 
-def _encode(raw: bytes) -> str:
+def encode_segment(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
-def _decode(segment: str) -> bytes:
+def decode_segment(segment: str) -> bytes:
     try:
         return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
     except Exception as exc:  # noqa: BLE001 - a malformed segment is simply an invalid token
@@ -44,6 +44,7 @@ class IdTokenClaims(ImmutableContract):
     is_service_account: bool = False
     amr: list[str] = Field(default_factory=list)
     exp: int
+    solo_mode: bool = False
 
     @property
     def expires_at(self) -> datetime:
@@ -56,6 +57,7 @@ class IdTokenClaims(ImmutableContract):
             project_ids=self.project_ids,
             is_service_account=self.is_service_account,
             mfa_verified=bool(MFA_METHODS & set(self.amr)),
+            solo_mode=self.solo_mode,
         )
 
 
@@ -64,7 +66,7 @@ class TokenVerifier(Protocol):
 
 
 class Hs256Verifier:
-    HEADER = _encode(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    HEADER = encode_segment(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
 
     def __init__(self, secret: bytes, *, issuer: str, audience: str) -> None:
         if len(secret) < 16:
@@ -78,9 +80,9 @@ class Hs256Verifier:
 
     def issue(self, claims: IdTokenClaims) -> str:
         """Reference IdP: mint a token for the claim set (used by the single-node login path and tests)."""
-        payload = _encode(json.dumps(claims.model_dump(mode="json"), separators=(",", ":")).encode())
+        payload = encode_segment(json.dumps(claims.model_dump(mode="json"), separators=(",", ":")).encode())
         signing_input = f"{self.HEADER}.{payload}"
-        return f"{signing_input}.{_encode(self._signature(signing_input))}"
+        return f"{signing_input}.{encode_segment(self._signature(signing_input))}"
 
     def verify(self, token: str, *, now: datetime) -> IdTokenClaims:
         parts = token.split(".")
@@ -88,12 +90,12 @@ class Hs256Verifier:
             raise unauthorized("the bearer token is not a compact JWS")
         header, payload, signature = parts
         signing_input = f"{header}.{payload}"
-        if not hmac.compare_digest(_decode(signature), self._signature(signing_input)):
+        if not hmac.compare_digest(decode_segment(signature), self._signature(signing_input)):
             raise unauthorized("the token signature does not verify")
-        if json.loads(_decode(header)).get("alg") != "HS256":
+        if json.loads(decode_segment(header)).get("alg") != "HS256":
             raise unauthorized("unexpected token algorithm")
         try:
-            claims = IdTokenClaims.model_validate(json.loads(_decode(payload)))
+            claims = IdTokenClaims.model_validate(json.loads(decode_segment(payload)))
         except (ValidationError, ValueError) as exc:
             raise unauthorized("the token claims are not usable") from exc
         if claims.iss != self.issuer:

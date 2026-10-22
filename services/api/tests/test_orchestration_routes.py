@@ -981,3 +981,30 @@ def test_an_approval_kind_and_a_node_id_are_a_pair_not_a_choice(client, auth):
     assert elsewhere.status_code == 404
     assert elsewhere.json()["class"] == str(ErrorClass.NOT_FOUND)
     assert "node_nobody_planned" in elsewhere.json()["message"]
+
+
+def test_solo_mode_allows_requesting_and_deciding_same_gate(client, auth):
+    solo_headers = auth(
+        "user_solo_operator",
+        [Role.PRINCIPAL_INVESTIGATOR, Role.ANALYST, Role.DOMAIN_EXPERT],
+        solo_mode=True,
+        amr=["pwd+mfa"],
+    )
+    # 1. 申请一扇 escalation 门
+    req = client.post(
+        f"{BASE}/runs/{RUN_ID}/approvals",
+        json={"kind": "escalation", "assigned_to": "user_solo_operator"},
+        headers=solo_headers,
+    )
+    assert req.status_code == 201, req.text
+    approval_id = req.json()["approval_id"]
+
+    # 2. 单人模式下同一用户自己批准该门
+    dec = client.post(
+        f"{BASE}/approvals/{approval_id}/decision",
+        json={"approved": True, "reason": "solo mode self approved for evaluation"},
+        headers=solo_headers,
+    )
+    assert dec.status_code == 200, dec.text
+    assert dec.json()["state"] == "approved"
+    assert dec.json()["decided_by"] == "user_solo_operator"

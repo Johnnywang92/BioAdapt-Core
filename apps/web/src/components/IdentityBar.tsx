@@ -16,7 +16,7 @@ import { Chip, Field } from "@/components/ui";
  */
 export function IdentityBar() {
   const t = useT();
-  const { identity, projectId, error, setToken, setProjectId, clear } = useIdentity();
+  const { identity, projectId, error, setToken, setProjectId, clear, selectPreset, enterSoloMode } = useIdentity();
   const [draftToken, setDraftToken] = useState("");
   const [draftProject, setDraftProject] = useState("");
   const [note, setNote] = useState<string | null>(null);
@@ -34,6 +34,15 @@ export function IdentityBar() {
     }
     setToken(draftToken);
     setNote(null);
+  }
+
+  async function handlePreset(roleKey: string) {
+    const ok = await selectPreset(roleKey);
+    if (ok) {
+      setNote(null);
+    } else {
+      setNote(`Token for ${roleKey} is not available from dev API. Paste from .workbench/tokens.json.`);
+    }
   }
 
   function openProject() {
@@ -60,6 +69,59 @@ export function IdentityBar() {
         </div>
       </header>
 
+      {/* 快速角色 / 单人模式切换条 */}
+      <div style={{ marginBottom: 16, padding: "12px", background: "var(--card-bg, #f8f9fa)", borderRadius: "8px", border: "1px solid var(--border, #e9ecef)" }}>
+        <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 8, color: "var(--fg, #495057)" }}>
+          ⚡ {t("Quick Role Switcher (Reference / Dev)")}
+        </div>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            type="button"
+            className={identity?.isSolo ? undefined : "secondary"}
+            style={identity?.isSolo ? { background: "#10b981", borderColor: "#059669", color: "#fff", fontWeight: 700 } : {}}
+            onClick={() => handlePreset("solo")}
+            title={t("Full permissions without SoD blocks: self-approvals and self-sign-offs enabled")}
+          >
+            👤 {t("Solo Mode (All-in-One)")}
+          </button>
+          <button
+            type="button"
+            className={identity?.subjectId === "user_analyst_01" && !identity?.isSolo ? undefined : "secondary"}
+            onClick={() => handlePreset("analyst")}
+          >
+            🧑‍🔬 {t("Analyst")}
+          </button>
+          <button
+            type="button"
+            className={identity?.subjectId === "user_pi_01" && !identity?.isSolo ? undefined : "secondary"}
+            onClick={() => handlePreset("pi")}
+          >
+            👑 {t("PI (Lead)")}
+          </button>
+          <button
+            type="button"
+            className={identity?.subjectId === "user_expert_01" ? undefined : "secondary"}
+            onClick={() => handlePreset("expert")}
+          >
+            🩺 {t("Domain Expert")}
+          </button>
+          <button
+            type="button"
+            className={identity?.subjectId === "user_expert_02" ? undefined : "secondary"}
+            onClick={() => handlePreset("expert2")}
+          >
+            🔬 {t("Expert 2 (Independent)")}
+          </button>
+        </div>
+      </div>
+
+      {identity?.isSolo ? (
+        <div style={{ padding: "8px 12px", marginBottom: 12, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "6px", color: "#065f46", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 8 }}>
+          <span>✨</span>
+          <span><strong>{t("Solo Mode Active")}:</strong> {t("Separation of duties (SoD) restrictions are bypassed. You can request and self-approve gates, issue adhoc grants, and sign off conclusions as the author.")}</span>
+        </div>
+      ) : null}
+
       {error ? <div className="error">{t(error)}</div> : null}
       {note ? <div className="notice">{t(note)}</div> : null}
 
@@ -67,6 +129,11 @@ export function IdentityBar() {
         <div className="rows">
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <strong className="mono">{subject}</strong>
+            {identity.isSolo ? (
+              <Chip title="solo_mode" status="supported">
+                ⚡ {t("Solo Operator")}
+              </Chip>
+            ) : null}
             {identity.roles.map((role) => (
               <Chip key={role} title={role}>
                 {t(role)}

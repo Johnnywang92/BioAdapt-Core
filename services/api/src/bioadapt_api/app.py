@@ -9,11 +9,14 @@ state machine and the workflow runner - and produces exactly one masked access l
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from time import perf_counter
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
+from bioadapt_policies.access import Role
+from .identity import IdTokenClaims
 from .deps import ApiState, DeploymentCapabilities, StateDep, get_claims, open_session
 from .errors import register_handlers
 from .observability import emit, new_trace_id
@@ -23,6 +26,7 @@ from .routes_data import router as data_router
 from .routes_exports import router as exports_router
 from .routes_findings import read_evidence_by_alias
 from .routes_findings import router as findings_router
+from .routes_iam import router as iam_router
 from .routes_knowledge import router as knowledge_router
 from .routes_orchestration import router as orchestration_router
 from .routes_runs import router as runs_router
@@ -64,6 +68,42 @@ def create_app(state: ApiState) -> FastAPI:
         """Anonymous, non-sensitive declarations only; ``configured`` is not a health check."""
         return state.deployment
 
+    @app.get("/v1/development/tokens")
+    def development_tokens(state: StateDep) -> dict[str, str]:
+        """Development helper: return minted tokens for solo and multi-role operations.
+
+        §11.2: a deployment that has declared itself configured does not hand out a role to whoever asks
+        for one - there, authority arrives through a registered login key and the exchange route. The
+        reference build and the tests answer, because the demo's whole point is to show §13.1's
+        separation of duties by letting one person hold two identities.
+        """
+        if state.deployment.mode == "configured" or not hasattr(state.verifier, "issue"):
+            return {}
+        now = state.clock()
+        exp = int((now + timedelta(hours=24)).timestamp())
+        roles_map = {
+            "solo": ("user_solo_operator", [Role.PRINCIPAL_INVESTIGATOR, Role.ANALYST, Role.DOMAIN_EXPERT], True),
+            "pi": ("user_pi_01", [Role.PRINCIPAL_INVESTIGATOR], False),
+            "analyst": ("user_analyst_01", [Role.ANALYST], False),
+            "expert": ("user_expert_01", [Role.DOMAIN_EXPERT], False),
+            "expert2": ("user_expert_02", [Role.DOMAIN_EXPERT], False),
+        }
+        res: dict[str, str] = {}
+        for k, (sub, roles, is_solo) in roles_map.items():
+            res[k] = state.verifier.issue(
+                IdTokenClaims(
+                    sub=sub,
+                    iss="https://idp.example/bioadapt",
+                    aud="bioadapt-api",
+                    roles=roles,
+                    project_ids=["prj_scrnaseq"],
+                    solo_mode=is_solo,
+                    amr=["pwd+mfa"],
+                    exp=exp,
+                )
+            )
+        return res
+
     for router in (
         data_router,
         runs_router,
@@ -74,6 +114,7 @@ def create_app(state: ApiState) -> FastAPI:
         tools_router,
         exports_router,
         compliance_router,
+        iam_router,
     ):
         app.include_router(router, prefix="/v1")
 

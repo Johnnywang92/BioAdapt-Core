@@ -117,6 +117,40 @@ export interface Project {
 export type ProjectCreate = Omit<Project, "thresholds" | "created_at"> &
   Partial<Pick<Project, "regulatory_profile">>;
 
+/**
+ * A row of the identity directory (§11.2): the key an admin authorised, and what a login with it is
+ * granted. The key material itself is absent on purpose - a screen compares fingerprints, and the PEM
+ * is only ever read by the thing that checks a signature.
+ */
+export interface IamCredential {
+  kid: string;
+  subject_id: string;
+  algorithm: string;
+  fingerprint: string;
+  roles: string[];
+  project_ids: string[];
+  amr: string[];
+  solo_mode: boolean;
+  is_service_account: boolean;
+  label: string | null;
+  created_by: string;
+  created_at: string | null;
+  revoked_by: string | null;
+  revoked_at: string | null;
+}
+
+/** What an admin writes about a key. The kid and fingerprint are derived from the PEM, never typed. */
+export interface CredentialRegistration {
+  subject_id: string;
+  public_key: string;
+  roles: string[];
+  project_ids: string[];
+  amr: string[];
+  solo_mode: boolean;
+  is_service_account: boolean;
+  label?: string | null;
+}
+
 /** What a provenance claim about filtering rests on (§5.4): the tool and the reference it read. */
 export interface UpstreamPipeline {
   name: string;
@@ -166,7 +200,12 @@ export interface PlanNode {
   tool_version: string;
   tool_class: string;
   requires_approval: boolean;
-  inputs?: Record<string, unknown>;
+  inputs?: string[];
+  outputs?: string[];
+  parameters?: Record<string, unknown>;
+  dependency_node_ids?: string[];
+  resources?: { cpu: number; memory_gb: number; gpu: number; max_minutes: number };
+  privacy_policy?: string;
   [extra: string]: unknown;
 }
 
@@ -182,6 +221,68 @@ export interface RecordedPlan {
   plan_id: string;
   plan_version: string;
   plan_sha256: string;
+}
+
+/** A row of `GET /projects/{id}/plans`: enough to pick a plan version to launch, and no more (§9.7). */
+export interface PlanSummary {
+  plan_id: string;
+  plan_version: string;
+  objective: string;
+  plan_sha256: string;
+  created_by: string;
+  created_at: string | null;
+  nodes: PlanNode[];
+}
+
+export interface ToolSlot {
+  slot: string;
+  required: boolean;
+}
+
+/** A row of `GET /projects/{id}/tools`: the tool set this deployment both advertises and executes (§4.1, §9.4). */
+export interface ToolRow {
+  tool_name: string;
+  tool_version: string;
+  tool_class: string;
+  task: string;
+  runnable: boolean;
+  input_slots: ToolSlot[];
+  output_slots: string[];
+  min_resources: { cpu: number; memory_gb: number; gpu: number; max_minutes: number };
+  measured_peak_memory_mb: number | null;
+  measured_on: string | null;
+  quality_checks: string[];
+  assumptions: string[];
+  invalid_when: string[];
+  network_mode: string;
+  egress_allowlist: string[];
+  failure_policy: string;
+  retry_limit: number;
+  reproducibility_level_target: string;
+  requires_approval: boolean;
+  privacy_policy: string;
+}
+
+export interface ToolCatalog {
+  snapshot_id: string;
+  tools: ToolRow[];
+  conclusion_outputs: string[];
+}
+
+/** What one execute call reports: how far the run got, and what it stopped to wait for (§9.1). */
+export interface RunExecution {
+  run_id: string;
+  completed: boolean;
+  state: RunState;
+  nodes_executed: string[];
+  assets_produced: string[];
+  candidate_count: number;
+  draft_count: number;
+  warnings: string[];
+  stopped_at: string | null;
+  reason: string | null;
+  requires_human_action: boolean;
+  gated_nodes: string[];
 }
 
 export interface RunSummary {

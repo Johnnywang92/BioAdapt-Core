@@ -12,6 +12,8 @@ dependencies = [
     "bioadapt-knowledge",
     "bioadapt-tool-registry",
     "fastapi>=0.115",
+    #: Ed25519 key files (§11.2 login): the standard library has no asymmetric signature check.
+    "cryptography>=42",
 ]
 
 [tool.uv.sources]

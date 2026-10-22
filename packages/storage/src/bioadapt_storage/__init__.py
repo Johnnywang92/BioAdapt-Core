@@ -1,5 +1,5 @@
 from . import catalog, ddl, objectstore, schema, traces
-from .catalog import Catalog, ConcurrentWriteError, REUSABLE_SCOPES, ScopeError
+from .catalog import Catalog, ConcurrentWriteError, PLATFORM_SCOPE, REUSABLE_SCOPES, ScopeError
 from .ddl import (
     MIGRATION_NAME,
     migration_drift,
@@ -46,6 +46,7 @@ __all__ = [
     "ObjectHead",
     "ObjectStore",
     "PartialUnique",
+    "PLATFORM_SCOPE",
     "REPLICA_SURFACES",
     "REUSABLE_SCOPES",
     "ScopeError",

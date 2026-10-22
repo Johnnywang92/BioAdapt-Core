@@ -45,12 +45,15 @@ class ActorRef:
 
     subject_id: str
     kind: SubjectKind
+    solo_mode: bool = False
 
     @classmethod
     def of(cls, actor: Actor) -> "ActorRef":
+        is_solo = bool(getattr(actor, "solo_mode", False))
         return cls(
             subject_id=actor.subject_id,
             kind=SubjectKind.SERVICE if actor.is_service_account else SubjectKind.HUMAN,
+            solo_mode=is_solo,
         )
 
     @property
@@ -183,6 +186,7 @@ class Orchestrator:
             requested_at=now,
             sla_at=self.policy.deadline(now),
             node_id=node_id,
+            solo_mode=actor.solo_mode,
         )
         replayed = self.catalog.approval_exists(approval.approval_id)
         self.catalog.record_approval(approval)
@@ -208,7 +212,7 @@ class Orchestrator:
 
     def decide_approval(self, approval_id: str, *, actor: ActorRef, approved: bool, reason: str) -> Approval:
         approval = self.catalog.get_approval(approval_id)
-        assert_decidable(approval, actor_id=actor.subject_id, actor_kind=actor.kind)
+        assert_decidable(approval, actor_id=actor.subject_id, actor_kind=actor.kind, solo_mode=actor.solo_mode)
         return self.catalog.decide_approval(
             approval_id,
             state=str(ApprovalState.APPROVED if approved else ApprovalState.REJECTED),

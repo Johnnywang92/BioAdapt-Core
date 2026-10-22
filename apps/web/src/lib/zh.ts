@@ -113,6 +113,18 @@ export const zh: Record<string, string> = {
   gdpr: "GDPR",
   hipaa: "HIPAA",
   commercial_only: "仅商业条款",
+  "This token reaches no registered project yet. Create one below, or ask for a token scoped to the project you work on.":
+    "这个 token 还到达不了任何已登记的项目。可以在下方新建一个，或索取一个 scoped 到你正在做的项目的 token。",
+  "project id": "项目 id",
+  "only the ids this token is scoped to can be opened here; anything else is refused before a row is written (§11.2)":
+    "这里只列出这个 token 被授权的项目 id；换成别的项目 id，会在写入任何记录之前就被拒绝（§11.2）",
+  "this token carries every project, so the id is yours to name; the suggestion comes from the study goal and you can change it":
+    "这个 token 覆盖全部项目，所以 id 由你来定；下面的建议是从研究目标里取的，你可以改",
+  "prj_…": "prj_…",
+  "This token is scoped only to projects that already exist, so no new project can be written with it. Every screen below is still reachable from the list above.":
+    "这个 token 只授权到已存在的项目，因此没法用它新建项目。下方每一步仍然可以从上面的清单里进入。",
+  "A project cannot attest its own cut set: until a principal investigator confirms the thresholds, the analysis still runs but signing a conclusion and exporting stay closed (§1.5).":
+    "项目不能自己为自己的判据集合背书：在主要研究者确认阈值之前，分析照常运行，但结论签字与导出保持关闭（§1.5）。",
 
   // ---------------------------------------------------------------- token 里的角色
   principal_investigator: "主要研究者（PI）",
@@ -120,6 +132,8 @@ export const zh: Record<string, string> = {
   domain_expert: "领域专家",
   platform_admin: "平台管理员",
   compliance_officer: "合规官",
+  knowledge_curator: "知识库管理员",
+  service_agent: "服务账号",
 
   // ---------------------------------------------------------------- 公共短语
   "nothing is read until a token is set": "粘贴 token 之前不读取任何数据",
@@ -299,8 +313,162 @@ export const zh: Record<string, string> = {
   download: "下载",
   "Nothing is registered in this project yet.": "这个项目还没有登记任何对象。",
 
+  // ---------------------------------------------------------------- 数据向导
+  "declare every field myself": "我自己逐字段申报",
+  "pick a file and this screen reads the rest from its bytes; the digest is computed here, so a conflict at completion means the object plane really holds something else":
+    "选一个文件，其余内容由这个界面从字节里读出来；摘要在这里算出，所以完成阶段对不上，意味着对象存储里确实放着别的东西",
+  "file to register": "要登记的文件",
+  "a counts document the workflow can read, or an h5ad this deployment reports on instead":
+    "工作流能读取的 counts 文档；或 h5ad——本部署对它只做报告，不做解析",
+  "This is an h5ad, and a browser cannot read HDF5. The reference converter runs as a command and refuses to guess the annotation: it maps specimen_id, donor_id and group onto the design row, keeps both sides of a lossy conversion, and drops every obs column nobody declared.":
+    "这是一个 h5ad，而浏览器读不了 HDF5。参考转换器以命令行运行，并且拒绝猜测注释：它把 specimen_id、donor_id、group 映射到设计行上，为有损转换同时保留两侧，并丢掉每一列无人声明过的 obs 字段。",
+  "Its output is a JSON document plus a manifest in .workbench/admissions; registering that document is this same screen, with the file picked again.":
+    "它的输出是一个 JSON 文档，外加 .workbench/admissions 里的一份清单；登记那个文档，就是回到这个界面把文件再选一次。",
+  "what the plan expects": "方案期望什么输入",
+  "This file is too large to preview in a browser, so nothing has been checked and nothing is registered. The digest above is real; the contents are not read.":
+    "这个文件太大，浏览器无法预览，所以既没有检查过内容，也没有登记。上面的摘要是真实的；内容没有被读过。",
+  "This file is not a document the workflow reads, so it is not registered. The reference input is the JSON product the converter writes, whose top level names the slot it answers for.":
+    "这个文件不是工作流会读取的文档，所以没有登记它。参考输入是转换器写出的那个 JSON 产物，它的顶层写明自己应答哪个 slot。",
+  slot: "slot",
+  missing: "缺失",
+  "a run reads its root input from the counts slot": "run 从 counts slot 读取自己的根输入",
+  contract: "契约版本",
+  cells: "细胞数",
+  genes: "基因数",
+  donors: "供体",
+  "{donors} donors, {specimens} specimens, {groups} groups": "{donors} 个供体、{specimens} 个样本、{groups} 个分组",
+  "identifier space": "标识符空间",
+  "the document names none": "文档没有写明",
+  "The slot on this document is not counts, so no run can start from it.": "这个文档上的 slot 不是 counts，所以没有 run 能从它启动。",
+  "These design columns are empty on at least one cell, and every rarity and robustness judgement counts donors:":
+    "至少一个细胞在这些设计列上是空的，而每一次稀有度与稳健性判断都要数供体：",
+  "{n} cell keys repeat; a matrix has to name each cell once.": "{n} 个 cell key 是重复的；矩阵必须给每个细胞唯一的名字。",
+  "The reference pseudobulk step sums counts and refuses a matrix declared as":
+    "参考流程的 pseudobulk 步骤对计数求和，它会拒绝一个声明为",
+  "Declaration fields": "声明字段",
+  "defaults to the project tier": "默认取项目的层级",
+  "An unknown filtering state is a statement that nobody can show the filtering was done, so the pipeline that produced the object becomes part of the record. All four fields go to the API verbatim.":
+    "把 filtering_state 声明为 unknown，是在说无人能证明过滤做过，于是产出这个对象的流程成为记录的一部分。四个字段都会原样发给 API。",
+  "Register this file": "登记这个文件",
+  "build the plan around it": "围绕它构建方案",
+  "Nothing is sent until this screen can read the file it is declaring.": "在这个界面能读出它要申报的文件之前，什么也不会发送。",
+
+  // ---------------------------------------------------------------- 方案向导
+  "Build a plan": "构建方案",
+  "the tool rows, their slots and their resource floors are read from the same registry the run executes against; the design, the partitions and the stage-0 numbers stay yours to state":
+    "工具行、它们的 slot 和资源下限，都取自 run 实际执行时所对照的那份注册表；设计、分区与 stage-0 数值仍然由你来声明",
+  "launch it from the overview": "在总览页启动它",
+  "an h5ad cannot be read in a browser; convert it first, then point this screen at the JSON it writes":
+    "浏览器读不了 h5ad；先转换，再让这个界面去读转换写出的那个 JSON",
+  "this file is too large to read here, so the design below has to be typed": "这个文件太大，这里读不了，所以下面的设计需要手工填写",
+  "this file is not a counts document, so no design could be read from it": "这个文件不是 counts 文档，所以无法从它读出设计",
+  "read the design from the data file": "从数据文件读出设计",
+  "this uploads nothing: it is the same bytes the data screen registered, opened here to list specimens, donors and groups":
+    "这里不上传任何东西：它就是数据页登记过的那份字节，在这里打开只是为了列出样本、供体与分组",
+  specimens: "个样本",
+  objective: "研究目标",
+  "what the run is being asked to settle, in one sentence": "这次 run 被要求回答的问题，用一句话写",
+  "derived from the objective when left empty": "留空时由研究目标推导",
+  Design: "设计",
+  "the column this matrix actually carries": "这份矩阵实际带着的这一列",
+  "the design column named on every cell": "每个细胞都写明的那个设计列",
+  "donors per group in the whole matrix": "整份矩阵中每组的供体数",
+  "defaults to the cut set in force; a run reports the groups under it rather than dropping them":
+    "默认取当前生效的阈值集；run 会报告低于它的分组，而不是把分组丢掉",
+  "confounding check name": "混杂检查名",
+  "what was looked at, e.g. group_vs_donor": "检查的是什么，例如 group_vs_donor",
+  "which tool ran it": "是哪个工具跑的它",
+  "its result": "它的结果",
+  "NOT_RUN is honest and the contract refuses it: a check that has not run is a gap, not a placeholder":
+    "NOT_RUN 是诚实的，而契约会拒绝它：没跑过的检查是一个缺口，不是一个占位符",
+  "detail (optional)": "补充说明（可选）",
+  "Declaring PASS is a claim about a check that ran and passed. This screen cannot run one, so it leaves the field at NOT_RUN and believes what you type.":
+    "声明 PASS 是在断言某个检查跑过且通过了。这个界面跑不了任何检查，所以它把该字段留在 NOT_RUN，并且相信你输入的内容。",
+  Partitions: "分区",
+  "the rule that separated discovery from confirmation, named so a reviewer can check it":
+    "把发现集与确认集分开的规则，写下名字复核者才能核对",
+  "ids separated by commas; pick them from the list the data file gave": "用逗号分隔的 id；可以从数据文件给出的列表里挑",
+  "leave empty when the study has no independent confirmation set; say so in the objective":
+    "研究没有独立确认集时留空，并在研究目标里说明",
+  Steps: "步骤",
+  "the name, version, slots and resource floor of every step below come from the registry this deployment hydrates; a node that emits a conclusion asset or is ad-hoc is gated whatever this screen thinks":
+    "下面每一步的名称、版本、slot 与资源下限，都来自本部署实际装载的注册表；产出结论资产或 ad-hoc 的节点，无论这个界面怎么想，都是受门的",
+  reads: "读取",
+  writes: "写出",
+  gated: "需过门",
+  "at least": "至少",
+  "gene symbols in this matrix": "个基因符号属于这份矩阵",
+  "no matrix read here, so the names cannot be checked against one": "这里没有读取任何矩阵，所以这些名字无法核对",
+  "the contrast's first arm": "对比的第一组",
+  "the contrast's second arm": "对比的第二组",
+  "the thresholds handed to this step are the set in force on the project, verbatim:": "交给这一步的阈值，就是项目当前生效的那一套，原样：",
+  "which §1.5 reports as unconfirmed, so a finding computed on it cannot be signed off or exported":
+    "§1.5 报告它未经确认，所以用它算出的结论不能签署，也不能导出",
+  "attest the measured cuts": "对实测阈值作出确认",
+  "The QC policy this node runs (§7.7)": "该节点运行的 QC 策略（§7.7）",
+  "the step refuses to run without it": "这一步没有它就拒绝运行",
+  remove: "移除",
+  "add a rule": "增加一条规则",
+  "mark keeps the cell and labels it at risk; drop deletes it, and §7.7 only allows that with a named approver, a reason and a report annotation - which this form refuses rather than assuming.":
+    "mark 保留细胞并给它标上风险；drop 会删除它，而 §7.7 只有在写明批准人、理由并在报告中注明时才允许这样做——这份表单宁可拒绝，也不会替你假定这些已经具备。",
+  "Budget and stops": "预算与停止条件",
+  "the quota the project was given is what the server compares this to": "服务端会拿它与项目被授予的配额相比",
+  "the three mandatory stops are already here; add more, do not remove them": "三条强制停止条件已经写在这里；可以补充，不要删掉",
+  "what this plan promises to produce; conclusion assets are the ones a person has to sign":
+    "这份方案承诺产出的东西；其中结论资产必须由人来签署",
+  "This screen can see the plan is not complete": "这个界面能看出方案还不完整",
+  "Recording is still allowed: the server's own validators have the last word, and a refusal it gives is shown here in its words.":
+    "仍然可以登记：最终裁定权在服务端自己的校验器手里，它给出的拒绝会按它自己的话显示在这里。",
+  "the body this form sends": "这份表单将要发送的正文",
+  "Record this plan": "登记这份方案",
+  "the slot the run is handed one registered asset for; this workflow fills exactly one":
+    "run 会用一份已登记的资产来应答这个 slot；本流程恰好只填一个",
+  "the objective is the sentence an expert reads first; it is empty": "研究目标是专家最先读的那句话，现在是空的",
+  "the partition rule names how discovery was separated from confirmation": "分区规则要写明发现集是怎么与确认集分开的",
+  "the discovery partition has to hold at least one specimen": "发现分区至少要包含一个样本",
+  "a specimen cannot sit in both partitions": "一个样本不能同时位于两个分区",
+  "a confounding check has to name the tool that ran it": "混杂检查必须点明跑它的工具",
+  "the contract refuses a design matrix whose confounding check has not run: record the check and its result":
+    "契约会拒绝一个混杂检查尚未运行的设计矩阵：请记录这项检查及其结果",
+  "a plan with no nodes runs nothing": "没有节点的方案什么都不会运行",
+  "this workflow fills one root slot and these choices leave": "本流程只填一个根 slot，而这些选择留下了",
+  "is the number the step refuses to run without": "是这一步没有它就拒绝运行的数值",
+  "qc: the policy has to name its id, version, tissue and platform": "qc：策略必须写明它的 id、版本、组织与平台",
+  "qc: a policy with no rules screens nothing; say why in the objective": "qc：没有规则的策略什么都不筛查；请在研究目标里说明原因",
+  "qc: every rule needs a name the card can cite": "qc：每条规则都需要一个卡片可以引用的名字",
+  "qc rule": "qc 规则",
+  "needs a bound": "需要一个界限",
+  "needs an upper bound": "需要上界",
+  "needs a lower bound": "需要下界",
+  "is set by hand, so §7.7 requires the reason": "是手工设定的，所以 §7.7 要求写明理由",
+  "cites a claim it does not name": "引用了它并未点名的知识断言",
+  "must name the diagnostic its quantile came from": "必须点明它的分位数出自哪个诊断",
+  "pseudobulk_de: a contrast needs two different arms to compare": "pseudobulk_de：一个对比需要两个不同的组才能比较",
+  "measured on": "实测于",
+  "is below the registry's floor for this tool": "低于注册表为该工具设定的下限",
+  "under-powered against min_n_per_group in the discovery partition": "在发现分区里低于 min_n_per_group",
+  "is not in this matrix's gene list": "不在该矩阵的基因列表里",
+  "the pseudobulk step sums counts and refuses a matrix declared as something else":
+    "pseudobulk 步骤对计数求和，并会拒绝一个声明为其他状态的矩阵",
+  "measure a candidate a finished run named, so they are not offered here":
+    "度量的是一个已完成的 run 所点名的候选集，所以这里不提供这些步骤",
+  "nothing is registered in this project yet, so a run launched from this plan has no input asset to name":
+    "这个项目还没有登记任何对象，所以由这份方案启动的 run 没有可点名的输入资产",
+  steps: "步骤数",
+  digest: "摘要",
+  "recorded by": "登记人",
+  "Recorded plans": "已登记的方案",
+  "a launch names one of these versions and pins it; recording never authorised a run":
+    "一次启动会点名其中一个版本并钉住它；登记本身从不授权 run",
+  "Nothing is recorded here yet.": "这里还没有登记任何记录。",
+  "the overview launches a recorded version": "总览页会启动某个已登记的版本",
+  "write the whole contract as JSON": "我自己把整份契约写成 JSON",
+  "the full contract; unknown keys are refused, not ignored - the wizard's review panel shows one that is complete":
+    "整份契约；未知的键是被拒绝而不是被忽略——向导的检视面板会给出一份完整可用的",
+
   // ---------------------------------------------------------------- 导出
   Exports: "导出",
+  "No exports yet": "还没有导出记录",
   "Queue an export": "排队一次导出",
   "filters narrow the artefact; an unknown run id is refused rather than answered with everything":
     "筛选条件是收窄产物的；一个不存在的 run id 会被拒绝，而不是把全部内容交出来",
@@ -327,6 +495,56 @@ export const zh: Record<string, string> = {
 
   // ---------------------------------------------------------------- 项目总览与 run
   "Project overview": "项目总览",
+  "Where this stands": "现在走到哪一步",
+  "each line is a read the API made just now, in the order the work goes: register, plan, run, review, deliver":
+    "每一行都是 API 刚刚给出的读取结果，按工作的顺序排列：登记、方案、运行、复核、交付",
+  "What each role does here": "每个角色在这里做什么",
+  "separation of duties is the server's rule, not a screen setting: the person who asks for a gate is never the one who opens it (§11.6)":
+    "职责分离服务端的规则，不是界面上的开关：申请审批门的人永远不是打开它的人（§11.6）",
+  "Register the counts": "登记 counts 矩阵",
+  "at least one asset is recorded in this project": "这个项目里至少已登记一份资产",
+  "nothing is registered here yet, so a plan would have no input to name":
+    "这里还没有任何登记，方案也就没有可点名的输入",
+  "Build and record a plan": "构建并登记方案",
+  "this project has a plan version a run can pin": "这个项目已有可供 run 钉住的方案版本",
+  "a run pins a plan version, and none is recorded yet": "run 要钉住一个方案版本，而目前还没有登记",
+  "{n} runs recorded, latest in state {state}": "已记录 {n} 个 run，最近一个处于 {state}",
+  "no run has been launched against this plan yet": "还没有针对这个方案发起过 run",
+  "Open the gates a run needs": "打开 run 需要的审批门",
+  "{n} of them are assigned to you": "其中 {n} 个指派给了你",
+  "{n} are assigned to other people; a gate opens only on the subject it names (§11.6)":
+    "{n} 个指派给了别人；审批门只有它点名的那个主体才能打开（§11.6）",
+  "no gate is waiting in this inbox": "这个收件箱里没有等待处理的门",
+  "Review the drafts": "复核草稿",
+  "candidates are recorded, so the queue has cards to read": "候选亚群已记录，队列里有卡片可读",
+  "a run has to complete before cards exist to review": "要先有跑完的 run，才会有可复核的卡片",
+  "Sign off and export": "签字与导出",
+  "the cut set is attested, so these exits are open to the people the policy names":
+    "判据集合已背书，这些出口对策略指定的人是打开的",
+  "the stage-0 cut set is unconfirmed: signing a conclusion and exporting stay closed until a principal investigator confirms it with a second factor (§1.5)":
+    "stage-0 判据集合尚未确认：在主要研究者用第二因子确认之前，结论签字与导出保持关闭（§1.5）",
+  "Some of these counts could not be read, so the list below is not the whole picture.":
+    "其中几项计数没能读到，所以下面的清单不是完整情况。",
+  "Each panel that failed says why in the server's own words.": "每个读失败的面板都用服务端原文写明了原因。",
+  "This token presents as {subject}, with roles {roles}.": "这个 token 的持有者是 {subject}，角色为 {roles}。",
+  "No token is set, so nothing here can be read or acted on.": "还没有设置 token，这里既读不到也无法做任何事。",
+  "This list says what a role is for. It is not a permission check: the API decides every action, and a refusal is shown in its own words.":
+    "这份清单说的是每个角色的职责，不是权限判定：每一次操作都由 API 决定，拒绝时显示它的原话。",
+  done: "已完成",
+  "waiting on you": "等你处理",
+  "waiting on someone else": "等别人处理",
+  "your next step": "你的下一步",
+  "registers data, builds the plan and launches runs; asks for a gate but cannot open the one it asked for":
+    "登记数据、构建方案、发起 run；可以提出审批门，但打不开自己提出的那一个",
+  "owns the project record: decides the gates assigned to them, confirms the cut set, and is the only role that may end a run":
+    "对项目记录负责：决定指派给自己的审批门、确认判据集合，也是唯一可以结束 run 的角色",
+  "reviews evidence cards in the queue and records the reason behind each decision":
+    "在队列里复核证据卡片，并记录每个决定背后的理由",
+  "holds the provider terms and the egress approval a cloud call needs before it is made":
+    "保管服务商条款，以及云端调用发出前需要的出境审批",
+  "curates the private knowledge base a suggestion is retrieved from": "维护检索建议所依据的私有知识库",
+  "may execute work a person already authorised, and is refused everywhere a decision belongs to a person":
+    "可以执行人格化主体已经授权的工作；凡是属于人的决定，一律拒绝",
   "nothing is read until a token is set — the API resolves the caller from it":
     "设了 token 之前不读取任何东西——API 从它解析出调用者",
   "the tier on this row is what every later screen inherits: it decides egress, model calls and whether an export is possible at all":
@@ -603,30 +821,256 @@ export const zh: Record<string, string> = {
   "Click or drag files here": "点击选择文件或将文件拖拽至此处",
   "Successfully ingested documents": "已成功解析并建立本地混合索引！",
 
+  "Deployment capabilities": "当前部署能力",
+  "Reference demonstration": "参考演示环境",
+  "Configured deployment": "已声明部署环境",
+  "Deployment not confirmed": "部署状态待确认",
+  "Object uploads": "数据对象上传",
+  "Analysis execution": "分析执行",
+  "Export generation": "导出文件生成",
+  "Declared connected (not health-checked)": "声明已接入（未做健康检查）",
+  "Not connected": "未接入",
+  "Not confirmed": "待确认",
+  "Reading deployment declaration…": "正在读取部署声明…",
+  "Deployment information could not be read. Capabilities remain unconfirmed; ask the deployment administrator to check the API, then retry.": "无法读取部署信息，能力仍待确认。请部署管理员检查 API 后重试。",
+  "These are deployment declarations, not live health checks or permission grants. Project policies still apply.": "以上为部署声明，不代表实时健康检查或权限授予；操作仍受项目策略约束。",
+  "Object storage is not connected. Uploads cannot complete in this deployment. Ask the deployment administrator to connect storage before uploading.": "当前部署未接入对象存储，无法完成数据上传。请部署管理员接入存储后再上传。",
+  "No automatic analysis worker is connected. Recording a run request does not start analysis. Use an existing demonstration run to inspect results, or ask the deployment administrator how to execute the run.": "当前未接入自动分析执行器，登记运行请求不会启动分析。可查看已有演示运行的结果，或向部署管理员确认执行方式。",
+  "No export worker is connected. An export request can be recorded, but it will not generate a file. Ask the deployment administrator to connect a worker; polling cannot resolve this.": "当前未接入导出执行器。可登记导出请求，但不会生成文件；反复刷新无法解决，请部署管理员接入执行器。",
+  "This capability has not been confirmed. Check the deployment status above before submitting; a recorded request does not guarantee execution.": "此能力尚待确认。提交前请核查上方部署状态；请求已登记不代表一定会执行。",
+  "The request was recorded. A download is available only after a worker generates the file; see the deployment status above.": "请求已登记。只有执行器生成文件后才能下载；请查看上方部署状态。",
+  "Privacy policy not confirmed": "隐私策略待确认",
+  "The project privacy policy has not been read successfully. Do not assume local-only processing.": "尚未成功读取此项目的隐私策略，不能据此认定所有处理都在本地执行。",
+  "External model calls and exports remain subject to project policies and provider terms.": "外部模型调用和导出仍须遵守项目策略与提供方条款。",
+  "Raw data cannot leave the project. Only permitted aggregate derivations may be used externally; cloud calls are checked field by field.": "原始数据不得离开项目。仅允许的聚合派生数据可用于外部处理，云端调用须逐字段核查。",
+  "Local processing only. Cloud model calls and this export route are blocked by project policy.": "仅限本地处理。项目策略禁止云端模型调用及此导出通道。",
+  "Human genetic resources are controlled. Cloud model calls and this export route are blocked by project policy.": "人类遗传资源受控。项目策略禁止云端模型调用及此导出通道。",
+  "The card reports discordant modalities. Review the source evidence before drawing a conclusion; the alert alone does not establish a mechanism or statistical significance.": "此卡报告模态信号不一致。请先核查来源证据；此提示本身不证明生物学机制或统计显著性。",
+  "Unresolved evidence conflict": "尚未解决的证据冲突",
+  "This card has an unresolved conflict. It is not necessarily a cross-modal conflict; inspect its contradicting evidence and gate reasons.": "此卡存在未解决的证据冲突，但不一定属于跨模态冲突。请在复核前查看反对证据。",
+  "Cross-modal measured summary": "跨模态实测汇总",
+  "Only aggregate measurements are available, not paired cell observations. No scatter plot is drawn. Units, transformations and thresholds must be checked in the source asset.": "目前仅有汇总测量值，缺少成对观测数据，因此不绘制散点图。单位、变换方式和阈值请查阅来源。",
+  "No cross-modal measurements are attached to this card.": "此卡未附跨模态测量值。",
+  "RNA mean": "RNA 均值",
+  "Target modality mean": "目标模态均值",
+  "agreement": "一致性",
+  "concordant": "一致",
+  "complementary": "互补",
+  "ambiguous": "不明确",
+  "Fill review draft": "填入复核草稿",
+  "This button only fills a review draft. Inspect and submit it separately; it does not save or sign a conclusion.": "此按钮仅填写复核草稿，请另行检查并提交；不会保存或签署结论。",
+  "Review memo suggestion: {action}": "审查备忘录建议：{action}",
+  "Markers are read from marker-specificity evidence, including discovery signals. They are retrieval inputs, not proof of identity.": "Marker 读取自特异性证据，其中包括发现集信号；它们仅作为检索输入，不证明细胞身份。",
+  "Recorded markers": "证据记录中的 Marker",
+  "No marker genes are recorded on this card. Enter verified markers to query; no example genes will be substituted.": "此卡没有记录 Marker 基因。请填写核实过的 Marker 再检索，系统不会代入示例基因。",
+  "Markers for this query": "本次检索的 Marker",
+  "The first eight distinct genes are used. Check the exact query below before submitting.": "仅使用前八个不重复基因，提交前请核对下方实际检索内容。",
+  "Tissue (optional)": "组织来源（选填）",
+  "Tissue is not supplied by this card. Leave blank unless you know the source; a cell label is not a tissue.": "此卡未提供组织来源。不确定时请留空，细胞标签不等于组织来源。",
+  "Query preview": "实际检索内容",
+  "Tissue not supplied": "未提供组织来源",
+  "The source cluster is missing. Refresh the card before querying.": "缺少来源聚类编号，请刷新证据卡后再检索。",
+  "The query failed; no suggestion was applied. Check the error and retry.": "检索失败，未应用任何建议。请检查错误信息后重试。",
+  "Queried markers": "实际检索的 Marker",
+  "No matching knowledge-base citations were found. Any proposed cell types are heuristic leads, not literature-backed conclusions.": "未找到匹配的知识库引用。若返回细胞类型，也仅是启发式线索，不是有文献支持的结论。",
+  "Retrieval heuristic score": "检索启发式评分",
+  "This score is based on retrieved matches, not a calibrated probability that a cell label is correct.": "此评分依据检索匹配情况计算，不是经过校准的细胞标签正确概率。",
+  "Suggested label for review": "待复核的建议标签",
+  "Draft change": "草稿变更",
+  "no label": "未命名",
+  "Only the label is prefilled. Complete hypothesis and ontology fields before submitting; this button does not save a review or sign a conclusion.": "仅预填标签。提交前请补全假说和本体字段；此按钮不会保存复核记录，也不会签署结论。",
+  "Knowledge-base suggestion for review: {label}. Rationale: {rationale}": "待复核的知识库建议：{label}。依据：{rationale}",
+  "Review draft filled. Inspect and submit it in the Review panel; nothing has been saved yet.": "已填入复核草稿，请在复核面板检查并提交；目前尚未保存。",
+  "The retrieved evidence is insufficient to suggest a cell label.": "检索证据不足，无法给出细胞标签建议。",
+  "Review changes must be a valid JSON object. No review was submitted.": "复核变更必须是有效的 JSON 对象。本次未提交任何复核。",
+  "Search project papers, lab notes and analysis reports. Parsing depends on the installed backends; inspect extracted citations before using a suggestion.": "检索项目论文、实验记录和分析报告。解析效果取决于已安装的后端；使用建议前请检查提取的引用。",
+  "No matching citations were found. This answer has no retrieved source support.": "未找到匹配引用，此回答没有检索来源支持。",
+  "This score reflects retrieved matches, not the probability that the answer is correct.": "此评分反映检索匹配情况，不代表回答正确的概率。",
+
   // 阶段 1 & 阶段 2 核心闭环
-  "Decision Thresholds Baseline (Phase 1 Confirmed)": "判据基线状态 (阶段 1 已确认)",
-  "Stage 0 Baseline Unconfirmed (Exit Gates Closed)": "阶段 0 未确认基线 (结论出口已锁定)",
-  "Thresholds confirmed by PI; sign-off and export gates are open (§1.5).":
-    "判据集合已由 PI 审核确认，结论签字与成果导出通道已放行 (§1.5)。",
-  "Exit gates (sign-off and export) are hard-blocked until PI reviews and confirms the measured thresholds (§1.5/§14.4).":
-    "依据 §1.5 与 §14.4 规范，结论出口（签字与导出）在 PI 复核并确认实测阈值前硬阻断，防止占位数值直接流出平台。",
-  "Collapse": "收起判据明细",
-  "View / Edit Thresholds": "查看 / 审核 24 项指标",
-  "Active Cut-Set Version": "生效判据集合版本",
-  "CONFIRMED (Stage 1 Ready)": "已确认 (阶段 1 就绪)",
-  "UNCONFIRMED (Locked)": "未确认 (出口锁定)",
-  "New Confirmed Version Name": "新确认版本标识",
-  "Confirmation Rationale / Source": "确认依据 / 实测来源说明",
-  "PI Confirm Thresholds & Unlock Gates": "作为 PI 确认基线并解锁结论出口",
-  "confirming...": "正在签署确认…",
+  "Decision thresholds": "判据阈值",
+  "§1.5: the numbers every candidate is judged against. Until a principal investigator attests them, a run is still computed, drafted and queued - only signing a conclusion and exporting stay closed.":
+    "§1.5：每个候选结论都据此判定的一组数值。在课题负责人确认之前，计算、起草与排队仍可正常进行——仅结论签字与成果导出保持关闭。",
+  "in force": "当前生效",
+  attested: "已确认",
+  "yes - conclusions may be signed and exported": "是——结论可签字并可导出",
+  "no - sign-off and export are closed": "否——签字与导出已关闭",
+  "a confirmed set is not frozen: attesting another version replaces it, and the cards computed against the old one keep naming it.":
+    "已确认的判据集并非冻结：确认新版本即取而代之，而按旧版本算出的证据卡仍标注旧版本名。",
+  "this act asks the API for a second factor; a token without one is refused here, not by this screen.":
+    "该操作要求 API 校验双因子；缺少双因子的令牌会被服务端拒绝，而非由本页面拦截。",
+  "attest the measured cut set": "确认实测判据集",
+  "attest a replacement cut set": "确认新的替代判据集",
+  "every field the project carries is sent back, touched or not - that is what makes an untouched placeholder visible instead of silent.":
+    "项目携带的每个字段都会原样回传，无论是否改动——正是这一点让未被触碰的占位值显式可见，而不是悄然通过。",
+  "the name the products cite; it has to differ from the one in force": "产物将引用的版本名；必须与当前生效版本不同",
+  "name the set you measured": "为你实测的判据集命名",
+  "the cut set you are attesting has to be named, because the products cite that name":
+    "待确认的判据集必须有名称，因为所有产物都要引用该名称",
+  "what was measured, on which data, and where the measurement lives; stored in the audit exactly as typed":
+    "测了什么、基于哪些数据、实测记录存放在何处；将按输入原文写入审计日志",
+  "state your own measurement": "请填写你自己的实测依据",
+  "the rationale is the audit record of where these numbers came from, and it is empty":
+    "确认依据即是这些数值来源的审计记录，目前为空",
+  "is not a number this form can send": "不是本表单可发送的数值",
+  "counts cells, donors, neighbours or cards, so it has to be a whole number": "计的是细胞数、供体数、近邻数或卡片数，必须为整数",
+  "alignment_uncertain_min has to sit at or below alignment_continuation_min": "alignment_uncertain_min 必须不高于 alignment_continuation_min",
+  "the outside-group ceiling has to be below the in-group floor": "组外上限必须低于组内下限",
+  "carried by the record, unnamed here": "由记录携带，本页面未命名",
+  "the schema gained a cut this screen has not been told about; it is sent as it arrived unless you change it.":
+    "数据模型新增了本页面尚未登记的判据字段；若不修改，将按原值发送。",
+  "changed from the set in force": "相对生效判据集的改动",
+  "carried over unchanged": "原样沿用的项数",
+  "no number has been changed yet, so this would attest the placeholders as measured.":
+    "尚无任何数值被修改，此时的确认等同于把占位值宣称为实测结果。",
+  "this form is not ready to send": "表单尚未填写完成，无法发送",
+  "the API says that version name is already the one in force - name the new measurement differently.":
+    "API 提示该版本名已是当前生效版本——请为新的实测判据集另取名称。",
+  "refusals are quoted as the API wrote them.": "以下拒绝理由按 API 原文引用。",
+  "Confirm the measured cut set": "确认实测判据集",
+  "confirming…": "正在确认…",
+  "rare populations": "稀有群体",
+  "candidate confidence and coverage": "候选可信度与覆盖度",
+  "clustering stability": "聚类稳定性",
+  alignment: "对齐",
+  "group power": "组别样本量",
+  "differential expression support": "差异表达支撑",
+  "reproduction and labels": "复现与标签",
+  "summary pages": "摘要页面",
+  "largest share of cells a population may hold and still be called rare": "某群体仍可被判定为稀有的最大细胞占比",
+  "fewest cells a population has to be seen in to be carried at all": "某群体被纳入分析所需的最少细胞数",
+  "fewest donors a rare population has to appear in": "稀有群体必须出现在其中的最少供体数",
+  "percentile of the support score under which a card is called low-confidence": "证据卡被判定为低可信时的支持度分数百分位",
+  "smallest margin a state assignment needs to be trusted": "状态判定可被采信所需的最小间隔",
+  "how many neighbours a cell's local coverage is measured over": "衡量细胞局部覆盖度时使用的近邻数",
+  "smallest local-to-reference distance ratio still counted as covered": "仍被计为已覆盖的局部/参考距离比下限",
+  "lowest agreement two clusterings need to be called stable": "两次聚类被判定为稳定所需的最低一致性",
+  "lowest cell overlap two clusterings need": "两次聚类所需的最小细胞重叠度",
+  "share of the stability tests a candidate has to pass": "候选结论必须通过的稳定性检验占比",
+  "score at which a matched cell is treated as the same population": "匹配细胞被视作同一群体的分数阈值",
+  "score below which the alignment is called uncertain; sits under the cut above": "低于该值时对齐结果被判定为不确定；必须不高于上一项",
+  "smallest group that may be tested at all": "允许进入检验的最小组规模",
+  "largest adjusted p-value a differential result may carry": "差异结果可接受的最大校正后 p 值",
+  "smallest absolute fold change worth reporting": "值得报告的最小绝对倍数变化",
+  "lowest share of a group's donors that have to express the gene": "组内供体必须表达该基因的最低占比",
+  "highest share outside the group still allowed to express it; under the floor above": "组外供体仍被允许表达该基因的最高占比；必须低于上面的下限",
+  "lowest share of donors that have to agree with the reported direction": "与所报告方向一致的供体最低占比",
+  "difference two products may show before they are called a mismatch": "两份产物在被判定为不一致前允许的最大偏差",
+  "lowest share of labels two products have to agree on": "两份产物必须保持一致的标签最低占比",
+  "most cards one reviewer is handed at a time": "一次分发给单名复核者的证据卡上限",
+  "share above which the summary page calls a population rare": "摘要页面将某群体判为稀有的细胞占比上限",
+  "cell count below which the summary page calls a population thin": "摘要页面将某群体判为过少的细胞数下限",
   "Ad-hoc Tool Approved by PI": "PI 已批准临时工具 (Ad-hoc)",
   "This sandbox gate was approved. Issue the one-time ledger execution grant to authorize run (§9.6).":
     "该沙箱审批门已通过。发放一次性台账执行凭据以授权计算节点执行 (§9.6)。",
   "Issue Execution Grant": "发放一次性执行凭据",
-  "Run In-Process Analysis Execution (Phase 2 MVP)": "启动分析计算执行器 (阶段 2 MVP)",
+  "Run the analysis now": "现在运行分析",
   "Execute DAG nodes (qc → normalize → pca → cluster → markers → pseudobulk_de → robustness), discover C1-C3 candidates, and draft evidence cards.":
     "顺序执行计算节点 (QC → 标准化 → 降维 → 聚类 → Marker → 差异表达 → 鲁棒性)，自动识别 C1-C3 候选亚群并起草证据卡。",
-  "Execute Pipeline & Draft Cards": "执行生信流水线并起草证据卡",
   "executing pipeline...": "正在执行计算分析…",
-  "Go to Expert Queue →": "前往专家审查队列 →",
+  "Nothing ran and nothing moved: the run keeps the state it had. The sentence below is the server's own.":
+    "本次执行没有运行任何节点，运行状态也保持原样。下方一句是服务端原文。",
+  "Every node in the plan ran, and its outputs are recorded.": "方案中的每个节点都已运行完成，其产出已记入台账。",
+  "{node} did not complete, so this run is not finished.": "{node} 未完成，本次运行尚未结束。",
+  "This run did not complete.": "本次运行未完成。",
+  "{n} nodes executed": "已执行 {n} 个节点",
+  "{n} outputs recorded": "已记录 {n} 项产出",
+  "{n} candidate populations found": "发现 {n} 个候选亚群",
+  "{n} evidence cards drafted": "起草 {n} 张证据卡",
+  "The run stopped with the server's own sentence:": "运行停在服务端自己给出的这句话：",
+  "These nodes wait for a person's decision before they can run:": "以下节点需要先由他人作出审批决定才能运行：",
+  "Review the drafts in the expert queue": "在专家队列中复核这些草稿",
+  "open the approval inbox": "打开审批收件箱",
+
+  // ---------------------------------------------------------------- 单人模式与快速角色切换
+  "Quick Role Switcher (Reference / Dev)": "快速身份切换 (参考部署 / 本地演练)",
+  "Solo Mode (All-in-One)": "单人全流程模式 (Solo Mode)",
+  "Solo Mode Active": "单人全流程模式已激活",
+  "Solo Mode (Active)": "单人模式 (已激活)",
+  "Solo Mode active. Click to switch to standard Analyst role.": "单人模式生效中。点击切换回标准分析师角色。",
+  "Click to enter Solo Mode (All-in-One researcher)": "点击进入单人全流程模式（全能研究员）",
+  "⚡ Solo Mode Quickstart": "⚡ 单人模式快速通道",
+  "For solo researchers, evaluators, and full-pipeline walkthroughs without SoD blocks.":
+    "专为单人生信研究员、算法评估人员与全流程快速演练设计，免除职责分离阻断。",
+  "Experience BioAdapt as a unified Solo Operator (PI + Analyst + Expert). Bypass separation-of-duties blocks to self-request, self-approve gates, issue adhoc execution grants, and sign off findings.":
+    "以复合单人全能操作员身份（兼具 PI、生信分析师与领域专家全套权能）使用 BioAdapt。豁免职责分离（SoD）自审阻断，支持自提自批审批门、发放临时工具执行凭据并自主签字交付结论。",
+  "Launch Reference Project in Solo Mode": "以单人模式进入演示项目 (prj_scrnaseq)",
+  "Separation-of-duties restrictions are bypassed. You can approve gates requested by yourself.":
+    "已免除职责分离限制，您可以直接批准由您自己发起的审批门。",
+  "You can sign off on your own findings without independent expert block.":
+    "已解除作者自签限制，您可以直接对由您起草的证据卡执行签字确认。",
+  "Separation of duties (SoD) restrictions are bypassed. You can request and self-approve gates, issue adhoc grants, and sign off conclusions as the author.":
+    "已豁免职责分离（SoD）自审阻断。您可以作为单一操作人完成自提自批审批门、发放临时工具授权并对由您起草的卡片执行最终签字交付。",
+  "Full permissions without SoD blocks: self-approvals and self-sign-offs enabled":
+    "全能角色无职责分离阻断：支持自批审批门与作者自签结论",
+  "Solo Mode": "单人模式",
+  "Solo Operator": "单人全能操作员",
+  solo_operator: "单人全能操作员",
+  "combines PI, analyst, and domain expert duties without separation-of-duties restrictions for walkthroughs and rapid evaluations":
+    "融合课题负责人（PI）、生信分析师与领域专家全套职责，豁免职责分离限制，专用于全流程演练与快速评测",
+  "Analyst": "分析师",
+  "PI (Lead)": "课题负责人 (PI)",
+  "Domain Expert": "领域专家",
+  "Expert 2 (Independent)": "独立专家 (Expert 2)",
+
+  // ---------------------------------------------------------------- 登录密钥与身份目录（§11.2）
+  "sign-in keys": "登录密钥",
+  "Keys that may sign in": "可登录的密钥",
+  "A key file is authorised here, with the roles and projects a login with it is granted. The key itself never carries authority: revoking a row closes the next login rather than waiting for a token to expire (§11.2). Revoking is final for that key pair - the directory refuses to register the same public key twice, so a person whose key was revoked signs in with a newly generated one.":
+    "密钥文件在此被授权，并写明用它登录会获得哪些角色与项目范围。密钥本身不携带权限：吊销这一行后，下一次登录即被拒绝，而不必等待已发出的 token 过期（§11.2）。吊销对那一对密钥是终局的：目录不会让同一份公钥登记两次，被吊销的人要重新生成一份密钥才能再登录。",
+  "hide revoked keys": "隐藏已吊销的密钥",
+  subject: "主体",
+  roles: "角色",
+  reaches: "可访问范围",
+  "a login with this key is": "用此密钥登录时是",
+  fingerprint: "指纹",
+  added: "登记于",
+  "No key is registered here yet, so a key file cannot sign in - the routes refuse it until an admin writes a row.":
+    "此处尚未登记任何密钥，因此密钥文件无法登录——在管理员写入一行之前，相关路由会直接拒绝。",
+  "How a person gets a key file": "如何取得密钥文件",
+  "The private half is written on their own machine and never sent anywhere; the public half is what is pasted above. A token bought at login expires on its own, which is why there is nothing to rotate.":
+    "私钥只写在本人机器上，从不出网；上面粘贴的是公钥。登录换来的 token 会自行过期，因此没有需要轮换的机密。",
+  "Losing the file costs a login, not the project: register a new public key for the same subject and revoke the old row. There is no second place a secret has to be rotated.":
+    "丢失文件只损失一次登录，不会损失项目：为同一主体登记新的公钥，并吊销旧的那一行即可。不存在第二处需要同步轮换的机密。",
+  "every project": "全部项目",
+  "a pipeline, never a person (§11.4)": "一条流水线，绝不是人（§11.4）",
+  "a person": "一个人",
+  "second factor attested": "已认证第二因子",
+  "no second factor": "无第二因子",
+  "revoked by": "吊销者",
+  by: "由",
+  revoked: "已吊销",
+  "revoking…": "正在吊销…",
+  "Revoke this key": "吊销此密钥",
+  "Authorise a key": "授权一把密钥",
+  "Paste the contents of someone's .pub file. The key's own id and fingerprint are read off the key, so nothing here has to be copied into another system; what is chosen below is what a login with that key is granted.":
+    "粘贴对方 .pub 文件的内容。密钥的 id 与指纹都由密钥本身算出，无需再抄进其他系统；下面选定的内容，就是用它登录时获得的授权。",
+  "Registered as": "已登记为",
+  "the person or the pipeline this key belongs to; a login cannot claim another one":
+    "这把密钥属于哪个人或哪条流水线；登录无法声称是其他主体",
+  project: "项目",
+  "the scope every route a login reaches is checked against (§11.2)": "登录后每条路由都会按此范围校验（§11.2）",
+  "public key": "公钥",
+  "the PEM block of a .pub file; the trailing note line is ignored, and the private half is never pasted anywhere":
+    "粘贴 .pub 文件的 PEM 段；末尾的说明行会被忽略，私钥任何时候都不要粘贴到这里",
+  "§13.1 refuses a pair that a live session could not hold together, so a key cannot be granted around the rules":
+    "§13.1 会拒绝实时会话无法同时持有的角色组合，因此登记密钥无法绕过规则",
+  "what the login is granted": "登录获得的授权",
+  "these three answers are the difference between a person, a pipeline and a shortcut":
+    "这三项区分的正是一个人、一条流水线与一条捷径",
+  "a second factor was attested for this subject": "已为该主体认证第二因子",
+  "without it the platform refuses the actions that need one: promoting a tool, deleting data, confirming thresholds, granting a role (§11.6)":
+    "缺少它时，平台会拒绝一切需要第二因子的操作：提升工具、删除数据、确认阈值、授予角色（§11.6）",
+  "this key signs in as a pipeline, not as a person": "这把密钥以流水线身份登录，而非以人的身份",
+  "it may only hold the service account role, and every gate a person has to open stays closed to it (§11.4)":
+    "它只能持有服务账号角色，所有必须由人打开的门禁对它依旧关闭（§11.4）",
+  "this subject works alone": "该主体独自工作",
+  "a solo operator is exempt from separation-of-duties blocks, which is a decision about a person, not a convenience setting":
+    "单人操作者可豁免职责分离阻断，但这是关于某个人的决定，不是图方便的开关",
+  label: "标注",
+  "where this key lives, so a revocation can be explained to the person who holds it":
+    "写下这把密钥存放在哪里，吊销时才能向持有者说明是哪一把",
+  "workstation, office laptop": "工位机、办公笔记本",
+  "writing…": "正在写入…",
+  "Authorise this key": "授权这把密钥",
 };

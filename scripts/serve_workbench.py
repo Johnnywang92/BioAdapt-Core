@@ -38,11 +38,18 @@ import driver_factories as F  # noqa: E402
 from bioadapt_api.app import create_app  # noqa: E402
 from bioadapt_api.deps import ApiState, DeploymentCapabilities, InMemoryQueue, SingleNodeCatalogs  # noqa: E402
 from bioadapt_api.identity import Hs256Verifier, IdTokenClaims  # noqa: E402
+from bioadapt_api.login_keys import (  # noqa: E402
+    ALGORITHM,
+    Ed25519Verifier,
+    LoginKey,
+    load_or_create_key_file,
+)
 from bioadapt_api.observability import MemoryLogSink  # noqa: E402
 from bioadapt_api.quota import ProjectQuotas, StaticQuotas  # noqa: E402
 from bioadapt_orchestrator.approvals import ApprovalPolicy  # noqa: E402
-from bioadapt_policies.access import Role  # noqa: E402
+from bioadapt_policies.access import GLOBAL_SCOPE, Role  # noqa: E402
 from bioadapt_schemas.enums import ApprovalKind  # noqa: E402
+from bioadapt_storage.catalog import PLATFORM_SCOPE  # noqa: E402
 from bioadapt_storage.objectstore import HmacSigner  # noqa: E402
 from bioadapt_storage.traces import InMemoryTraceStore  # noqa: E402
 
@@ -51,6 +58,10 @@ from bioadapt_storage.traces import InMemoryTraceStore  # noqa: E402
 SECRET = b"workbench-development-secret"
 ISS = "https://idp.example/bioadapt"
 AUD = "bioadapt-api"
+
+#: The subject the bootstrap key file belongs to. A configured deployment provisions its first admin out
+#: of band; here the seed writes the file and registers it under the same name the tests use.
+ADMIN_SUBJECT = "user_platform_admin_01"
 
 PORT = 8000
 
@@ -74,6 +85,7 @@ def carded_run() -> CF.Carded:
 def tokens(verifier: Hs256Verifier, now) -> dict[str, str]:
     """One token per role, so the workbench can show what a role may and may not do."""
     people = {
+        "solo": ("user_solo_operator", [Role.PRINCIPAL_INVESTIGATOR, Role.ANALYST, Role.DOMAIN_EXPERT], ["pwd+mfa"]),
         "pi": (F.PI, [Role.PRINCIPAL_INVESTIGATOR], ["pwd+mfa"]),
         "analyst": (F.ANALYST, [Role.ANALYST], ["pwd+mfa"]),
         "expert": ("user_expert_01", [Role.DOMAIN_EXPERT], ["pwd+mfa"]),
@@ -89,6 +101,7 @@ def tokens(verifier: Hs256Verifier, now) -> dict[str, str]:
                 roles=roles,
                 project_ids=[F.PROJECT_ID],
                 is_service_account=name == "engine",
+                solo_mode=name == "solo",
                 amr=amr,
                 exp=int((now + timedelta(hours=8)).timestamp()),
             )
@@ -97,10 +110,39 @@ def tokens(verifier: Hs256Verifier, now) -> dict[str, str]:
     }
 
 
-def build() -> tuple[object, dict[str, str], CF.Carded]:
+def admin_credential(catalog, workbench: Path) -> LoginKey:
+    """The bootstrap key: written 0600 on this machine, registered as the platform's first admin.
+
+    §11.2 is why the seed hands over a file instead of printing a bearer token: the file is the thing a
+    person keeps, and what it buys is a token that expires. Nothing about a login is decided by the key
+    itself - the row below states the roles, and the same row is what a revocation stamps.
+    """
+    label = "written by scripts/serve_workbench.py"
+    key = load_or_create_key_file(workbench / "admin.pem", subject=ADMIN_SUBJECT, label=label)
+    catalog.set_scope(PLATFORM_SCOPE)
+    if catalog.active_credential(key.kid) is None:
+        catalog.register_credential(
+            kid=key.kid,
+            subject_id=ADMIN_SUBJECT,
+            algorithm=ALGORITHM,
+            public_key=key.public_pem,
+            fingerprint=key.fingerprint,
+            roles=[str(Role.PLATFORM_ADMIN)],
+            project_ids=[GLOBAL_SCOPE],
+            amr=["pwd+mfa"],
+            solo_mode=False,
+            is_service_account=False,
+            label=label,
+            created_by="deployment",
+        )
+    return key
+
+
+def build() -> tuple[object, dict[str, str], LoginKey, CF.Carded]:
     made = carded_run()
     harness = made.harness
     verifier = Hs256Verifier(SECRET, issuer=ISS, audience=AUD)
+    admin = admin_credential(harness.catalog, ROOT / ".workbench")
     state = ApiState(
         catalogs=SingleNodeCatalogs(harness.catalog),
         objects=harness.objects,
@@ -125,23 +167,27 @@ def build() -> tuple[object, dict[str, str], CF.Carded]:
             run_execution="unavailable",
             export_generation="unavailable",
         ),
+        login_keys=Ed25519Verifier(SingleNodeCatalogs(harness.catalog), issuer=ISS, audience=AUD),
     )
-    return create_app(state), tokens(verifier, harness.clock()), made
+    return create_app(state), tokens(verifier, harness.clock()), admin, made
 
 
 def main() -> None:
     import uvicorn
 
-    app, minted, made = build()
+    app, minted, admin, made = build()
     out = ROOT / ".workbench"
     out.mkdir(exist_ok=True)
     (out / "tokens.json").write_text(json.dumps(minted, indent=2), encoding="utf-8")
     print(f"project    {F.PROJECT_ID}")
     print(f"run        {made.harness.run_id}")
     print(f"candidates {len(made.candidates)} · cards filed {len(made.drafts)}")
-    print("tokens (paste one into the workbench's 'Acting as' panel):")
-    for name, value in minted.items():
-        print(f"  {name:8s} {value}")
+    login_key = (out / "admin.pem").relative_to(ROOT)
+    print(f"login key  {login_key} (0600, subject {ADMIN_SUBJECT})")
+    print(f"           kid {admin.kid} · fingerprint {admin.fingerprint}")
+    print(f"           sign in with: .venv/bin/python scripts/bioadapt_login.py login --key {login_key}")
+    print("           or paste a token into the workbench's 'Acting as' panel; the reference presets still answer.")
+    print("  * Tip: In the web UI, click '⚡ Solo Mode' at the top bar to run in single-user mode (exempt from SoD blocks).")
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
 
 

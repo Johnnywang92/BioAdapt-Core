@@ -328,6 +328,35 @@ textarea {
   margin-bottom: 8px;
 }
 
+.steps,
+.role-help {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.steps li,
+.role-help li {
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.role-help {
+  list-style: none;
+  padding-left: 0;
+}
+
+/* The field-by-field declaration stays reachable, but a person who uses the wizard never sees it. */
+.advanced {
+  margin-bottom: var(--gap);
+}
+
+.advanced > summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
 dl.facts {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);

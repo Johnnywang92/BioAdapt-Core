@@ -144,6 +144,7 @@ class Approval(Contract):
     decision_reason: Optional[str] = None
     delegated_from: Optional[str] = None
     delegated_at: Optional[datetime] = None
+    solo_mode: bool = False
 
     @field_validator("subject_digest")
     @classmethod
@@ -165,7 +166,7 @@ class Approval(Contract):
             raise ValueError("a delegation records both the delegator and the moment")
         if self.delegated_from is not None and self.assigned_to == self.delegated_from:
             raise ValueError("a delegated approval must name the delegate it moved to")
-        if self.requested_by == self.assigned_to:
+        if self.requested_by == self.assigned_to and not self.solo_mode:
             raise ValueError("an approval may not be accountable to the subject that requested it")
         return self
 
@@ -206,6 +207,7 @@ class AdhocToolGrant(Contract):
     expires_at: datetime
     max_uses: int = Field(ge=1, default=1)
     spent_at: Optional[datetime] = None
+    solo_mode: bool = False
 
     @field_validator("spec_sha256")
     @classmethod
@@ -218,7 +220,7 @@ class AdhocToolGrant(Contract):
             raise ValueError("an ad-hoc grant is issued per submission: max_uses must be 1")
         if self.expires_at <= self.approved_at:
             raise ValueError("ad-hoc grant window must be positive")
-        if self.approver_id == self.requested_by:
+        if self.approver_id == self.requested_by and not self.solo_mode:
             raise ValueError("an ad-hoc grant's approver may not be the subject that submitted the tool")
         declared = (self.spec.get("tool_name"), self.spec.get("tool_version"))
         if declared != (self.tool_name, self.tool_version):

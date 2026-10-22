@@ -20,6 +20,7 @@ import type {
   BioSuggestion,
   CandidateSet,
   CardEvidenceRead,
+  CredentialRegistration,
   DataAsset,
   DeploymentCapabilities,
   DraftResponse,
@@ -27,8 +28,10 @@ import type {
   ExportEnvelope,
   ExportKind,
   ExportRow,
+  IamCredential,
   KnowledgeDocument,
   Page,
+  PlanSummary,
   Problem,
   Project,
   ProjectCreate,
@@ -40,11 +43,13 @@ import type {
   ReviewResponse,
   ReviewScope,
   RunEventFrame,
+  RunExecution,
   RunListItem,
   RunState,
   RunSummary,
   SignOff,
   SignOffResponse,
+  ToolCatalog,
 } from "./types";
 
 export const API_BASE = "/core-api/v1";
@@ -139,9 +144,28 @@ export const deployment = {
   read: () => call<DeploymentCapabilities>(null, "/deployment"),
 };
 
+/**
+ * The identity directory (§11.2). Platform level, so no path carries a project id: a person is not a
+ * property of one project. What a screen may do here is what the token was granted - writing a row is
+ * the same `iam:grant_role` act that every other permission change is, second factor included.
+ */
+export const credentials = {
+  list: (
+    caller: Caller,
+    params: { subject_id?: string; active_only?: boolean; limit?: number; offset?: number } = {},
+  ) => call<Page<IamCredential>>(caller, `/iam/credentials${queryString(params)}`),
+  register: (caller: Caller, body: CredentialRegistration) =>
+    call<IamCredential>(caller, "/iam/credentials", { method: "POST", body }),
+  revoke: (caller: Caller, kid: string) =>
+    call<IamCredential>(caller, `/iam/credentials/${encodeURIComponent(kid)}/revoke`, { method: "POST" }),
+};
+
 /** Projects (section 5.8). Creation is the one route that carries its own project id in the body. */
 export const projects = {
   read: (caller: Caller, projectId: string) => call<Project>(caller, projectPath(projectId)),
+  /** The projects this token can read, so an entry screen never asks for an id to be typed. */
+  list: (caller: Caller, params: { limit?: number; offset?: number } = {}) =>
+    call<Page<Project>>(caller, `/projects${queryString(params)}`),
   create: (caller: Caller, body: ProjectCreate) =>
     call<{ project_id: string; privacy_tier: string }>(caller, "/projects", {
       method: "POST",
@@ -196,27 +220,38 @@ export const assets = {
       },
     ),
   /**
-   * The whole registration in the three calls the API defines. The PUT goes straight to the signed URL
+   * The whole registration in the calls the API defines. The PUT goes straight to the signed URL
    * the API handed out, with no Authorization header: the signature is the only grant it needs, and
    * the bearer token must not travel to the object plane.
+   *
+   * Bytes are never re-encoded on the way in. A file that arrives as text is a different file, and
+   * the row would carry a digest nobody can reproduce, so the fallback channel takes base64 and only
+   * opens when the signed host is unreachable at the network level. Anything the object plane or the
+   * API actively refuses is reported, not routed around.
    */
   register: async (caller: Caller, asset: DataAsset, bytes: Blob | Uint8Array): Promise<RecordedAsset> => {
+    const grant = await assets.declare(caller, asset);
     try {
-      const grant = await assets.declare(caller, asset);
-      if (grant.upload_url.includes("object.internal")) {
-        // Fallback to direct upload for internal unreachable mock hosts
-        const text = bytes instanceof Blob ? await bytes.text() : new TextDecoder().decode(bytes);
-        return await assets.directUpload(caller, asset.project_id, asset, text);
-      }
       await putSigned(grant.upload_url, grant.method, bytes);
-      return assets.complete(caller, asset);
-    } catch {
-      // If presigned host fails, attempt direct upload
-      const text = bytes instanceof Blob ? await bytes.text() : new TextDecoder().decode(bytes);
-      return await assets.directUpload(caller, asset.project_id, asset, text);
+    } catch (exc) {
+      if (exc instanceof ApiProblem && exc.code === "object_plane_unreachable") {
+        return assets.directUpload(caller, asset.project_id, asset, undefined, await toBase64(bytes));
+      }
+      throw exc;
     }
+    return assets.complete(caller, asset);
   },
 };
+
+async function toBase64(bytes: Blob | Uint8Array): Promise<string> {
+  const view = bytes instanceof Blob ? new Uint8Array(await bytes.arrayBuffer()) : bytes;
+  // Chunked so the string build never passes the engine's argument-count limit on a large matrix.
+  const chunks: string[] = [];
+  for (let offset = 0; offset < view.length; offset += 0x8000) {
+    chunks.push(String.fromCharCode(...view.subarray(offset, offset + 0x8000)));
+  }
+  return btoa(chunks.join(""));
+}
 
 async function putSigned(url: string, method: string, bytes: Blob | Uint8Array): Promise<void> {
   // Either way nothing is recorded: the row is only written at completion, and the PUT never got there.
@@ -255,8 +290,19 @@ async function putSigned(url: string, method: string, bytes: Blob | Uint8Array):
 
 /** Plans and the approval of a plan before anything runs (sections 9.6, 11.6). */
 export const plans = {
+  list: (caller: Caller, projectId: string, params: { limit?: number; offset?: number } = {}) =>
+    call<Page<PlanSummary>>(caller, `${projectPath(projectId)}/plans${queryString(params)}`),
   record: (caller: Caller, projectId: string, plan: AnalysisPlan) =>
     call<RecordedPlan>(caller, `${projectPath(projectId)}/plans`, { method: "POST", body: plan }),
+};
+
+/**
+ * The tool set this deployment advertises and executes (§9.4). A wizard builds nodes from these rows
+ * and launches against `snapshot_id`; the two are the same list, so a node that can be drawn is a
+ * node the driver can run - and anything else is refused in words rather than substituted.
+ */
+export const tools = {
+  read: (caller: Caller, projectId: string) => call<ToolCatalog>(caller, `${projectPath(projectId)}/tools`),
 };
 
 export const approvals = {
@@ -322,19 +368,14 @@ export const runs = {
     },
     idempotencyKey: string,
   ) => call<RunSummary>(caller, `${projectPath(projectId)}/runs`, { method: "POST", body, idempotencyKey }),
-  execute: (caller: Caller, projectId: string, runId: string, autoApproveGates: boolean = true) =>
-    call<{
-      run_id: string;
-      completed: boolean;
-      state: string;
-      nodes_executed: string[];
-      assets_produced: string[];
-      candidate_count: number;
-      draft_count: number;
-      warnings: string[];
-    }>(
+  /**
+   * Drive the run's nodes as far as they can go (§9.1). There is no gate this call can approve on the
+   * caller's behalf - the response says where it stopped and which nodes wait on a person's decision.
+   */
+  execute: (caller: Caller, projectId: string, runId: string) =>
+    call<RunExecution>(
       caller,
-      `${projectPath(projectId)}/runs/${encodeURIComponent(runId)}/execute?auto_approve_gates=${autoApproveGates}`,
+      `${projectPath(projectId)}/runs/${encodeURIComponent(runId)}/execute`,
       {
         method: "POST",
       },

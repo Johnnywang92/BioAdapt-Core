@@ -308,6 +308,21 @@ def test_the_plan_author_may_not_sign_off_their_own_conclusion(client, auth, see
     assert "own conclusion" in response.json()["message"]
 
 
+def test_solo_mode_allows_author_to_sign_off(client, auth, seeded):
+    headers = auth(
+        ANALYST,
+        [Role.ANALYST, Role.DOMAIN_EXPERT],
+        solo_mode=True,
+    )
+    response = client.post(
+        f"{BASE}/cards/card_001/sign_off",
+        json={"sign_off": "conditional", "reason": "solo researcher attestation"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["sign_off"] == str(SignOff.CONDITIONAL)
+
+
 def test_an_independent_expert_signs_off_and_the_card_records_it(client, auth, seeded):
     response = client.post(
         f"{BASE}/cards/card_001/sign_off", json={"sign_off": "conditional", "reason": "awaiting the second atlas"},

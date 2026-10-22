@@ -9,7 +9,7 @@ import { DeploymentStatus } from "@/components/DeploymentStatus";
 import { Chip, ProblemNote } from "@/components/ui";
 import { projects, type Caller } from "@/lib/api";
 import { LOCALES, useLocale, useT } from "@/lib/i18n";
-import { useWorkbench } from "@/lib/identity";
+import { useIdentity } from "@/lib/identity";
 import { useAsync } from "@/lib/useAsync";
 import type { PrivacyTier } from "@/lib/types";
 
@@ -33,7 +33,7 @@ const LOCALE_LABELS: Record<string, string> = { en: "EN", zh: "中文" };
 export function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { locale, setLocale, t } = useLocale();
-  const { projectId: remembered, identity } = useWorkbench();
+  const { projectId: remembered, identity, enterSoloMode, exitSoloMode } = useIdentity();
   // The address bar is what a person clicked, and it is what every screen reads under
   // (useProjectScope), so the nav follows it instead of the id the tab happens to remember.
   const fromPath = pathname.startsWith("/projects/") ? pathname.split("/")[2] ?? "" : "";
@@ -67,12 +67,65 @@ export function Shell({ children }: { children: ReactNode }) {
           ) : (
             <span className="muted">{t("no project open")}</span>
           )}
+          {/* Platform level, so it is not part of the pipeline order above: who may sign in is not a
+              property of the project currently open (§11.2). */}
+          <Link href="/keys" style={pathname.startsWith("/keys") ? { fontWeight: 700 } : undefined}>
+            {t("sign-in keys")}
+          </Link>
         </nav>
-        <div className="actor">
+        <div className="actor" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button
+            type="button"
+            onClick={() => {
+              if (identity?.isSolo) {
+                void exitSoloMode();
+              } else {
+                void enterSoloMode(project || undefined);
+              }
+            }}
+            className={identity?.isSolo ? undefined : "secondary"}
+            style={
+              identity?.isSolo
+                ? {
+                    background: "#10b981",
+                    borderColor: "#059669",
+                    color: "#fff",
+                    fontWeight: 700,
+                    padding: "3px 9px",
+                    fontSize: "0.78rem",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  }
+                : {
+                    borderColor: "#10b981",
+                    color: "#059669",
+                    fontWeight: 600,
+                    padding: "3px 9px",
+                    fontSize: "0.78rem",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  }
+            }
+            title={
+              identity?.isSolo
+                ? t("Solo Mode active. Click to switch to standard Analyst role.")
+                : t("Click to enter Solo Mode (All-in-One researcher)")
+            }
+          >
+            <span>⚡</span>
+            <span>{identity?.isSolo ? t("Solo Mode (Active)") : t("Solo Mode")}</span>
+          </button>
+
           {identity ? (
-            <span className="mono">{identity.subjectId}</span>
+            <span className="mono" style={{ fontSize: "0.85rem" }}>{identity.subjectId}</span>
           ) : (
-            <span className="muted">{t("sign in below")}</span>
+            <span className="muted" style={{ fontSize: "0.85rem" }}>{t("sign in below")}</span>
           )}
           <div className="locale">
             {LOCALES.map((one) => (

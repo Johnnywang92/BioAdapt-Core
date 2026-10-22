@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { knowledge } from "@/lib/api";
+import { knowledge, type Caller } from "@/lib/api";
+import { queryMarkers } from "@/lib/evidencePresentation";
 import { useLocale } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { Panel, ProblemNote } from "@/components/ui";
@@ -20,7 +21,12 @@ function getDocIcon(filename: string, docType: string): string {
 export default function KnowledgePage({ params }: { params: { projectId: string } }) {
   const { t } = useLocale();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
+  if (!caller) return <Panel title={t("private knowledge base")}><p>{blocked}</p></Panel>;
+  return <KnowledgeWorkspace key={`${projectId}:${caller.token}`} caller={caller} projectId={projectId} />;
+}
 
+function KnowledgeWorkspace({ caller, projectId }: { caller: Caller; projectId: string }) {
+  const { t } = useLocale();
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -175,8 +181,9 @@ export default function KnowledgePage({ params }: { params: { projectId: string 
 
   const handleAsk = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!caller || !query.trim()) return;
+    if (!query.trim() || asking) return;
     setAsking(true);
+    setRagAnswer(null);
     setError(null);
     try {
       const res = await knowledge.ask(caller, projectId, query.trim());
@@ -188,16 +195,14 @@ export default function KnowledgePage({ params }: { params: { projectId: string 
     }
   };
 
+  const markers = queryMarkers(markersInput);
   const handleSuggest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!caller || !clusterId.trim() || !markersInput.trim()) return;
+    if (!clusterId.trim() || !markers.length || suggesting) return;
     setSuggesting(true);
+    setSuggestion(null);
     setError(null);
     try {
-      const markers = markersInput
-        .split(/[,，\s]+/)
-        .map((m) => m.trim())
-        .filter(Boolean);
       const res = await knowledge.suggest(caller, projectId, clusterId.trim(), markers, clusterTissue.trim());
       setSuggestion(res);
     } catch (err: unknown) {
@@ -206,8 +211,6 @@ export default function KnowledgePage({ params }: { params: { projectId: string 
       setSuggesting(false);
     }
   };
-
-  if (!caller) return <Panel title={t("private knowledge base")}><p>{blocked}</p></Panel>;
 
   return (
     <div style={{ padding: "1.5rem", maxWidth: "1200px", margin: "0 auto" }}>
@@ -233,7 +236,8 @@ export default function KnowledgePage({ params }: { params: { projectId: string 
               type="text"
               placeholder={t("ask question placeholder")}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              disabled={asking}
+              onChange={(e) => { setQuery(e.target.value); setRagAnswer(null); }}
               style={{ flex: 1, padding: "0.5rem 0.75rem", borderRadius: "4px", border: "1px solid var(--border)" }}
             />
             <button type="submit" disabled={asking || !query.trim()}>
@@ -246,9 +250,11 @@ export default function KnowledgePage({ params }: { params: { projectId: string 
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
                 <strong>💡 AI 回答</strong>
                 <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-                  {t("confidence")}: {(ragAnswer.confidence * 100).toFixed(0)}%
+                  {t("Retrieval heuristic score")}: {(ragAnswer.confidence * 100).toFixed(0)}%
                 </span>
               </div>
+              <p className="muted">{t("This score reflects retrieved matches, not the probability that the answer is correct.")}</p>
+              {!ragAnswer.citations.length ? <p className="notice">{t("No matching citations were found. This answer has no retrieved source support.")}</p> : null}
               <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6, fontSize: "0.95rem", marginBottom: "1rem" }}>
                 {ragAnswer.answer}
               </div>
@@ -287,25 +293,30 @@ export default function KnowledgePage({ params }: { params: { projectId: string 
                 type="text"
                 placeholder="聚类编号 (如 cluster_04)"
                 value={clusterId}
-                onChange={(e) => setClusterId(e.target.value)}
+                disabled={suggesting}
+                onChange={(e) => { setClusterId(e.target.value); setSuggestion(null); }}
                 style={{ padding: "0.5rem 0.75rem", borderRadius: "4px", border: "1px solid var(--border)" }}
               />
               <input
                 type="text"
-                placeholder="组织来源 (如 PBMC, Lung)"
+                placeholder={t("Tissue (optional)")}
                 value={clusterTissue}
-                onChange={(e) => setClusterTissue(e.target.value)}
+                disabled={suggesting}
+                onChange={(e) => { setClusterTissue(e.target.value); setSuggestion(null); }}
                 style={{ padding: "0.5rem 0.75rem", borderRadius: "4px", border: "1px solid var(--border)" }}
               />
             </div>
             <input
               type="text"
-              placeholder="标记基因 (逗号分隔，如 FOXP3, IL2RA, CD4)"
+              placeholder={t("Markers for this query")}
               value={markersInput}
-              onChange={(e) => setMarkersInput(e.target.value)}
+              disabled={suggesting}
+              onChange={(e) => { setMarkersInput(e.target.value); setSuggestion(null); }}
               style={{ padding: "0.5rem 0.75rem", borderRadius: "4px", border: "1px solid var(--border)" }}
             />
-            <button type="submit" disabled={suggesting}>
+            <p className="muted">{t("The first eight distinct genes are used. Check the exact query below before submitting.")}</p>
+            <p>{t("Query preview")}: <span className="mono">{clusterId.trim() || "—"} · {markers.join(", ") || "—"} · {clusterTissue.trim() || t("Tissue not supplied")}</span></p>
+            <button type="submit" disabled={suggesting || !clusterId.trim() || !markers.length}>
               {suggesting ? "知识库匹配中…" : t("get suggestions")}
             </button>
           </form>
@@ -322,12 +333,23 @@ export default function KnowledgePage({ params }: { params: { projectId: string 
                   ))}
                 </div>
               </div>
+              <p>{t("Queried markers")}: <span className="mono">{suggestion.markers.join(", ")}</span></p>
+              {!suggestion.citations.length ? <p className="notice">{t("No matching knowledge-base citations were found. Any proposed cell types are heuristic leads, not literature-backed conclusions.")}</p> : null}
+              {!suggestion.suggested_cell_types.length ? <p className="notice">{t("The retrieved evidence is insufficient to suggest a cell label.")}</p> : null}
+              <p className="muted">{t("Retrieval heuristic score")}: {Math.round(suggestion.confidence * 100)}% · {t("This score is based on retrieved matches, not a calibrated probability that a cell label is correct.")}</p>
               <div style={{ fontSize: "0.9rem", lineHeight: 1.5, marginBottom: "0.75rem" }}>
                 <strong>{t("biological rationale")}:</strong>
                 <div style={{ whiteSpace: "pre-wrap", marginTop: "0.25rem", color: "var(--muted)" }}>
                   {suggestion.rationale}
                 </div>
               </div>
+              {suggestion.citations.length ? <details>
+                <summary>{t("citations")} ({suggestion.citations.length})</summary>
+                {suggestion.citations.map((citation, index) => <blockquote key={`${citation.chunk.chunk_id}:${index}`}>
+                  <strong>{citation.source_doc?.title ?? citation.chunk.doc_id}</strong> · {citation.chunk.section_path}
+                  <p>{citation.chunk.content}</p>
+                </blockquote>)}
+              </details> : null}
             </div>
           )}
         </section>

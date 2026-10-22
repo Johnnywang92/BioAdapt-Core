@@ -40,6 +40,11 @@ from .schema import APP_SCHEMA, TABLES_BY_NAME
 #: Section 5.8: only these scopes make an asset visible to another project's retrieval layer.
 REUSABLE_SCOPES = (UsageScope.INTERNAL_IMPROVEMENT, UsageScope.CROSS_PROJECT_ALLOWED)
 
+#: Section 11.2: the identity directory is one table for the whole platform, so its rows carry the
+#: global scope the policy layer uses for an all-project actor rather than some project's id.
+#: Mirrors ``bioadapt_policies.access.GLOBAL_SCOPE``; storage does not depend on the policy package.
+PLATFORM_SCOPE = "*"
+
 
 class ScopeError(RuntimeError):
     pass
@@ -207,6 +212,16 @@ class Catalog:
     def _current_setting(self, key: str, default: str = "") -> str:
         return (self._scope or default) if key == SCOPE_GUC else default
 
+    def _platform(self) -> str:
+        """The scope the identity directory is read and written under, or nothing at all.
+
+        A project-scoped session asking for the directory would otherwise see one project's keys and
+        call that the list, so the requirement is stated instead of inferred from an empty result.
+        """
+        if self.scope != PLATFORM_SCOPE:
+            raise ScopeError(f"the identity directory lives under scope {PLATFORM_SCOPE!r}, not {self.scope!r}")
+        return self.scope
+
     # ------------------------------------------------------------------ row encoding
 
     def _encode(self, table: str, column: str, value: Any) -> Any:
@@ -305,6 +320,14 @@ class Catalog:
         if not rows:
             raise LookupError(f"project {self.scope} is not registered")
         return Project(**self._decode("project", rows[0]))
+
+    def project_ids(self) -> list[str]:
+        """The keys this index holds, in a stable order - the candidate set for a global-scope listing.
+
+        A scoped read cannot answer this (its own filter would hide every project but one), so this is
+        deliberately the key column and nothing else: no study goal, no tier, no cut set crosses here.
+        """
+        return [row["project_id"] for row in self.conn.execute('select "project_id" from "project" order by "project_id"')]
 
     def update_project_thresholds(self, thresholds: Thresholds) -> Project:
         """Replace the cut set this project judges against (section 1.5).
@@ -421,6 +444,17 @@ class Catalog:
     def get_plan(self, plan_id: str, plan_version: str) -> AnalysisPlan:
         row = self._one("analysis_plan", "plan_id = ? and plan_version = ?", plan_id, plan_version)
         return AnalysisPlan(**self._decode("analysis_plan", row)["plan"])
+
+    def list_plans(self, *, limit: Optional[int] = None, offset: int = 0) -> list[dict[str, Any]]:
+        """Every recorded version of every plan this project holds, oldest first.
+
+        The rows come back as recorded, digest and author included: a plan is immutable, so the listing
+        that lets a person choose one has to name the version and the bytes they are choosing (§9.7).
+        """
+        rows = self._scoped(
+            "analysis_plan", "1=1 order by created_at, plan_id, plan_version", limit=limit, offset=offset
+        )
+        return [self._decode("analysis_plan", row) for row in rows]
 
     def plan_digest(self, plan_id: str, plan_version: str) -> str:
         row = self.conn.execute(
@@ -671,7 +705,10 @@ class Catalog:
     # ------------------------------------------------------------------ approvals
 
     def _approval(self, row: sqlite3.Row) -> Approval:
-        return Approval(**self._contract("approval", row, ("project_id",)))
+        data = self._contract("approval", row, ("project_id",))
+        if data.get("requested_by") and data.get("requested_by") == data.get("assigned_to"):
+            data["solo_mode"] = True
+        return Approval(**data)
 
     def record_approval(self, approval: Approval) -> str:
         """Subject-addressed: asking again for the same digest resolves to the approval already open."""
@@ -795,7 +832,10 @@ class Catalog:
     # ------------------------------------------------------------------ ad-hoc tool grants
 
     def _tool_grant(self, row: sqlite3.Row) -> AdhocToolGrant:
-        return AdhocToolGrant(**self._contract("tool_grant", row))
+        data = self._contract("tool_grant", row)
+        if data.get("requested_by") and data.get("requested_by") == data.get("approver_id"):
+            data["solo_mode"] = True
+        return AdhocToolGrant(**data)
 
     def record_tool_grant(self, grant: AdhocToolGrant) -> str:
         """Gate-addressed: the decision that already bought a grant cannot buy a second one (§9.6).
@@ -1099,6 +1139,96 @@ class Catalog:
         params: tuple[Any, ...] = (status,) if status else ()
         rows = self._scoped("export_job", f"{where} order by created_at", *params, limit=limit, offset=offset)
         return [self._decode("export_job", row) for row in rows]
+
+    # ------------------------------------------------------------------ identity directory
+
+    def _credentials(
+        self, where: str, *params: Any, limit: Optional[int] = None, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        self._platform()
+        rows = self._scoped("iam_credential", where, *params, limit=limit, offset=offset)
+        return [self._decode("iam_credential", row) for row in rows]
+
+    def register_credential(
+        self,
+        *,
+        kid: str,
+        subject_id: str,
+        algorithm: str,
+        public_key: str,
+        fingerprint: str,
+        roles: list[str],
+        project_ids: list[str],
+        amr: list[str],
+        solo_mode: bool,
+        is_service_account: bool,
+        label: Optional[str],
+        created_by: str,
+    ) -> None:
+        """Section 11.2: an authorized key becomes a row, so revoking it is a write instead of a wait.
+
+        The row is also what a login is *granted* from: a key that presents other roles in its own
+        assertion gets the roles written here, or none. That is the difference between a directory and
+        a self-description, and it is why a revocation takes effect on the next request rather than on
+        the expiry of a bearer token someone already holds.
+        """
+        self._insert(
+            "iam_credential",
+            {
+                "kid": kid,
+                "project_id": self._platform(),
+                "subject_id": subject_id,
+                "algorithm": algorithm,
+                "public_key": public_key,
+                "fingerprint": fingerprint,
+                "roles": roles,
+                "project_ids": project_ids,
+                "amr": amr,
+                "solo_mode": solo_mode,
+                "is_service_account": is_service_account,
+                "label": label,
+                "created_by": created_by,
+                "created_at": self.clock(),
+            },
+        )
+
+    def active_credential(self, kid: str) -> Optional[dict[str, Any]]:
+        """The row a presented key is checked against; a revoked key and an unknown one read alike."""
+        rows = self._credentials("kid = ? and revoked_at is null", kid)
+        return rows[0] if rows else None
+
+    def get_credential(self, kid: str) -> dict[str, Any]:
+        rows = self._credentials("kid = ?", kid)
+        if not rows:
+            raise LookupError(f"kid {kid} matched nothing in the identity directory")
+        return rows[0]
+
+    def find_credential(self, *, algorithm: str, fingerprint: str) -> Optional[dict[str, Any]]:
+        rows = self._credentials("algorithm = ? and fingerprint = ?", algorithm, fingerprint)
+        return rows[0] if rows else None
+
+    def list_credentials(
+        self, *, subject_id: Optional[str] = None, active_only: bool = False, limit: int, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        clauses = ["revoked_at is null"] if active_only else []
+        params: list[Any] = []
+        if subject_id:
+            clauses.append("subject_id = ?")
+            params.append(subject_id)
+        where = (" and ".join(clauses) if clauses else "1=1") + " order by created_at, kid"
+        return self._credentials(where, *params, limit=limit, offset=offset)
+
+    def revoke_credential(self, kid: str, *, revoked_by: str) -> dict[str, Any]:
+        """Stamp the row that granted, once: a second revocation is not a revocation of something else."""
+        self._platform()
+        cur = self.conn.execute(
+            'update iam_credential set "revoked_by" = ?, "revoked_at" = ? '
+            'where "kid" = ? and "project_id" = ? and "revoked_at" is null',
+            (revoked_by, self.clock().isoformat(), kid, PLATFORM_SCOPE),
+        )
+        if cur.rowcount != 1:
+            raise LookupError(f"no active key {kid} in the identity directory")
+        return self.get_credential(kid)
 
     # ------------------------------------------------------------------ reviews, decisions, audit
 

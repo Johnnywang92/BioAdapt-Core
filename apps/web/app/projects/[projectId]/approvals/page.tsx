@@ -48,6 +48,12 @@ export default function ApprovalsPage({ params }: { params: { projectId: string 
         </button>
       }
     >
+      {identity?.isSolo ? (
+        <div style={{ padding: "8px 12px", marginBottom: 16, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "6px", color: "#065f46", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 8 }}>
+          <span>⚡</span>
+          <span><strong>{t("Solo Mode Active")}:</strong> {t("Separation-of-duties restrictions are bypassed. You can approve gates requested by yourself.")}</span>
+        </div>
+      ) : null}
       <div className="grid">
         <Field label={t("state")}>
           <select value={state} onChange={(event) => setState(event.target.value as ApprovalState | "")}>

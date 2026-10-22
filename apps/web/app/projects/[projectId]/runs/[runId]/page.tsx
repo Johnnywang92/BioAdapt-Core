@@ -9,7 +9,7 @@ import { approvals as approvalsApi, runs as runsApi, type Caller } from "@/lib/a
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
-import type { Approval, ApprovalKind, RunSummary } from "@/lib/types";
+import type { Approval, ApprovalKind, RunExecution, RunSummary } from "@/lib/types";
 
 const KINDS: ApprovalKind[] = ["plan", "node", "adhoc_tool", "escalation"];
 
@@ -44,20 +44,19 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
   const cancel = useSubmit();
   const [reason, setReason] = useState("");
   const [executing, setExecuting] = useState(false);
-  const [execResult, setExecResult] = useState<string | null>(null);
+  const [execution, setExecution] = useState<RunExecution | null>(null);
+  const [executionError, setExecutionError] = useState<unknown>(null);
 
   const handleExecutePipeline = async () => {
     setExecuting(true);
-    setExecResult(null);
+    setExecution(null);
+    setExecutionError(null);
     try {
-      const res = await runsApi.execute(caller, projectId, runId, true);
-      setExecResult(
-        `✅ 执行成功！状态: ${res.state}，已执行 ${res.nodes_executed.length} 个节点，产出 ${res.assets_produced.length} 项资产，发现 ${res.candidate_count} 个候选亚群，生成 ${res.draft_count} 张证据卡！`,
-      );
+      setExecution(await runsApi.execute(caller, projectId, runId));
       read.reload();
       budget.reload();
     } catch (err: unknown) {
-      alert(`执行失败: ${err instanceof Error ? err.message : String(err)}`);
+      setExecutionError(err);
     } finally {
       setExecuting(false);
     }
@@ -93,7 +92,7 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
         >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <strong style={{ color: "#1e40af" }}>⚡ {t("Run In-Process Analysis Execution (Phase 2 MVP)")}</strong>
+              <strong style={{ color: "#1e40af" }}>{t("Run the analysis now")}</strong>
               <p style={{ margin: "2px 0 0", fontSize: "0.85rem", color: "var(--muted)" }}>
                 {t(
                   "Execute DAG nodes (qc → normalize → pca → cluster → markers → pseudobulk_de → robustness), discover C1-C3 candidates, and draft evidence cards.",
@@ -115,17 +114,20 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
                 fontSize: "0.9rem",
               }}
             >
-              {executing ? t("executing pipeline...") : `🚀 ${t("Execute Pipeline & Draft Cards")}`}
+              {executing ? t("executing pipeline...") : t("Run the analysis now")}
             </button>
           </div>
-          {execResult && (
-            <div style={{ marginTop: 10, fontSize: "0.85rem", color: "#16a34a", fontWeight: 600 }}>
-              {execResult}{" "}
-              <Link href={`/projects/${projectId}/queue?run_id=${encodeURIComponent(runId)}`} style={{ textDecoration: "underline" }}>
-                {t("Go to Expert Queue →")}
-              </Link>
-            </div>
+          {executionError !== null && (
+            <>
+              <Notice>
+                {t(
+                  "Nothing ran and nothing moved: the run keeps the state it had. The sentence below is the server's own.",
+                )}
+              </Notice>
+              <ProblemNote error={executionError} />
+            </>
           )}
+          {execution && <ExecutionResult projectId={projectId} execution={execution} />}
         </div>
       )}
 
@@ -222,6 +224,61 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
         </div>
       ) : null}
     </Panel>
+  );
+}
+
+/**
+ * What one execute call actually achieved (§9.1). The response carries where the run stopped and
+ * whether the next move belongs to a person, so this prints that - a run that stopped early is not
+ * reported as a run that finished, and the driver's sentence is shown in its own words.
+ */
+function ExecutionResult({ projectId, execution }: { projectId: string; execution: RunExecution }) {
+  const t = useT();
+  const runId = execution.run_id;
+  return (
+    <div className="notice" style={{ marginTop: 10 }}>
+      {execution.completed ? (
+        <p>{t("Every node in the plan ran, and its outputs are recorded.")}</p>
+      ) : (
+        <p>
+          {execution.stopped_at
+            ? t("{node} did not complete, so this run is not finished.", { node: execution.stopped_at })
+            : t("This run did not complete.")}
+        </p>
+      )}
+      <ul>
+        <li>{t("{n} nodes executed", { n: execution.nodes_executed.length })}</li>
+        <li>{t("{n} outputs recorded", { n: execution.assets_produced.length })}</li>
+        <li>{t("{n} candidate populations found", { n: execution.candidate_count })}</li>
+        <li>{t("{n} evidence cards drafted", { n: execution.draft_count })}</li>
+      </ul>
+      {execution.reason ? (
+        <p>
+          {t("The run stopped with the server's own sentence:")} <span className="mono">{execution.reason}</span>
+        </p>
+      ) : null}
+      {execution.gated_nodes.length > 0 ? (
+        <p>
+          {t("These nodes wait for a person's decision before they can run:")}{" "}
+          <span className="mono">{execution.gated_nodes.join(", ")}</span>{" "}
+          <Link href={`/projects/${projectId}/approvals?run_id=${encodeURIComponent(runId)}`}>
+            {t("open the approval inbox")}
+          </Link>
+        </p>
+      ) : null}
+      {execution.warnings.length > 0 ? (
+        <ul>
+          {execution.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+      {execution.draft_count > 0 ? (
+        <Link href={`/projects/${projectId}/queue?run_id=${encodeURIComponent(runId)}`}>
+          {t("Review the drafts in the expert queue")}
+        </Link>
+      ) : null}
+    </div>
   );
 }
 

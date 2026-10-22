@@ -30,15 +30,17 @@ uv workspace，成员为 `packages/*`、`services/*`、`workflows/*`（见根 [p
 | `packages/tool_registry` | `bioadapt-tool-registry` | 工具准入、晋级通道、结果契约 | §9.4 §9.6 |
 | `packages/policies` | `bioadapt-policies` | 出境白名单、模型路由、访问控制、注入防御 | §4.5 §9.7 §11.2–11.6 |
 | `packages/storage` | `bioadapt-storage` | 带项目作用域的关系索引、对象布局、留存与删除 | §5.7–5.9 §9.7 §11.7 |
+| `packages/evaluation` | `bioadapt-evaluation` | 评测集、指标字典、盲评协议、发布门禁 | §10.3–10.8 |
+| `packages/knowledge` | `bioadapt-knowledge` | 本地私有知识库、离线文档解析（docx/pdf/md）、零依赖向量化与单细胞 RAG 建议 | §4.5 §7.x |
 | `services/api` | `bioadapt-api` | 业务 API 与非功能/安全约束 | §9.3 §9.7 |
 | `services/orchestrator` | `bioadapt-orchestrator` | 状态机、审批门、循环预算 | §9.1 §9.2 §9.7 |
 | `services/evidence` | `bioadapt-evidence` | 证据卡服务与模型决策接线 | §7.2–7.8 §4.5 §11.5–11.6 |
 | `workflows/scrnaseq` | `bioadapt-scrnaseq` | scRNA-seq 工具包装、确定性参考实现、run driver | §7.1 §9.4 §9.6 |
-| `packages/evaluation` | `bioadapt-evaluation` | 评测集、指标字典、盲评协议、发布门禁 | §10.3–10.8 |
+| `workflows/multiomics` | `bioadapt-multiomics` | 多组学配对集成、跨模态表达不一致性（discordance）、C4/C5 新颖性与连续轴尾状态分类、冲突可视性 | §5.x §7.x |
 
 其余目录：
 
-- `apps/web` — Next.js 14 项目工作台（数据登记、计划与审批、run、专家队列、单屏证据卡、导出）。它不是工作区成员，独立用 npm 管理。
+- `apps/web` — Next.js 14 项目工作台（数据登记、计划与审批、run 与进程内执行、专家队列、单屏证据卡、知识库管理与 RAG、导出）。它不是工作区成员，独立用 npm 管理。
 - `tests/` — 跨层测试。`tests/integration/` 跑真实 run 的闭环，`tests/redteam/` 是发布门禁用例集（§10.x）。
 - `scripts/serve_workbench.py` — 一键起带种子数据的本地 API。
 
@@ -68,12 +70,12 @@ cd /path/to/BioAdapt-Core
 uv sync
 ```
 
-`uv sync` 会建 `.venv`，并按 `[tool.uv.sources]` 把九个成员以**可编辑**方式装进去（这些包没有发布到 PyPI，全部来自本地 workspace），同时安装 `dev` 组的 pytest / httpx。
+`uv sync` 会建 `.venv`，并按 `[tool.uv.sources]` 把十一个成员以**可编辑**方式装进去（这些包没有发布到 PyPI，全部来自本地 workspace），同时安装 `dev` 组的 pytest / httpx。
 
 验证：
 
 ```bash
-.venv/bin/python -c "import bioadapt_api, bioadapt_orchestrator, bioadapt_scrnaseq; print('ok')"
+.venv/bin/python -c "import bioadapt_api, bioadapt_orchestrator, bioadapt_scrnaseq, bioadapt_knowledge, bioadapt_multiomics; print('ok')"
 ```
 
 后续所有 Python 命令都用 `.venv/bin/` 里的可执行文件，不要依赖 `source activate`。
@@ -95,17 +97,20 @@ npm install          # 或 npm ci，仓库里有 package-lock.json
 .venv/bin/pytest -q
 ```
 
-当前基线：**1389 passed**（本机约 2.5 分钟）。`testpaths` 已配置为 `packages`、`services`、`workflows`、`tests`，所以在仓库根目录直接跑 `pytest` 就会覆盖四层。
+当前基线：**1458 passed**（本机约 2 分钟）。`testpaths` 已配置为 `packages`、`services`、`workflows`、`tests`，所以在仓库根目录直接跑 `pytest` 就会覆盖四层。
 
 ### 5.2 分层 / 单包
 
 ```bash
 .venv/bin/pytest packages/storage/tests -q      # 95 passed（存储索引）
-.venv/bin/pytest services/api/tests -q          # 212 passed：单服务的路由×策略用例
+.venv/bin/pytest services/api/tests -q          # 236 passed：单服务的路由×策略用例（含知识库与执行接缝）
 .venv/bin/pytest services/orchestrator -q       # 68 passed：状态机与审批门
-.venv/bin/pytest tests/integration -q           # 124 passed：真实 run → 证据卡 → 指标
+.venv/bin/pytest tests/integration -q           # 128 passed：真实 run → 证据卡 → 指标
 .venv/bin/pytest tests/redteam -q               # 45 passed：发布门禁，注入、越权、出境绕过
-.venv/bin/pytest packages/evaluation -q         # 评测集与质量门禁
+.venv/bin/pytest packages/evaluation -q         # 128 passed：评测集与质量门禁
+.venv/bin/pytest packages/knowledge -q          # 8 passed：私有知识库与离线 RAG
+.venv/bin/pytest workflows/multiomics -q        # 10 passed：多组学配对集成与跨模态不一致性
+.venv/bin/pytest workflows/scrnaseq -q          # 223 passed：scRNA 计算流水线与准入
 ```
 
 > **注意**：一次 pytest 调用里同时点多个子项目会触发 conftest 收集冲突（各包有自己的 `conftest.py` 与 `tests/` 目录名）。要么在根目录跑全量，要么逐包跑，不要写 `pytest packages/a/tests packages/b/tests`。
@@ -144,23 +149,44 @@ npm run build          # 生产构建，可选
 .venv/bin/python scripts/serve_workbench.py
 ```
 
-它会构造一套真实闭环的参考 run，打印种子标识与五个角色 token，然后在 `http://127.0.0.1:8000` 起 uvicorn：
+它会构造一套真实闭环的参考 run，打印种子标识与**引导登录密钥的路径**，然后在 `http://127.0.0.1:8000` 起 uvicorn：
 
 ```
 project    prj_scrnaseq
 run        run_scrnaseq_01
 candidates 5 · cards filed 5
-tokens (paste one into the workbench's 'Acting as' panel):
-  pi       eyJ…
-  analyst  eyJ…
-  expert   eyJ…
-  expert2  eyJ…
-  engine   eyJ…
+login key  .workbench/admin.pem (0600, subject user_platform_admin_01)
+           kid key_df9be5a2b0d387a9 · fingerprint SHA256:35vlorDTh6mJx6PTPs9ogVB0GS7pygwOimpPGac1+Xs
+           sign in with: .venv/bin/python scripts/bioadapt_login.py login --key .workbench/admin.pem
+           or paste a token into the workbench's 'Acting as' panel; the reference presets still answer.
+  * Tip: In the web UI, click '⚡ Solo Mode' at the top bar to run in single-user mode (exempt from SoD blocks).
 ```
+
+**stdout 里不再有 bearer token。** 以前那五个角色 token 是直接打印的，谁看到谁就能用，而且"哪天要换 token"没有答案；现在打印的是一把 Ed25519 密钥文件的位置，它换到的是一个 15 分钟就过期的短期 token（见 6.1.1）。五个角色仍然可以在工作台里一键取用（`GET /v1/development/tokens`，仅 reference 模式），也可以继续从 `.workbench/tokens.json` 读。
 
 种子状态刻意留了一处未完：审批收件箱里有一个 **pending 的 escalation 门**（`kind=escalation`，assigned_to `user_pi_01`），这样"已请求"与"已决策"两个界面才真的有东西可展示。
 
-> **`.workbench/tokens.json` 里是本机开发用的 HS256 bearer token。** 该目录已在 `.gitignore` 中；不要提交、不要贴进 issue / 日志 / Prompt / 截图。签名密钥 `SECRET` 同样只存在于这个绑到 `127.0.0.1` 的进程里（§11.2 禁止密钥进代码仓库，这个常量只是开发便利的妥协，不是部署方式）。
+> **`.workbench/` 里是本机开发用的 HS256 bearer token 与登录私钥。** 该目录已在 `.gitignore` 中；不要提交、不要贴进 issue / 日志 / Prompt / 截图。签名密钥 `SECRET` 同样只存在于这个绑到 `127.0.0.1` 的进程里（§11.2 禁止密钥进代码仓库，这个常量只是开发便利的妥协，不是部署方式）。
+
+### 6.1.1 用密钥文件登录（以及"token 怎么续"的正解）
+
+形态和 SSH 登录服务器一样：一个人留一把私钥，每次登录用它签一个**一分钟内有效**的断言（assertion），平台验签后发一个短期 access token。于是"部署时打印的 token 哪天要换"这个问题不再存在——长期秘密从不上网，上网的东西本来就会过期。
+
+```bash
+# 1) 使用者在自己机器上生成密钥（私钥 0600 留下，公钥半交给管理员）
+.venv/bin/python scripts/bioadapt_login.py keygen --out ~/.ssh/bioadapt.pem --subject user_pi_02
+# 2) 管理员在 http://localhost:3100/keys 粘贴那份 .pub，选角色与项目范围，点「Authorise this key」
+# 3) 使用者登录，拿一个 15 分钟的 token 贴进工作台的 Acting as 面板
+.venv/bin/python scripts/bioadapt_login.py login --key ~/.ssh/bioadapt.pem
+```
+
+三件事由这个形状决定，不是界面选择：
+
+- **权限写在目录里，不写在密钥里。** `kid` 与指纹由公钥推导（没人需要抄 ID），但角色、项目范围、是否有二次因子、是否单人模式、是人是流水线全部来自登记的那一行。断言里若自己塞 `roles`，请求体解析直接失败——这是"目录"与"自述"的区别。
+- **吊销是一次写，下一次登录就生效。** 工作台 `/keys`（或 `POST /v1/iam/credentials/{kid}/revoke`）给行盖戳后，同一把私钥再换票就被拒；已经拿到的 token 只活到自己的 TTL（`ApiState.login_token_ttl`，默认 15 分钟）。吊销对那一对密钥是终局的：同一份公钥登记第二次返回 409，所以要重新放行一个人，是让他再 `keygen` 一份、把新公钥登记进去，而不是"取消吊销"。密钥文件丢了同理：登记新的公钥、吊销旧行，没有第二处需要轮换。
+- **写目录本身就是最高权限动作。** 登记与吊销都走 `iam:grant_role`（仅 `platform_admin`、必须是人类、必须带二次因子、逐条进审计），读目录走 `audit:read` 且必须是全局作用域的 token。`is_service_account` 是行上的事实而不是从角色名猜：它只能配 `service_agent`，用密钥文件登录的流水线依旧开不了任何一扇要人开的门（§11.4）。
+
+参考部署启动时会把 `.workbench/admin.pem`（连同 `.pub`）写好并登记为第一个 `platform_admin`；重启复用同一个文件，所以已经交出去的那份不会被打扰。`GET /v1/development/tokens` 在部署声明自己 `mode="configured"` 时返回空对象——生产部署没有"谁都能来领一个角色"的口子。本文后面那些 curl 演练仍从 `.workbench/tokens.json` 取 token（参考栈照样写这个文件，图的是可以整段复制）；同一格变量也可以用密钥文件填满：`TOK=$(.venv/bin/python scripts/bioadapt_login.py login --key <那把密钥>)`——token 走 stdout，`# subject as roles…` 那行说明走 stderr。
 
 ### 6.2 终端 B：工作台
 
@@ -171,29 +197,33 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
 
 打开 http://localhost:3100 。前端没有任何数据存储，也不做鉴权：
 
+- **单人全流程模式（Solo Mode）**：工作台顶栏常驻 `⚡ 单人模式` 切换按钮，首页亦提供一键快速通道。激活后免除职责分离（SoD）自审阻断，单人即可完成自建、自批审批门、发放临时工具凭证与自主终审签字。
 - 所有请求走 `/core-api/:path*`，由 [next.config.mjs](file:///Users/yifanwang/workspace/BioAdapt-Core/apps/web/next.config.mjs) 重写到 `BIOADAPT_API_ORIGIN`（默认 `http://127.0.0.1:8000`）。这是仓库里**唯一**被读取的环境变量，且只在前端构建配置里。用重写而不是直连，是为了不在浏览器里出现第二个 origin，也就不需要 API 提供 CORS 策略。
-- 右上角 **Acting as** 面板粘贴一个 token 即以该身份操作；token 只存 `sessionStorage`（key `bioadapt.workbench.identity`），关掉标签页就没了。
+- 顶部导航栏右侧快速切换身份或点击 **Acting as** 面板粘贴 token 即以该身份操作；token 只存 `sessionStorage`（key `bioadapt.workbench.identity`），关掉标签页就没了。
 - 面板上解出的姓名/角色**只是显示**。每个请求的权限都由 API 从 claims 重新推导，改前端文案不会改变授权。
 
 页面：
 
-| 路由 | 屏 |
-| --- | --- |
-| `/` | 项目入口 |
-| `/projects/{id}/data` | 数据登记（§5.9 完整性字段） |
-| `/projects/{id}/plans` | 分析计划与批准 |
-| `/projects/{id}/runs/{runId}` | run 状态机、journal、预算 |
-| `/projects/{id}/queue` | 专家复核队列（按影响×不确定性排序） |
-| `/projects/{id}/candidates/{candidateId}` | 单屏证据卡 |
-| `/projects/{id}/candidates/{candidateId}/alignment` | 跨轮对齐历史（§5.6） |
-| `/projects/{id}/approvals` | 审批收件箱 |
-| `/projects/{id}/exports` | 导出请求 |
+| 路由 | 屏 | 核心功能与最新交互 |
+| --- | --- | --- |
+| `/` | 项目入口 | 项目列表、隐私分级（`privacy_tier`）色彩徽章、创建项目 |
+| `/keys` | 登录密钥与身份目录 | 谁可以用密钥文件登录：登记公钥并授予角色/项目范围/二次因子/单人/流水线，列出与吊销（§11.2，见 6.1.1） |
+| `/projects/{id}` | 项目总览与基线确认 | **Phase 1 阶段 0 基线判据确认面板**（PI 一键采用/自定 24 项判据并置位确认）；**部署运行状态**（`DeploymentStatus`）与参考快照 |
+| `/projects/{id}/data` | 数据登记 | 资产登记（§5.9 完整性字段）、**支持拖拽批量上传** |
+| `/projects/{id}/plans` | 分析计划与批准 | 计划 JSON 录入、结构校验与哈希固定 |
+| `/projects/{id}/runs/{runId}` | run 状态与执行 | run 状态机、journal 审计、三轴预算监控；**Phase 2 进程内 Run 执行器 Seam**（界面一键触发 11 节点 DAG 计算、候选聚类与自动起草证据卡） |
+| `/projects/{id}/queue` | 专家复核队列 | 按影响 × 不确定性排序、原因透明度（Reasons）、每周复核预算上限守卫 |
+| `/projects/{id}/candidates/{candidateId}` | 单屏证据卡 | **多组学跨模态冲突警示**、**结构化生信审查备忘录**（供体检验力不足与混杂度警示）、**私有知识库内联 RAG 建议与一键采纳**（One-click review adoption）、天花板（Ceiling）读数、三类复核与专家签字 |
+| `/projects/{id}/candidates/{candidateId}/alignment` | 跨轮对齐历史 | 跨轮候选集对齐追踪（§5.6） |
+| `/projects/{id}/knowledge` | 私有知识库 | **离线本地知识库**：支持批量拖拽上传 docx/pdf/markdown/txt 文档、离线向量化与分块、文献/标记库 RAG 语义检索测试 |
+| `/projects/{id}/approvals` | 审批收件箱 | 审批门待办列表；**Ad-hoc 工具授权发放面板**（对已决定的 `adhoc_tool` 门直接在界面上配置并生成一次性执行凭证） |
+| `/projects/{id}/exports` | 导出请求 | 四类产物导出请求与状态追踪 |
 
 ### 6.3 从头做一次单细胞分析（顺序 + 示例数据实测数字）
 
-这一节回答的是"我有一批细胞数据，怎么一路走到一个能交付的结论"。顺序就是 §5.1 的管线顺序，也就是工作台导航条的顺序：`阶段 0 判据 → 数据登记 → 写计划 → 人批计划 → run 与状态机 → 计算链 → 候选集 → 证据卡 → 专家队列 → 复核签字 → 导出`。
+这一节回答的是"我有一批细胞数据，怎么一路走到一个能交付的结论"。顺序就是 §5.1 的管线顺序，也就是工作台导航条的顺序：`阶段 0 判据 → 数据登记 → 写计划 → 人批计划 → run 与状态机 → 计算链与候选集 → 证据卡 → 专家队列 → 复核签字 → 导出`。
 
-**先把一句硬结论放在最前面**：在这份参考部署里，**只有种子 run `run_scrnaseq_01` 这一条路能一路走到证据卡**；从 HTTP/工作台新建的项目走不到计算，四个断点逐条写在 6.4。§12 那句"生产件缺件：……计算执行器"就是这件事，这里只补它对使用者的实际影响。
+**运行闭环说明**：本仓除了种子 run `run_scrnaseq_01` 预置数据外，在 `services/api` 和工作台 Run 详情页中现已打通 **Phase 2 进程内执行接缝（In-process Run Execution Seam）**：新建的 run 可以直接在工作台点击「启动执行（Execute In-Process）」或调用 `POST /v1/projects/{p}/runs/{r}/execute`，在单机进程内完整跑通 11 个计算节点、提取 C1-C3 候选亚群并起草证据卡！四个原先挡路的断点已大幅收窄，详见 6.4 节。
 
 本节全部数字是 2026-10-21 在本机把 [card_factories.py](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/card_factories.py) 的 `carded_run()`（11 节点全跑）完整执行一遍得到的。
 
@@ -208,21 +238,22 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
 
 **阶段 0：判据先于人**
 
-24 个判据的默认集是 `version="v0-unconfirmed"`、`confirmed=False`（[thresholds.py:13](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/schemas/src/bioadapt_schemas/thresholds.py#L13)）。确认它的是 `POST /v1/projects/{project_id}/thresholds/confirm`（[routes_data.py:94](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L94)）：仅 PI、需二次因子、请求体必须**重述全部 24 个字段**，`confirmed` 由平台置位（注册时自带 `confirmed` 直接被拒，[routes_data.py:71](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L71)）。未确认时计算、起草、排队照跑，只有**签字与导出**两个出口 403（§1.5）。工作台**没有这一页**，只能调 API。种子项目用的是 `ATTESTED_CUTS`（已确认），所以演示能一路签到底——你自己建的项目不行。
+24 个判据的默认集是 `version="v0-unconfirmed"`、`confirmed=False`（[thresholds.py:13](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/schemas/src/bioadapt_schemas/thresholds.py#L13)）。
+确认它可以通过**工作台项目页（`/projects/{id}`）的阶段 0 基线确认面板**一键完成，或调用 `POST /v1/projects/{project_id}/thresholds/confirm`（[routes_data.py:94](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L94)）：仅 PI、需二次因子（MFA）、请求体必须**重述全部 24 个字段**，`confirmed` 由平台置位（注册时自带 `confirmed` 直接被拒，[routes_data.py:71](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L71)）。未确认时计算、起草、排队照跑，只有**签字与导出**两个出口 403（§1.5）。种子项目用的是 `ATTESTED_CUTS`（已确认），自建项目在工作台或 API 点击确认后即可放开签字与导出出口。
 
 **顺序、屏幕与端点**
 
 | # | 动作 | 屏 | 端点 | 关键点 |
 | --- | --- | --- | --- | --- |
 | 1 | 建项目 | `/` | `POST /v1/projects` | `privacy_tier` 故意无默认值；`created_by` 取自 token，不许手填 |
-| 2 | 登记数据 | `/data` | `POST …/assets` → 预签 PUT → `POST …/assets/{id}/complete`（[:139](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L139)、[:164](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L164)） | 浏览器算 SHA-256 并预填 `asset_id`/`content_fingerprint`；PUT 不带 bearer；**行只在 complete 成功后存在** |
+| 2 | 登记数据 | `/data` | `POST …/assets` → 预签 PUT → `POST …/assets/{id}/complete`（[:139](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L139)、[:164](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L164)） | 浏览器算 SHA-256 并预填 `asset_id`/`content_fingerprint`；支持拖拽批量上传；**行只在 complete 成功后存在** |
 | 3 | 记录计划 | `/plans` | `POST …/plans` | 这一屏收**整份计划 JSON**，服务端校验器是唯一把关（不做静默规范化）；返回 `plan_sha256` |
-| 4 | 起 run | `/projects/{id}` 的 Launch a run | `POST …/runs`（`Idempotency-Key` 头必填，缺即 invalid，[routes_runs.py:79](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_runs.py#L79)） | 202 + `run_id = sha256(project\|key\|digest)[:12]`；同键不同体 409 |
-| 5 | 批准与推进 | `/approvals` | `POST …/runs/{id}/approvals` → `…/approvals/{aid}/decision` → `POST …/runs/{id}/transitions` | transitions 是**唯一**状态机入口；请求门的人不能自己批；服务账号永远不能批 |
-| 6 | 计算 | — | 进程内 driver | 见下表；**HTTP 侧没有执行器**（6.4 断点 1） |
+| 4 | 起 run | `/projects/{id}` 的 Launch a run | `POST …/runs`（`Idempotency-Key` 头必填，缺即 invalid，[routes_runs.py:79](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_runs.py#L79)） | 202 + `run_id = sha256(project\|key\|digest)[:12]`；自动回退到参考工具快照；同键不同体 409 |
+| 5 | 批准与推进 | `/approvals` | `POST …/runs/{id}/approvals` → `…/approvals/{aid}/decision` → `POST …/runs/{id}/transitions` | transitions 是**唯一**状态机入口；请求门的人不能自批；服务账号永远不能批；支持界面发放 Ad-hoc 工具授权 |
+| 6 | 计算与起草 | `/projects/{id}/runs/{id}` | `POST …/runs/{id}/execute` | **进程内执行接缝**：一键跑完 11 节点 DAG 计算链、自动发现 C1-C3 候选集并起草证据卡入库 |
 | 7 | 候选集与卡 | `/queue` | `POST …/runs/{id}/cards/draft` | 一簇一个 `CandidateSet`，成员指纹由 `derive_candidate` 复现 |
 | 8 | 排队 | `/queue` | `GET …/runs/{id}/cards/queue` | 分数 `impact(0-3) × uncertainty(0-3) + client ask(0/2)`（[queue/page.tsx:141](file:///Users/yifanwang/workspace/BioAdapt-Core/apps/web/app/projects/%5BprojectId%5D/queue/page.tsx#L141)），上限受 §13.4 的每周复核预算约束 |
-| 9 | 复核与签字 | `/candidates/{id}` | `POST …/cards/{card_id}/reviews` → `…/sign_off` | 起草或复核过这张卡的人**不能再签它**（§13.1）；标签、ontology 术语、最终状态只能由人写入 |
+| 9 | 复核与签字 | `/candidates/{id}` | `POST …/cards/{card_id}/reviews` → `…/sign_off` | 起草或复核过这张卡的人**不能再签它**（§13.1）；显示多组学跨模态冲突、生信审查备忘录；支持知识库 RAG 建议一键采纳；标签与 ontology 由人写入 |
 | 10 | 导出 | `/exports` | `POST …/exports` → `GET …/exports/{id}` | 本仓无导出 worker，队列里的行永远 `QUEUED` |
 
 **计算链：11 个节点与实测输出**（实现在 [steps.py:151](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/steps.py#L151) 起，工具版本一律 `1.0.0`）
@@ -270,14 +301,14 @@ PY
 
 ### 6.4 换成你自己的数据：四个断点（按硬度排）
 
-想把手上的一管数据跑成结论，下面四条都会挡路。前两条 README 别处没写清，值得先读：
+想把手上的一管数据跑成结论，下面四条是需要了解的接缝状态。前两条在最新版本中已提供内建接缝：
 
-1. **HTTP 起的 run 没有人执行。** `InMemoryQueue` 的注释原话："Nothing here starts a run: the reference build has no worker, so an admitted run stays where its engine left it"（[deps.py:72](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/deps.py#L72)）。11 节点那条链只在进程内跑（种子的 driver、pytest），API 只负责受理、记账、状态机。
-2. **`tool_registry_snapshot` 没地方查，工具也没有注册入口。** `POST …/runs` 要求这个字段（[routes_runs.py:40](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_runs.py#L40)），但 `/openapi.json` 里唯一和工具相关的路由只有 ad-hoc 授予三条（[routes_tools.py:90](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_tools.py#L90)）；`Action.TOOL_REGISTER` 在策略层存在，没有任何 HTTP 消费者。执行侧还会因快照漂移直接 `POLICY_BLOCKED`。
+1. **HTTP 起的 run 现已有进程内执行接缝（In-process Run Execution Seam）。** 原先 `InMemoryQueue` 仅受理 run 而不调度计算。当前版本在 API 侧提供了 `POST /v1/projects/{p}/runs/{r}/execute`（支持 `auto_approve_gates=true` 自动放行审批门），并在工作台 `/projects/{id}/runs/{runId}` 提供了「启动执行（Execute In-Process）」按钮。触发后将在本进程内完整运行 11 节点 DAG 计算链、自动发现 C1-C3 候选亚群并起草证据卡入库，打通了新建项目的单机完整分析闭环（生产环境仍需 Slurm / K8s / Cromwell 分布式计算执行器）。
+2. **`tool_registry_snapshot` 已支持参考快照自动兜底，审批页补齐授予界面。** 原先启动 run 必须手填未暴露的快照哈希。当前版本中 `RunRequest` 已将 `tool_registry_snapshot` 默认设置为参考快照哈希 `REFERENCE_REGISTRY_SNAPSHOT`（`6ab935c8c9aa698b582cfc2fd8e1570b995890d9dcd2e81d13709b47030e4730`），调用方缺省即自动回退；工作台项目主页 `DeploymentStatus` 组件直接展示部署快照状态；审批收件箱 `/projects/{id}/approvals` 亦补齐了针对已决策 `adhoc_tool` 审批门发放 Ad-hoc 授权的操作界面。
 3. **对象平面到不了。** 预签 URL 的 host 写死 `https://object.internal/{key}?…`（[objectstore.py:108](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/storage/src/bioadapt_storage/objectstore.py#L108)），浏览器 PUT 不进去，于是 `complete` 永远 409 `nothing has been uploaded`。要接 MinIO/S3。
 4. **格式对不上——转换器已经补到落盘，注册那一步还在人身上。** 计算侧只认 `format == "json"`（平台自己的 product codec），h5ad 行会被拒（[runner.py:69](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L69)、[:744](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L744)）。入口现在是 [scripts/convert_h5ad.py:73](file:///Users/yifanwang/workspace/BioAdapt-Core/scripts/convert_h5ad.py#L73)：`read_h5ad()` → `ExpressionProduct` → [admit()/write_admission()](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/admission.py#L126)，吐 `as_xxxx.json`（canonical JSON 的 `expression_v1` 资产）加 `as_xxxx.manifest.json`，后者 `asset` 那个对象就是 `POST /v1/projects/{p}/assets` 的请求体。剩下两件：`anndata`/`numpy`/`scanpy` 仍不在 `.venv` 里（装它要另批）；CLI 只往目录里写文件，因为参考部署的 index 与对象平面活在同一个进程的内存里，第二个进程插不进正在跑的 8000，而断点 3 的 `object.internal` 还堵着那次 PUT。
 
-这条接缝本身是有测试的，而且不靠科学栈——适配器是 duck-typed 的：[test_h5ad_to_run.py:54](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/test_h5ad_to_run.py#L54) 把一个 AnnData 形状的对象转成资产、按上传路由的顺序登记（先写对象、再记行），跑完 8 个计算节点（qc → pseudobulk_de），`qc_flags`/`expression`/`clusters` 三个资产的 `file_sha256` 与"同一批细胞直接以 product 进门"的那次 run **逐字节相同**。落盘那一半另有 [test_admission.py](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/tests/test_admission.py)（11 条）。没装 anndata 的机器上 CLI 不崩：`--check-backend` 只报在不在，真转换时打印 `needs_input [optional_backend_unavailable] …` 并以 2 退出。obs 列名不一样就用 `--obs-specimen-id`/`--obs-donor-id`/`--obs-group` 指过去；`--transform` 与 `--counts-layer` 是声明而不是标签，读进来的状态会被要 counts 的节点拒掉。断点 1 与 2 不解决的话，这条路仍然只能到"资产入库"，跑不出产物。
+这条接缝本身是有测试的，而且不靠科学栈——适配器是 duck-typed 的：[test_h5ad_to_run.py:54](file:///Users/yifanwang/workspace/BioAdapt-Core/tests/integration/test_h5ad_to_run.py#L54) 把一个 AnnData 形状的对象转成资产、按上传路由的顺序登记（先写对象、再记行），跑完 8 个计算节点（qc → pseudobulk_de），`qc_flags`/`expression`/`clusters` 三个资产的 `file_sha256` 与"同一批细胞直接以 product 进门"的那次 run **逐字节相同**。落盘那一半另有 [test_admission.py](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/tests/test_admission.py)（11 条）。没装 anndata 的机器上 CLI 不崩：`--check-backend` 只报在不在，真转换时打印 `needs_input [optional_backend_unavailable] …` 并以 2 退出。obs 列名不一样就用 `--obs-specimen-id`/`--obs-donor-id`/`--obs-group` 指过去；`--transform` 与 `--counts-layer` 是声明而不是标签，读进来的状态会被要 counts 的节点拒掉。结合断点 1 的 execute 接口，转换并登记的数据即可直接跑完后续分析流程。
 
 换组织时别忘了：`qc_pbmc_reference` 那 6 条判据是**血液**的界，参考实现自己在 spec 里写了"高线粒体组织（心、肌肉、肿瘤活检）需要规则覆盖而不是沿用血液界"。
 
@@ -639,7 +670,8 @@ curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/js
 | `POST …/plans` | `plan_id` `plan_version` `project_id` `objective` `design_matrix` `data_partitions` `qc_policy_id` `loop_budget` `nodes` `stop_conditions` `provenance_policy` |
 | `POST …/assets` | `asset_id` `project_id` `uri` `file_sha256` `content_fingerprint` `format` `schema_version` `size_bytes` `privacy_tier` `usage_scope` `retention_class` `filtering_state` `created_at` |
 | `POST …/assets/{id}/complete` | 同上（`DataAsset`） |
-| `POST …/runs` | `plan_id` `plan_version` `input_asset_ids` `tool_registry_snapshot` + `Idempotency-Key` 头 |
+| `POST …/runs` | `plan_id` `plan_version` `input_asset_ids`（`tool_registry_snapshot` 可选，缺省自动使用参考快照）+ `Idempotency-Key` 头 |
+| `POST …/runs/{id}/execute` | 进程内分析执行接缝；可选 Query `auto_approve_gates=true` |
 | `POST …/runs/{id}/transitions` | `to_state` `reason` |
 | `POST …/runs/{id}/approvals` | `kind`（`plan`/`node`/`adhoc_tool`/`escalation`） |
 | `POST …/approvals/{id}/decision` | `approved` `reason` |
@@ -649,6 +681,13 @@ curl -s -X POST -H "Authorization: Bearer $TOK" -H "Content-Type: application/js
 | `POST …/cards/{id}/reviews` | `scope` `decision` `rationale` |
 | `POST …/cards/{id}/sign_off` | `sign_off` |
 | `POST …/exports` | `kind` + `Idempotency-Key` 头 |
+| `POST …/knowledge/documents` | `file`（multipart/form-data，支持 md/pdf/docx/txt）；离线分块并构建向量索引 |
+| `POST …/knowledge/query` | `query`；可选 `top_k`（默认 5）；基于 TF-IDF 与局部词频向量化进行语义召回 |
+| `POST …/knowledge/suggest` | `markers`（标记基因列表）；可选 `tissue`；为证据卡与复核界面提供亚型建议 |
+| `POST /v1/iam/credentials` | `subject_id` `public_key`（PEM 公钥，可整份 `.pub` 粘贴）`roles` `project_ids`；可选 `amr` `solo_mode` `is_service_account` `label`。`kid` 与指纹由公钥推导，不用填。需 `iam:grant_role`（仅 `platform_admin` + 人类 + 二次因子）；`is_service_account` 只允许配 `service_agent`，§13.1 冲突的角色组合在写入处就被拒 |
+| `POST /v1/iam/credentials/{kid}/revoke` | 只有路径里的 `kid`；同样需 `iam:grant_role`；对已吊销（或不存在）的行返回 409 |
+| `GET /v1/iam/credentials` | 需 `audit:read` 且 token 带全局作用域；Query `subject_id` `active_only` `limit` `offset`；返回视图剥掉 `public_key` |
+| `POST /v1/token/exchange` | `assertion`：三段 compact JWS，header `alg=EdDSA` + `kid`，payload 只有 `sub` `iss` `aud` `iat` `exp` 且 `exp-iat ≤ 120s`。不要 token；返回 `login_token_ttl`（默认 900s）的 access token。前提是这一平台自己会签 token（参考栈的 HS256 IdP）；接入外部 IdP 的部署要把它换成该 IdP 的换票端点，路由会以自己的话拒绝而不是发一个假 token |
 | `POST …/annotations`、`…/annotations/{v}/review` | 见 `routes_annotations.py` |
 | `POST …/egress/requests`、`…/egress/approvals` | 见 `routes_compliance.py` |
 
@@ -717,8 +756,8 @@ app = create_app(ApiState(
 | `GET …/assets/{id}/download` 返回 `https://object.internal/…?sig=…` | 签名 URL 的 host 是占位。生产要接 MinIO/S3 并换签名器 |
 | 对上传 URL 发真实 `PUT` 拿不到 2xx | 没有可路由的对象存储。`POST …/assets/{id}/complete` 在字节缺失时报 409 `nothing has been uploaded to {key}`（§5.9 的完整性检查正在工作，不是坏掉） |
 | 导出永远 `QUEUED` | 没有导出 worker。`poll` 字段给出的就是最终状态 |
-| 在工作台点了 Launch a run，run 一直停在原地 | API 侧没有计算执行器，`InMemoryQueue` 的注释原话是 "Nothing here starts a run"（[deps.py:72](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/deps.py#L72)）。11 节点那条链只在进程内由 driver 跑，见 §6.3 |
-| 新项目填不出 `tool_registry_snapshot` | 没有任何路由能列出注册表，`Action.TOOL_REGISTER` 在策略层存在但没有 HTTP 消费者（§6.4 断点 2） |
+| 在工作台点了 Launch a run，run 默认处于 CREATED | 参考实现未常驻后台轮询 worker，但现已提供**进程内执行接缝**（`POST …/execute` 及工作台「启动执行」按钮），可手动触发单机 11 节点 DAG 计算与卡片生成；生产环境则需对接 Slurm / K8s / Cromwell 计算集群 |
+| 新项目填不出 `tool_registry_snapshot` | 已在 API 层（`RunRequest`）内置 `REFERENCE_REGISTRY_SNAPSHOT` 自动兜底，并在前端项目主页 `DeploymentStatus` 组件展示 |
 | 每次读证据卡都重新取产物、重算 sha256、重解析 | 这是 §5.9 的完整性控制本身（审查报告 P4，**有意不缓存**） |
 | `GET …/runs/{id}/events`（SSE）存在但没人用 | 批次二删掉了前端 `EventSource` 客户端，本仓已无消费者（P7 因此不修） |
 | `GET …/traces/{id}` 常 404 | 只有真实模型调用才会写 trace（`inv_…`）。种子 run 的卡由确定性 driver 产出，不含模型调用 |
@@ -741,6 +780,7 @@ app = create_app(ApiState(
 - **预算是三条独立上限**：算力分钟、模型成本 USD、迭代次数。取计划与项目配额的逐轴较小值；任一轴耗尽即 `BUDGET_EXCEEDED`，模型成本不是算力分钟的注脚（§9.7）。
 - **ad-hoc 工具**只允许在非特权容器、只读输入、无网络、资源与时长配额下运行，且需要一次性 PI 审批。闭环已落地（批次六）：`tool:grant_adhoc` 只有 PI 角色持有、要求二次因子、要求发放人 ≠ 提交人，且必须由答那扇 `adhoc_tool` 门的人发出；笼子检查在发放时重算，`tool_grant` 行是一次性台账，引擎执行前用 CAS 抢它（见 7.5）。注册表只能从库水合，已花/过期的行带不回来；执行前台账行**必须存在**，进程内自造的权限买不到一次计算（批次七把它从文档约束变成引擎强制）。
 - **不允许大模型自由生成任意 Shell 并直接在生产计算节点执行。**
+- **登录不靠打印出来的 token。** 长期秘密只有私钥，它留在使用者机器上；每次登录签的断言最多 120 秒有效，换到的 access token 由部署的 `login_token_ttl` 决定（默认 15 分钟）。角色与项目范围只从身份目录 `iam_credential` 那一行读出，吊销即对下一次登录生效（§11.2，6.1.1）。目录行本身不是机密表：`lint` 唯一放行的列名是整名匹配的 `public_key`，`private_key`、`access_token` 这类仍然一律违规（匹配的是 `_` 分段，所以 `input_tokens` 这种计数列本来就不在射程内）。
 - **密钥不写入 Prompt、代码仓库、运行参数或日志。** `.workbench/` 与其中的 token 永不提交。
 - **注入防御**在 `tests/redteam/` 有对应门禁用例集；改 egress、prompt 组装、工具绑定后必须重跑。
 
@@ -748,15 +788,15 @@ app = create_app(ApiState(
 
 ## 12. 已知未完成项
 
-- **ad-hoc 这条线只剩一个缺口**（H1 由批次六闭合，批次七又关掉「授予与快照的先后矛盾」与「带外通道」两条）：
-  1. **工作台没有 ad-hoc 授予页**：`POST …/adhoc-grants` 只有 API 入口，PI 在界面上看不到「哪扇门已答、还没有发放」，也发不出这一枪。与下面批次五遗留 2 的阈值确认页同类。
-
-  批次七关掉的两条各自这样落地（见 7.5）：快照只覆盖已注册工具集，发放必然晚于 manifest，先后矛盾因此不复存在，测试里的 `pin_registry_snapshot()` 裸 SQL 重钉已删除；执行前台账行必须存在，进程内自造的权限买不到一次计算。`ToolRegistry.grant()` 仍然公开给单测与红队用例测准入逻辑，但它再也走不到一次真实的计算。
-- 生产件缺件：对象存储实现、计算执行器、导出 worker、真实 IdP、Postgres + RLS 部署、增量迁移。
-- 批次五修掉了本轮写文档时发现的两处（审批门响应与存储不一致、`Thresholds.confirmed` 无人消费），但留下三条相关的未完成项：
-  1. **计算侧仍读代码常量**：判数、起草、队列与两个结论出口都读项目行的阈值，而节点参数里的 `thresholds` 由驱动直接取 `DEFAULT_THRESHOLDS`。要让"算的时候"也用项目那一套，需要把项目阈值穿过 `POST …/runs` → 编排器 → 工作流节点参数，涉及所有已注册 plan 的模板，单独排期。
-  2. **工作台没有阈值确认页**：`POST …/thresholds/confirm` 只有 API 入口，未确认项目在工作台上签字只会看到 403 文案。
-  3. **门禁只管入口不管追溯**：把项目阈值改回未确认不会让已签的结论或已完成的导出失效，需要人撤签（撤签不受门禁限制，正是为此保留）。
+- **已完成闭合项**：
+  1. **Phase 1 阶段 0 阈值确认界面**（已闭合）：工作台项目总览页已提供 24 项判据确认面板，支持 PI 一键采用基线或重述确认，解除未确认时的结论出口 403 阻断。
+  2. **Ad-hoc 工具授权界面**（已闭合）：工作台 `/projects/{id}/approvals` 已针对已批准的 `adhoc_tool` 审批门提供授权配置与一键发放界面（`POST …/adhoc-grants`）。
+  3. **Phase 2 进程内 Run 执行器 Seam**（已闭合）：工作台 `/projects/{id}/runs/{runId}` 提供了「启动执行」按钮，API 提供了 `POST …/runs/{id}/execute` 端点，单机参考部署可直接跑通 11 节点 DAG、候选集发现与证据卡起草。
+  4. **私有知识库与离线 RAG 辅助**（已闭合）：本地支持 docx/pdf/markdown 拖拽上传、无外部依赖向量化与单细胞特征检索建议，并可在证据卡上由专家一键采纳。
+- **现存未完成项**：
+  1. **生产件缺件**：分布式对象存储（MinIO/S3 适配器）、分布式作业执行器（Slurm / K8s / Cromwell）、异步导出 Worker、生产级 IdP（OIDC/OAuth2）、Postgres + RLS 迁移。
+  2. **计算侧仍读代码常量**：判数、起草、队列与两个结论出口都已读项目行的阈值，而工作流节点参数里的 `thresholds` 目前仍由驱动取 `DEFAULT_THRESHOLDS`。要让"算的时候"也用项目那一套，需要把项目阈值穿透到节点参数中。
+  3. **门禁追溯策略**：把项目阈值改回未确认不会让已签的结论或已完成的导出历史自动失效，仍需人工撤签（撤签不受门禁限制，正是为此保留）。
 - 详见 [审查报告-2026-10-20.md](file:///Users/yifanwang/workspace/BioAdapt-Core/%E5%AE%A1%E6%9F%A5%E6%8A%A5%E5%91%8A-2026-10-20.md) 各批次末尾的「遗留说明」。
 
 ---
@@ -788,4 +828,7 @@ conftest 冲突。在根目录跑全量，或逐包跑（见 §5.2）。
 `.next` 里的编译产物与源码不同步（改过 `app/`、切过分支之后常见）。`rm -rf apps/web/.next` 再 `npm run dev -- -p 3100`。
 
 **Q：8000 上的 API 少了几条端点？**
-它是批次五/六之前起来的旧进程（§10 最后一行）。重启 `serve_workbench.py` 才会有 `thresholds/confirm` 与 ad-hoc 授予三条路由；重启会退回种子状态，丢掉内存里演示产生的行。
+它是批次五/六之前起来的旧进程（§10 最后一行）。重启 `serve_workbench.py` 才会有 `thresholds/confirm` 与 ad-hoc 授予三条路由；重启会退回种子状态，丢掉内存里演示产生的行。同理，`/v1/iam/credentials`、`/v1/token/exchange` 与 `GET /v1/projects` 要重启后才在。
+
+**Q：部署时打印出来的 token 哪天要换，怎么办？**
+现在没有需要换的打印 token 了。登录用密钥文件（6.1.1）：私钥留在使用者机器上，每次登录签一个 120 秒内的断言，换 15 分钟的 access token。要停掉一个人，就在 `/keys` 吊销他那行——下一次换票即被拒，不必等某个 token 到期；要给他新机器，就让他 `keygen` 一份新的公钥登记进去，再把旧行吊销。参考部署仍保留 `GET /v1/development/tokens` 与工作台的一键角色预设，方便演示；部署声明 `mode="configured"` 后这条路由返回空对象。

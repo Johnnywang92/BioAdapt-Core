@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import Field
 
-from bioadapt_policies.access import MAX_PRESIGNED_TTL_SECONDS, Action, presigned_url_ttl
+from bioadapt_policies.access import GLOBAL_SCOPE, MAX_PRESIGNED_TTL_SECONDS, Action, presigned_url_ttl
 from bioadapt_schemas.entities import Contract, DataAsset, Project
 from bioadapt_schemas.enums import RetentionClass
 from bioadapt_schemas.plan import AnalysisPlan
@@ -75,6 +75,35 @@ def create_project(body: Project, request: Request, state: StateDep, claims: Cla
     session.catalog.create_project(body)
     session.audit("project:create", body.project_id, details={"privacy_tier": str(body.privacy_tier)})
     return {"project_id": body.project_id, "privacy_tier": str(body.privacy_tier)}
+
+
+@router.get("/projects")
+def list_projects(request: Request, state: StateDep, claims: ClaimsDep, page: Page = Depends(page_params)) -> dict:
+    """Section 5.8: the projects this token can read, so a person never has to type an id to find one.
+
+    There is no project in the path, so there is no path scope either: the candidates are the projects
+    the token itself carries - every row only for a global scope - and each one still passes the same
+    default-deny check the single-project read applies, with its audit row landing in that project.
+    """
+    actor = claims.actor()
+    trace_id = request_trace_id(request)
+    scope = actor.scope()
+    if GLOBAL_SCOPE in scope:
+        candidates = state.catalogs.acquire(GLOBAL_SCOPE).project_ids()
+    else:
+        candidates = sorted(scope)
+    items = []
+    for project_id in candidates[page.offset : page.offset + page.limit]:
+        session = open_session(state, claims, project_id, trace_id)
+        session.enforce(Action.PROJECT_READ, project_id, "project")
+        try:
+            project = session.catalog.get_project()
+        except LookupError:
+            #: A token can outlive the project it was scoped to. Nothing is readable there, so the row is
+            #: absent from the list rather than an error that would stop the other projects printing.
+            continue
+        items.append(project.model_dump(mode="json"))
+    return page.envelope(items)
 
 
 @router.get("/projects/{project_id}")
@@ -138,6 +167,40 @@ def record_plan(body: AnalysisPlan, session: SessionDep) -> dict:
     return {"plan_id": body.plan_id, "plan_version": body.plan_version, "plan_sha256": digest}
 
 
+@router.get("/projects/{project_id}/plans")
+def list_plans(session: SessionDep, page: Page = Depends(page_params)) -> dict:
+    """The plan versions this project has recorded, oldest first (§9.7).
+
+    Only the fields a person chooses on are projected here: the contract itself is what a run pins, and a
+    listing that quietly trimmed it would read like an editable summary of it.
+    """
+    session.enforce(Action.RUN_READ, f"{session.project_id}:plan_list", "plan_collection")
+    rows = session.catalog.list_plans(limit=page.limit, offset=page.offset)
+    return page.envelope(
+        [
+            {
+                "plan_id": row["plan_id"],
+                "plan_version": row["plan_version"],
+                "objective": row["objective"],
+                "plan_sha256": row["plan_sha256"],
+                "created_by": row["created_by"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "nodes": [
+                    {
+                        "node_id": node["node_id"],
+                        "tool_name": node["tool_name"],
+                        "tool_version": node["tool_version"],
+                        "tool_class": node["tool_class"],
+                        "requires_approval": node["requires_approval"],
+                    }
+                    for node in row["plan"]["nodes"]
+                ],
+            }
+            for row in rows
+        ]
+    )
+
+
 @router.post("/projects/{project_id}/assets")
 def initiate_upload(
     body: DataAsset,
@@ -192,31 +255,34 @@ class DirectAssetUploadRequest(Contract):
 
 @router.post("/projects/{project_id}/assets/direct-upload", status_code=201)
 def direct_upload_asset(body: DirectAssetUploadRequest, session: SessionDep) -> dict:
-    """Direct upload of asset bytes into local/in-memory object store, bypassing unreachable presigned URLs."""
+    """Direct upload of asset bytes into local/in-memory object store, bypassing unreachable presigned URLs.
+
+    Same integrity bar as the signed channel: the bytes are checked against what the declaration
+    promised before anything is written, so this route cannot record a digest nobody produced.
+    """
     asset = body.asset
     _declared_in_path(session, asset)
     session.enforce(
         Action.ASSET_WRITE, asset.asset_id, "asset", privacy_tier=asset.privacy_tier, usage_scope=asset.usage_scope
     )
-    if body.content_b64:
+    if body.content_b64 is not None:
         content_bytes = base64.b64decode(body.content_b64)
-    elif body.content_text:
+    elif body.content_text is not None:
         content_bytes = body.content_text.encode("utf-8")
     else:
         raise invalid("content", "Either content_b64 or content_text must be provided")
 
     file_sha256 = hashlib.sha256(content_bytes).hexdigest()
+    if file_sha256 != asset.file_sha256:
+        raise conflict("the uploaded bytes do not match the declared file_sha256")
+    if len(content_bytes) != asset.size_bytes:
+        raise conflict(f"declared size {asset.size_bytes} but the body carried {len(content_bytes)} bytes")
+    quotas = session.state.quotas.for_project(session.project_id)
+    check_storage(quotas, used_bytes=session.catalog.storage_bytes(), incoming_bytes=len(content_bytes))
+
     key = object_key_for(session.project_id, asset)
     session.state.objects.put(key, content_bytes)
-    recorded = session.catalog.record_asset(
-        asset.model_copy(
-            update={
-                "uri": f"s3://{key}",
-                "size_bytes": len(content_bytes),
-                "file_sha256": file_sha256,
-            }
-        )
-    )
+    recorded = session.catalog.record_asset(asset.model_copy(update={"uri": f"s3://{key}"}))
     session.audit("asset:record", recorded, details={"key": key, "direct_upload": True, "file_sha256": file_sha256})
     return {"asset_id": recorded, "key": key, "uri": f"s3://{key}", "content_fingerprint": asset.content_fingerprint}
 

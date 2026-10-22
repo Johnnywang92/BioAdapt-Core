@@ -258,3 +258,64 @@ class TestAuditAndLimits:
         decision = authorize(actor(), Action.PROJECT_READ, Resource(resource_id="prj_x", resource_type="project", project_id="prj_x"))
         assert not decision.allowed
         assert "outside the actor project scope" in decision.denials[0]
+
+
+class TestSoloMode:
+    GATE = {"resource_id": "apr_01", "resource_type": "approval"}
+    GRANT = {"resource_id": "grant_0001", "resource_type": "tool_grant"}
+
+    def test_solo_mode_allows_self_approval_and_self_sign_off(self):
+        solo = actor(
+            subject_id="user_solo",
+            roles=[Role.PRINCIPAL_INVESTIGATOR, Role.ANALYST, Role.DOMAIN_EXPERT],
+            solo_mode=True,
+            mfa_verified=True,
+        )
+        assert solo.solo_mode
+
+        # 1. 自批门允许
+        gate_dec = authorize(
+            solo, Action.APPROVAL_DECIDE, resource(**self.GATE), requesting_subject_id=solo.subject_id
+        )
+        assert gate_dec.allowed
+
+        # 2. 自发 adhoc grant 允许
+        grant_dec = authorize(
+            solo, Action.TOOL_GRANT_ADHOC, resource(**self.GRANT), requesting_subject_id=solo.subject_id
+        )
+        assert grant_dec.allowed
+
+        # 3. 自签作者卡允许
+        card = resource(
+            resource_id="card_01",
+            resource_type="evidence_card",
+            attributes={"authored_by": solo.subject_id},
+        )
+        sign_dec = authorize(solo, Action.CARD_SIGN_OFF, card)
+        assert sign_dec.allowed
+
+    def test_non_solo_mode_still_strictly_denies_self_operations(self):
+        strict_user = actor(
+            subject_id="user_strict",
+            roles=[Role.PRINCIPAL_INVESTIGATOR, Role.DOMAIN_EXPERT],
+            solo_mode=False,
+            mfa_verified=True,
+        )
+        assert not strict_user.solo_mode
+
+        # 自批门被拒
+        gate_dec = authorize(
+            strict_user, Action.APPROVAL_DECIDE, resource(**self.GATE), requesting_subject_id=strict_user.subject_id
+        )
+        assert not gate_dec.allowed
+        assert any("may not open it" in d for d in gate_dec.denials)
+
+        # 自签作者卡被拒
+        card = resource(
+            resource_id="card_01",
+            resource_type="evidence_card",
+            attributes={"authored_by": strict_user.subject_id},
+        )
+        sign_dec = authorize(strict_user, Action.CARD_SIGN_OFF, card)
+        assert not sign_dec.allowed
+        assert any("may not sign off" in d for d in sign_dec.denials)

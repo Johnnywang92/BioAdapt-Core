@@ -1,14 +1,32 @@
-"""Projects, plans and client-side direct upload (sections 5.8, 5.9, 9.3, 9.7)."""
+"""Projects, plans, tool catalog and client-side direct upload (sections 5.8, 5.9, 9.3, 9.4, 9.7)."""
 
+import base64
 import hashlib
 
 import pytest
-from bioadapt_policies.access import MAX_PRESIGNED_TTL_SECONDS, Role
-from bioadapt_schemas.enums import PrivacyTier, UsageScope
+from bioadapt_policies.access import GLOBAL_SCOPE, MAX_PRESIGNED_TTL_SECONDS, Role
+from bioadapt_schemas.enums import PrivacyTier, ToolClass, UsageScope
 from bioadapt_schemas.errors import ErrorClass
 from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS
 from bioadapt_storage.objectstore import BUCKET, object_key
-from conftest import ANALYST, ATTESTED_CUTS, OTHER_PROJECT_ID, PI, PROJECT_ID, SERVICE, asset, other_asset, plan, project
+from conftest import (
+    ANALYST,
+    ATTESTED_CUTS,
+    EXPERT,
+    HGR_PROJECT_ID,
+    LOCAL_PROJECT_ID,
+    OTHER_PROJECT_ID,
+    PI,
+    PROJECT_ID,
+    PUBLIC_PROJECT_ID,
+    SERVICE,
+    asset,
+    other_asset,
+    plan,
+    project,
+)
+
+PROJECT_PATH = f"/v1/projects/{PROJECT_ID}"
 
 
 @pytest.fixture(autouse=True)
@@ -290,13 +308,156 @@ def test_asset_write_needs_a_role_that_holds_it(client, auth):
 
 
 def test_direct_upload_asset_endpoint(client, auth):
-    decl = _declaration(asset_id="as_direct_01")
+    payload = b'{"cells": ["cell1"], "genes": ["CD4"]}'
+    decl = _declaration(asset_id="as_direct_01", payload=payload)
     response = client.post(
         f"/v1/projects/{PROJECT_ID}/assets/direct-upload",
-        json={"asset": decl, "content_text": '{"cells": ["cell1"], "genes": ["CD4"]}'},
+        json={"asset": decl, "content_text": payload.decode("utf-8")},
         headers=auth(ANALYST, [Role.ANALYST]),
     )
     assert response.status_code == 201
     assert response.json()["asset_id"] == "as_direct_01"
     assert response.json()["uri"].startswith("s3://")
+    read = client.get(
+        f"/v1/projects/{PROJECT_ID}/assets/as_direct_01", headers=auth(ANALYST, [Role.ANALYST])
+    )
+    assert read.json()["file_sha256"] == hashlib.sha256(payload).hexdigest()
+    assert read.json()["size_bytes"] == len(payload)
 
+
+def test_direct_upload_carries_binary_bytes_byte_for_byte(client, auth, state):
+    """A gzip counts file is the case the text channel destroyed: bytes that are not valid UTF-8."""
+    payload = bytes(range(256))
+    decl = _declaration(asset_id="as_direct_b64", payload=payload)
+    response = client.post(
+        f"/v1/projects/{PROJECT_ID}/assets/direct-upload",
+        json={"asset": decl, "content_b64": base64.b64encode(payload).decode("ascii")},
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    assert response.status_code == 201
+    assert state.objects.get(response.json()["key"]) == payload
+    head = client.get(
+        f"/v1/projects/{PROJECT_ID}/assets/as_direct_b64/download", headers=auth(ANALYST, [Role.ANALYST])
+    )
+    assert head.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"file_sha256": "00" * 32}, {"size_bytes": 999}],
+    ids=["wrong digest", "wrong size"],
+)
+def test_direct_upload_refuses_bytes_that_are_not_the_declared_ones(client, auth, override):
+    payload = b"counts-matrix-bytes"
+    decl = _declaration(asset_id="as_direct_refused", payload=payload, **override)
+    response = client.post(
+        f"/v1/projects/{PROJECT_ID}/assets/direct-upload",
+        json={"asset": decl, "content_b64": base64.b64encode(payload).decode("ascii")},
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    assert response.status_code == 409
+    assert client.get(
+        f"/v1/projects/{PROJECT_ID}/assets/as_direct_refused", headers=auth(ANALYST, [Role.ANALYST])
+    ).status_code == 404
+
+
+def test_direct_upload_is_refused_over_the_storage_quota_before_anything_is_written(client, auth, state):
+    payload = b"x" * 9_500
+    decl = _declaration(asset_id="as_direct_quota", payload=payload)
+    response = client.post(
+        f"/v1/projects/{PROJECT_ID}/assets/direct-upload",
+        json={"asset": decl, "content_b64": base64.b64encode(payload).decode("ascii")},
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    assert response.status_code == 429
+    assert response.json()["code"] == "project_quota_exceeded"
+    assert client.get(
+        f"/v1/projects/{PROJECT_ID}/assets/as_direct_quota", headers=auth(ANALYST, [Role.ANALYST])
+    ).status_code == 404
+
+
+def test_the_project_list_carries_only_the_projects_this_token_reads(client, auth):
+    listed = client.get("/v1/projects", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]))
+    assert listed.status_code == 200
+    assert [row["project_id"] for row in listed.json()["items"]] == [PROJECT_ID]
+
+
+def test_a_global_scope_reads_every_registered_project(client, auth):
+    registered = sorted(
+        [PROJECT_ID, OTHER_PROJECT_ID, LOCAL_PROJECT_ID, HGR_PROJECT_ID, PUBLIC_PROJECT_ID]
+    )
+    listed = client.get(
+        "/v1/projects",
+        headers=auth("user_platform_admin_01", [Role.PLATFORM_ADMIN], project_ids=[GLOBAL_SCOPE]),
+    )
+    assert listed.status_code == 200
+    assert [row["project_id"] for row in listed.json()["items"]] == registered
+
+
+def test_a_scope_that_names_no_registered_project_lists_nothing(client, auth):
+    listed = client.get(
+        "/v1/projects", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR], project_ids=["prj_retired"])
+    )
+    assert listed.status_code == 200
+    assert listed.json()["items"] == []
+
+
+def test_the_project_list_is_not_a_route_to_another_project(client, auth):
+    """An expert scoped to one study may not read the tier or cut set of the others."""
+    listed = client.get(
+        "/v1/projects", headers=auth(EXPERT, [Role.DOMAIN_EXPERT], project_ids=[OTHER_PROJECT_ID])
+    )
+    assert [row["project_id"] for row in listed.json()["items"]] == [OTHER_PROJECT_ID]
+
+
+def test_a_service_account_may_not_list_projects(client, auth):
+    response = client.get(
+        "/v1/projects", headers=auth(SERVICE, [Role.SERVICE_AGENT], service=True)
+    )
+    assert response.status_code == 403
+    assert response.json()["code"] == "authorization_denied"
+
+
+def test_recorded_plans_are_listable_with_their_digests_and_nodes(client, auth):
+    recorded = client.post(
+        f"/v1/projects/{PROJECT_ID}/plans",
+        json=plan(plan_id="plan_wizard", plan_version="2").model_dump(mode="json"),
+        headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]),
+    )
+    assert recorded.status_code == 201
+
+    listed = client.get(f"/v1/projects/{PROJECT_ID}/plans", headers=auth(ANALYST, [Role.ANALYST]))
+    assert listed.status_code == 200
+    rows = {row["plan_id"]: row for row in listed.json()["items"]}
+    assert {"plan_001", "plan_wizard"} <= set(rows)
+    wizard = rows["plan_wizard"]
+    assert wizard["plan_sha256"] == recorded.json()["plan_sha256"]
+    assert wizard["created_by"] == PI
+    assert [node["tool_name"] for node in wizard["nodes"]] == ["scanpy_pipeline"]
+
+
+def test_the_tool_catalog_reports_the_registry_the_engine_hydrates(client, auth):
+    """§4.1, §9.4: the tools a plan may name and the snapshot a run pins come from one construction."""
+    listed = client.get(f"{PROJECT_PATH}/tools", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]))
+    assert listed.status_code == 200
+    body = listed.json()
+    assert len(body["snapshot_id"]) == 64
+    names = {tool["tool_name"] for tool in body["tools"]}
+    assert {"scrnaseq_cluster", "scrnaseq_markers"} <= names
+    for tool in body["tools"]:
+        assert tool["tool_version"]
+        assert tool["min_resources"]["memory_gb"] * 1024 >= (tool["measured_peak_memory_mb"] or 0)
+        assert tool["privacy_policy"] == "local_only"
+        if tool["runnable"]:
+            assert tool["input_slots"] and tool["output_slots"]
+        else:
+            assert tool["tool_class"] != str(ToolClass.REGISTERED)
+    assert "candidate_sets" in body["conclusion_outputs"]
+
+
+def test_the_tool_catalog_refuses_a_subject_without_project_read(client, auth):
+    response = client.get(
+        f"{PROJECT_PATH}/tools",
+        headers=auth(SERVICE, [Role.SERVICE_AGENT], service=True),
+    )
+    assert response.status_code == 403

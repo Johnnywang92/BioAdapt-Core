@@ -376,6 +376,7 @@ def bearer(verifier: Hs256Verifier, subject_id: str, roles: list[Role], **kwargs
         roles=roles,
         project_ids=list(kwargs.pop("project_ids", [PROJECT_ID])),
         is_service_account=kwargs.pop("service", False),
+        solo_mode=kwargs.pop("solo_mode", False),
         amr=list(kwargs.pop("amr", [])),
         exp=int((NOW + timedelta(seconds=kwargs.pop("ttl", 300))).timestamp()),
     )

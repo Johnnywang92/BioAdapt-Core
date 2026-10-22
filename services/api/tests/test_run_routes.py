@@ -148,17 +148,71 @@ def test_a_service_account_may_not_launch_a_run(client, auth):
     assert "run:launch" in response.json()["message"]
 
 
-def test_execute_run_pipeline_endpoint(client, auth):
-    # Launch a run
-    resp = _launch(client, auth, "idem-exec-test")
-    assert resp.status_code == 202
-    run_id = resp.json()["run_id"]
+def test_a_run_is_not_executed_against_a_snapshot_it_did_not_pin(client, auth):
+    """§4.1: the manifest records what a person approved; execution may not re-point it to suit itself."""
+    launched = _launch(client, auth, "idem-exec-drift")
+    run_id = launched.json()["run_id"]
 
-    # Execute endpoint
-    exec_resp = client.post(
-        f"{BASE}/runs/{run_id}/execute",
+    refused = client.post(f"{BASE}/runs/{run_id}/execute", headers=auth(ANALYST, [Role.ANALYST]))
+    assert refused.status_code == 409
+    assert "snap_0001" in refused.json()["message"]
+    still_pinned = client.get(f"{BASE}/runs/{run_id}", headers=auth(ANALYST, [Role.ANALYST]))
+    assert still_pinned.json()["tool_registry_snapshot"] == "snap_0001"
+
+
+def test_the_tool_catalog_names_the_snapshot_execution_checks_against(client, auth):
+    """The catalog a wizard builds nodes from and the engine that executes have one source (§9.4)."""
+    listed = client.get(f"{BASE}/tools", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]))
+    assert listed.status_code == 200
+    body = listed.json()
+    snapshot = body["snapshot_id"]
+    assert len(snapshot) == 64
+    assert {"candidate_sets", "evidence_cards"} <= set(body["conclusion_outputs"])
+    #: The resource floor is the measured peak: a node built from this row cannot under-budget itself.
+    for tool in body["tools"]:
+        assert tool["min_resources"]["memory_gb"] * 1024 >= (tool["measured_peak_memory_mb"] or 0)
+
+    launched = _launch(client, auth, "idem-exec-pinned", tool_registry_snapshot=snapshot)
+    run_id = launched.json()["run_id"]
+    refused = client.post(f"{BASE}/runs/{run_id}/execute", headers=auth(ANALYST, [Role.ANALYST]))
+    assert refused.status_code == 409
+    assert "pins registry snapshot" not in refused.json()["message"]
+
+
+def test_a_run_executes_only_once_a_second_subject_has_decided_its_plan_gate(client, auth):
+    """§9.1, §11.6: the execute route reports the gate that waits on a person; it does not become one."""
+    snapshot = client.get(f"{BASE}/tools", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR])).json()["snapshot_id"]
+    run_id = _launch(client, auth, "idem-exec-gated", tool_registry_snapshot=snapshot).json()["run_id"]
+
+    before = client.post(f"{BASE}/runs/{run_id}/execute", headers=auth(ANALYST, [Role.ANALYST]))
+    assert before.status_code == 409
+    assert "plan gate" in before.json()["message"]
+
+    requested = client.post(
+        f"{BASE}/runs/{run_id}/approvals",
+        json={"kind": "plan"},
         headers=auth(ANALYST, [Role.ANALYST]),
     )
-    print("EXEC RESP:", exec_resp.status_code, exec_resp.json())
-    assert exec_resp.status_code in (200, 400, 403)
+    assert requested.status_code == 201
+    approval_id = requested.json()["approval_id"]
+
+    self_decision = client.post(
+        f"{BASE}/approvals/{approval_id}/decision",
+        json={"approved": True, "reason": "the analyst who asked cannot open their own gate"},
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    assert self_decision.status_code == 403
+
+    client.post(
+        f"{BASE}/approvals/{approval_id}/decision",
+        json={"approved": True, "reason": "reviewed the pinned plan"},
+        headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]),
+    )
+
+    executed = client.post(f"{BASE}/runs/{run_id}/execute", headers=auth(ANALYST, [Role.ANALYST]))
+    assert executed.status_code == 200, executed.json()
+    assert executed.json()["completed"] is False
+    #: This plan's tool is not in the registry the reference workflow hydrates, and the refusal says so
+    #: instead of quietly substituting something that would run.
+    assert "does not hold" in executed.json()["reason"]
 

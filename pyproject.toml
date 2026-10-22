@@ -25,6 +25,8 @@ bioadapt-multiomics = { workspace = true }
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
+    #: scripts/serve_workbench.py runs the single-node reference deployment on uvicorn.
+    "uvicorn>=0.30",
     "bioadapt-schemas",
     "bioadapt-tool-registry",
     "bioadapt-policies",

@@ -14,7 +14,7 @@ node_modules/
 out/
 *.tsbuildinfo
 
-# local dev state - contains workbench bearer tokens
+# local dev state - contains workbench bearer tokens and login key files
 .workbench/
 
 # os

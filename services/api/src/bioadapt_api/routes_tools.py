@@ -32,6 +32,7 @@ from bioadapt_tool_registry import ToolSpec
 from .deps import Session, SessionDep
 from .errors import conflict, forbidden, invalid, not_found
 from .paging import Page, page_params
+from .toolset import reference_registry, registry_body
 
 router = APIRouter(tags=["tools"])
 
@@ -85,6 +86,18 @@ def _spec_violations(session: Session, spec: ToolSpec) -> list[str]:
     found.extend(spec.admission_violations())
     found.extend(session.state.adhoc_limits.violations(spec))
     return found
+
+
+@router.get("/projects/{project_id}/tools")
+def tool_catalog(session: SessionDep) -> dict:
+    """The tools this deployment can run for this project, and the snapshot a launch has to pin (§4.1, §9.4).
+
+    A plan node names a tool by name and version and a run is approved against a registry snapshot, so
+    both have to come from the registry the executor hydrates: a screen that offers a tool is offering
+    one the engine holds, or it says nothing. An ad-hoc row appears only while its grant is still live.
+    """
+    session.enforce(Action.PROJECT_READ, f"{session.project_id}:tool_catalog", "tool_collection")
+    return registry_body(reference_registry(session.catalog), now=session.clock())
 
 
 @router.post("/projects/{project_id}/runs/{run_id}/nodes/{node_id}/adhoc-grants", status_code=201)
@@ -162,6 +175,7 @@ def issue_adhoc_grant(run_id: str, node_id: str, body: AdhocGrantRequest, sessio
     window = session.state.adhoc_grant_ttl
     if body.valid_for_minutes is not None:
         window = min(window, timedelta(minutes=body.valid_for_minutes))
+    is_solo = bool(getattr(session.actor, "solo_mode", False))
     grant = AdhocToolGrant(
         grant_id=grant_id,
         project_id=session.project_id,
@@ -179,6 +193,7 @@ def issue_adhoc_grant(run_id: str, node_id: str, body: AdhocGrantRequest, sessio
         reason=body.reason or gate.decision_reason or "approved as submitted",
         approved_at=approved_at,
         expires_at=approved_at + window,
+        solo_mode=is_solo,
     )
     session.catalog.record_tool_grant(grant)
     #: The grant is a second row about the same decision, so it is audited as its own fact: the journal

@@ -7,6 +7,7 @@ import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote, StatusChip } f
 import { findings, knowledge, type Caller } from "@/lib/api";
 import { evidenceMarkers, queryMarkers } from "@/lib/evidencePresentation";
 import { useT } from "@/lib/i18n";
+import { useIdentity } from "@/lib/identity";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
 import type {
@@ -277,6 +278,7 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                   >
                     <div>
                       <strong>🎯 {t("Recommended Action for Expert")}:</strong> {read.data.reviewer_memo.recommended_action}
+                      <p className="muted">{t("This button only fills a review draft. Inspect and submit it separately; it does not save or sign a conclusion.")}</p>
                     </div>
                     <button
                       type="button"
@@ -686,6 +688,7 @@ function ReviewForm({
       if (prefill.rationale) setRationale(prefill.rationale);
       if (prefill.newValue !== undefined) setNewValue(prefill.newValue);
       if (prefill.scope) setScope(prefill.scope);
+      setParseError(null);
     }
   }, [prefill]);
 
@@ -727,7 +730,7 @@ function ReviewForm({
     >
       <div className="grid">
         <Field label={t("scope")}>
-          <select value={scope} onChange={(event) => setScope(event.target.value as ReviewScope)}>
+          <select value={scope} onChange={(event) => { setScope(event.target.value as ReviewScope); setParseError(null); }}>
             {SCOPES.map((one) => (
               <option key={one} value={one}>
                 {`${t(one)} (${one})`}
@@ -755,7 +758,7 @@ function ReviewForm({
             'the card fields to overwrite, e.g. {"candidate_label": "intermediate state", "label_level": "cell_state"} — they become human-sourced',
           )}
         >
-          <textarea rows={4} className="mono" value={newValue} onChange={(event) => setNewValue(event.target.value)} />
+          <textarea rows={4} className="mono" value={newValue} onChange={(event) => { setNewValue(event.target.value); setParseError(null); }} />
         </Field>
       ) : null}
       <Field
@@ -797,6 +800,7 @@ function SignOffForm({
   submit: ReturnType<typeof useSubmit>;
 }) {
   const t = useT();
+  const { identity } = useIdentity();
   const [signOff, setSignOff] = useState<SignOff>("full");
   const [reason, setReason] = useState("");
 
@@ -826,6 +830,12 @@ function SignOffForm({
       >
         <input value={reason} onChange={(event) => setReason(event.target.value)} />
       </Field>
+      {identity?.isSolo ? (
+        <div style={{ padding: "6px 10px", margin: "8px 0", background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "6px", color: "#065f46", fontSize: "0.8rem", display: "flex", alignItems: "center", gap: 6 }}>
+          <span>⚡</span>
+          <span><strong>{t("Solo Mode Active")}:</strong> {t("You can sign off on your own findings without independent expert block.")}</span>
+        </div>
+      ) : null}
       <button type="submit" disabled={submit.busy || (signOff === "not_signed" && !reason.trim())}>
         {submit.busy ? t("recording…") : t("Sign off")}
       </button>

@@ -427,6 +427,34 @@ create policy "egress_approval_project_scope" on "egress_approval" as permissive
 drop trigger if exists "egress_approval_append_only" on "egress_approval";
 create trigger "egress_approval_append_only" before update or delete on "egress_approval"
   for each row execute function bioadapt_forbid_mutation();
+create table if not exists "iam_credential" (
+  "kid" text not null,
+  "project_id" text not null,
+  "subject_id" text not null,
+  "algorithm" text not null,
+  "public_key" text not null,
+  "fingerprint" text not null,
+  "roles" jsonb not null,
+  "project_ids" jsonb not null,
+  "amr" jsonb not null,
+  "solo_mode" boolean not null,
+  "is_service_account" boolean not null,
+  "label" text,
+  "created_by" text not null,
+  "created_at" timestamptz not null,
+  "revoked_by" text,
+  "revoked_at" timestamptz,
+  primary key ("kid"),
+  unique ("algorithm", "fingerprint")
+);
+create index if not exists "iam_credential_subject_id_idx" on "iam_credential" ("subject_id");
+create index if not exists "iam_credential_fingerprint_idx" on "iam_credential" ("fingerprint");
+create index if not exists "iam_credential_revoked_at_idx" on "iam_credential" ("revoked_at");
+alter table "iam_credential" enable row level security;
+drop policy if exists "iam_credential_project_scope" on "iam_credential";
+create policy "iam_credential_project_scope" on "iam_credential" as permissive for all
+  using ("project_id" = current_setting('app.project_id', true))
+  with check ("project_id" = current_setting('app.project_id', true));
 create table if not exists "audit_log" (
   "entry_id" text not null,
   "project_id" text,

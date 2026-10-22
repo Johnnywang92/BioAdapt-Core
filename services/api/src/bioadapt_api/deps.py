@@ -31,6 +31,7 @@ from bioadapt_tool_registry import DEFAULT_ADHOC_LIMITS, AdhocSandboxLimits
 
 from .errors import forbidden, invalid, unauthorized
 from .identity import IdTokenClaims, TokenVerifier
+from .login_keys import Ed25519Verifier
 from .observability import LogSink, new_trace_id
 from .quota import QuotaProvider
 
@@ -145,6 +146,12 @@ class ApiState:
     adhoc_grant_ttl: timedelta = timedelta(hours=24)
     adhoc_limits: AdhocSandboxLimits = DEFAULT_ADHOC_LIMITS
     deployment: DeploymentCapabilities = field(default_factory=DeploymentCapabilities)
+    #: Section 11.2: the login-key directory, when this deployment runs on key files instead of a printed
+    #: token. None is not "no keys yet", it is "no way to check one", and it closes the exchange route.
+    login_keys: Optional[Ed25519Verifier] = None
+    #: How long a token bought at the exchange stays valid. Minutes, deliberately: the key file is the
+    #: durable thing a person keeps, and this is all a copied bearer token is worth.
+    login_token_ttl: timedelta = timedelta(minutes=15)
 
 
 @dataclass

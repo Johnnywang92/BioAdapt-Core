@@ -16,7 +16,7 @@ const LABELS: Record<Capability, string> = {
 };
 const UNAVAILABLE: Record<Capability, string> = {
   object_upload: "Object storage is not connected. Uploads cannot complete in this deployment. Ask the deployment administrator to connect storage before uploading.",
-  run_execution: "No analysis worker is connected. A run request can be recorded, but it will not execute. Use an existing demonstration run to inspect results, or ask the deployment administrator to connect a worker.",
+  run_execution: "No automatic analysis worker is connected. Recording a run request does not start analysis. Use an existing demonstration run to inspect results, or ask the deployment administrator how to execute the run.",
   export_generation: "No export worker is connected. An export request can be recorded, but it will not generate a file. Ask the deployment administrator to connect a worker; polling cannot resolve this.",
 };
 const STATUS_LABELS = {
