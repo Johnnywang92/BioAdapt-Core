@@ -5,13 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Union
 
-from .base import ParsedDocument, ParsedSection
+from .base import ParsedDocument, ParsedSection, attach_offsets
 from .docx import parse_docx
 from .markdown import parse_markdown
 from .pdf import parse_pdf
 
 
 def parse_document(content: Union[bytes, str], filename: str) -> ParsedDocument:
+    """Dispatch on extension, then record each section's span in the document text (§6.5 locating)."""
+    parsed = _parse_by_extension(content, filename)
+    attach_offsets(parsed.full_text, parsed.sections)
+    return parsed
+
+
+def _parse_by_extension(content: Union[bytes, str], filename: str) -> ParsedDocument:
     ext = Path(filename).suffix.lower()
 
     if ext in (".md", ".markdown"):

@@ -5,6 +5,7 @@ import { knowledge, type Caller } from "@/lib/api";
 import { queryMarkers } from "@/lib/evidencePresentation";
 import { useLocale } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
+import { Citation } from "@/components/Citation";
 import { Panel, ProblemNote } from "@/components/ui";
 import type { BioSuggestion, DocumentType, KnowledgeDocument, RagAnswer } from "@/lib/types";
 
@@ -266,14 +267,7 @@ function KnowledgeWorkspace({ caller, projectId }: { caller: Caller; projectId: 
                   </h4>
                   <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                     {ragAnswer.citations.map((hit, idx) => (
-                      <div key={idx} style={{ padding: "0.5rem", background: "var(--bg)", borderRadius: "4px", fontSize: "0.85rem", borderLeft: "3px solid #3b82f6" }}>
-                        <div style={{ fontWeight: 600 }}>
-                          《{hit.source_doc?.title || hit.chunk.doc_id}》 § {hit.chunk.section_path}
-                        </div>
-                        <div style={{ color: "var(--muted)", marginTop: "0.25rem" }}>
-                          {hit.chunk.content.slice(0, 150)}...
-                        </div>
-                      </div>
+                      <Citation key={`${hit.chunk.chunk_id}:${idx}`} caller={caller} projectId={projectId} hit={hit} />
                     ))}
                   </div>
                 </div>
@@ -345,10 +339,14 @@ function KnowledgeWorkspace({ caller, projectId }: { caller: Caller; projectId: 
               </div>
               {suggestion.citations.length ? <details>
                 <summary>{t("citations")} ({suggestion.citations.length})</summary>
-                {suggestion.citations.map((citation, index) => <blockquote key={`${citation.chunk.chunk_id}:${index}`}>
-                  <strong>{citation.source_doc?.title ?? citation.chunk.doc_id}</strong> · {citation.chunk.section_path}
-                  <p>{citation.chunk.content}</p>
-                </blockquote>)}
+                {suggestion.citations.map((citation, index) => (
+                  <Citation
+                    key={`${citation.chunk.chunk_id}:${index}`}
+                    caller={caller}
+                    projectId={projectId}
+                    hit={citation}
+                  />
+                ))}
               </details> : null}
             </div>
           )}

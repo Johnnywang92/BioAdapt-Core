@@ -17,6 +17,7 @@ export const zh: Record<string, string> = {
   data: "数据",
   plans: "方案",
   approvals: "审批",
+  runs: "运行",
   "expert queue": "专家队列",
   exports: "导出",
   "no project open": "尚未打开项目",
@@ -263,8 +264,6 @@ export const zh: Record<string, string> = {
   "independent confirmation": "独立确证",
   rationale: "理由说明",
   "required; it is the sentence a reader of the delivery will see": "必填；交付的读者看到的就是这句话",
-  'the card fields to overwrite, e.g. {"candidate_label": "intermediate state", "label_level": "cell_state"} — they become human-sourced':
-    '要覆盖的卡片字段，例如 {"candidate_label": "intermediate state", "label_level": "cell_state"}——它们会被标为人工来源',
   "a re-read that keeps the earlier verdict still gets its own row": "即使重读后结论不变，也要单独记一行",
   "recording…": "记录中…",
   "Record review": "记录评审",
@@ -679,6 +678,104 @@ export const zh: Record<string, string> = {
   "requesting…": "申请中…",
   "Request approval": "申请审批",
 
+  // ---------------------------------------------------------------- 运行跟踪（第三批①）
+  // 运行日志
+  Journal: "运行日志",
+  "every state change is written here with the actor who moved it and the reason they gave; a retry and a spend line are the same trail (§9.2)":
+    "每一次状态变更都在这里记下动了它的人和他给出的理由；一次重试和一行花费属于同一条轨迹（§9.2）",
+  "every kind": "所有种类",
+  when: "何时",
+  from: "从",
+  to: "到",
+  who: "谁",
+  "why it moved": "它为什么动了",
+  attempt: "第几次",
+  iteration: "迭代",
+  "{compute} compute minutes · {cost} model cost": "{compute} 计算分钟 · {cost} 模型花费",
+  "No journal line has been written for this run, so nothing has moved it yet.":
+    "这个 run 还没有写下任何一行日志，也就是说还没有任何东西动过它。",
+  "watch this run": "盯着这个 run",
+  "watching": "正在盯",
+  "watching re-reads this run and its journal every five seconds; it never signs anything off":
+    "盯着它，意思是每五秒重新读一次这个 run 和它的日志；它永远不会替任何人签字确认",
+  // 运行列表
+  "one row per run, read from the catalog: the state is where the state machine left it, and the queue position is what the scheduler answered just now":
+    "一行一个 run，都从目录里读：状态是状态机把它留在了哪儿，队列位置是调度器刚才的回答",
+  "watch this list": "盯着这个列表",
+  "watching re-reads this list every five seconds; it changes nothing":
+    "盯着它，意思是每五秒重新读一次这个列表；它不改动任何东西",
+  "the filter is the server's own enum; an empty choice asks for every state":
+    "筛选用的是服务端自己的枚举；留空就是问所有状态",
+  "every state": "所有状态",
+  "getting underway": "正在起步",
+  "being computed": "正在计算",
+  "waiting for a person": "在等人",
+  "stopped short": "中途停下",
+  finished: "已经跑完",
+  showing: "正在显示",
+  "runs per page, read from the catalog in the server's order": "每页多少个 run，按服务端自己的顺序从目录读取",
+  "{n} of this page, from position {offset}": "本页 {n} 条，从第 {offset} 位开始",
+  "go on with": "接着做",
+  "journal and gates": "日志与门",
+  "previous page": "上一页",
+  "next page": "下一页",
+  "No run in this project is in that state. The list is what the server returned, so nothing is hidden by the filter.":
+    "这个项目里没有 run 处在那个状态。列表就是服务端返回的内容，筛选本身没有藏起任何东西。",
+
+  // ---------------------------------------------------------------- 候选检索（第三批②）
+  "Find a population": "查找细胞群体",
+  "these are the populations this run produced, and a cluster label is only the name it gave them (§5.6); every filter is answered by the index before the page is cut":
+    "这里列的是这个 run 产出的细胞群体，而聚类名只是它给它们起的名字（§5.6）；每一个筛选条件都在分页之前由索引回答",
+  "the label as this run wrote it; it names nothing outside this run": "这个 run 写下的标签；它指不出本 run 之外的任何东西",
+  reviewed: "是否已复核",
+  "whether a person has already acted on the card behind it": "它背后的那张卡片是否已经有人做过动作",
+  either: "不限",
+  "acted on": "已有人做过",
+  "nobody yet": "还没人看过",
+  "min cells": "最少细胞数",
+  "smallest population to keep, in cells": "保留的群体最小有多少个细胞",
+  "max cells": "最多细胞数",
+  "largest population to keep, in cells": "保留的群体最大有多少个细胞",
+  "min donors": "最少供体数",
+  "fewest donors the population has to span": "这个群体至少要覆盖几个供体",
+  Apply: "应用筛选",
+  "clear the filters": "清空筛选",
+  "back to the run": "回到这个 run",
+  "The address bar is the filter: apply it and the link you send opens this same page, not whatever you were last looking at.":
+    "筛选条件就在地址栏里：应用之后，你发出去的链接打开的就是这一页，而不是你刚才正好看到的地方。",
+  "{n} populations on this page": "本页 {n} 个群体",
+  "at least {n} cells": "至少 {n} 个细胞",
+  "at most {n} cells": "最多 {n} 个细胞",
+  "at least {n} donors": "至少 {n} 个供体",
+  "candidate type": "候选类型",
+  "open the card": "打开这张卡片",
+  "No population in this run answers to that filter. The list is what the server returned, so the filter is not hiding rows it did not ask for.":
+    "这个 run 里没有群体符合那个筛选条件。列表就是服务端返回的内容，筛选并没有藏起它没被要求藏的行。",
+  "Search the populations this run produced": "检索这个 run 产出的细胞群体",
+  "— {n} populations, each one only a name inside this run (§5.6)": "—— {n} 个群体，每一个都只是本 run 内部的一个名字（§5.6）",
+
+  // ---------------------------------------------------------------- 连续复核（第三批③）
+  " · {n} of {m} already carry a decision": " · {n} / {m} 已有人做过决定",
+  "who has acted": "谁做过动作",
+  "filed, no decision yet": "已建档，还没人做决定",
+  "not filed yet": "还没建档",
+  "Continue with": "接着看",
+  "place {p} of {n} in this queue": "在这份队列里排第 {p}（共 {n}）",
+  "the first card in this order that no person has acted on; the order itself is the rule's and does not move as you work (§13.4)":
+    "这是这个顺序里第一张还没人做过决定的卡片；顺序本身由规则决定，不会因为你翻过几张而变动（§13.4）",
+  "every card in this queue already carries a decision. Nothing here signs anything off: a decision is made on a card, by a named person.":
+    "这份队列里每张卡片都已经有人做过决定。这里不会替你签任何字：决定是在某张卡片上、由一个有名字的人做出的。",
+  "place {p} of {n} in this run's queue": "在这个 run 的队列里排第 {p}（共 {n}）",
+  "previous card": "上一张卡片",
+  "no card before this one": "前面没有卡片了",
+  "next card": "下一张卡片",
+  "no card after this one": "后面没有卡片了",
+  " — {name} already carries a decision": "——{name} 已经有人做过决定",
+  "this card is not in the queue the rules produce for run {run}, so there is no next card to go to":
+    "这张卡片不在规则为 run {run} 生成的队列里，所以没有下一张可去",
+  "reading the queue of this run…": "正在读这个 run 的队列……",
+  "The queue of this run could not be read, so no next card is offered.": "这个 run 的队列读不出来，所以这里不提供下一张卡片。",
+
   // ---------------------------------------------------------------- 枚举显示名
   // 可复现级别
   byte: "字节级",
@@ -707,12 +804,28 @@ export const zh: Record<string, string> = {
   BUDGET_EXCEEDED: "预算超限",
   ESCALATED_TO_HUMAN: "已上报人类",
   FAILED: "失败",
+  // run 日志里的四种事件（§9.2）
+  node_retry: "节点重试",
+  business_retry: "业务重试",
+  usage: "花费",
+  // 动了它的是谁（SubjectKind）
+  service: "服务账号",
+  // 候选类型（CandidateType，§5.6 的五类）
+  C1_unassigned: "C1 未归属",
+  C2_reference_conflict: "C2 与参考图谱冲突",
+  C3_rare_stable: "C3 稀有且稳定",
+  C4_cross_modal_discordant: "C4 跨模态不一致",
+  C5_composition_outlier: "C5 组成异常",
   // 审批
   adhoc_tool: "ad-hoc 工具",
   escalation: "上报",
   pending: "待处理",
   approved: "已批准",
   expired: "已过期",
+  // 临时工具的失败策略与授权条款状态（§9.6）
+  halt: "停下来",
+  escalate_to_human: "交给人处理",
+  not_required: "无需审阅",
   // 导出
   tables: "表格",
   figures: "图片",
@@ -753,6 +866,20 @@ export const zh: Record<string, string> = {
   consistent: "一致",
   discordant: "不一致",
   partial: "部分一致",
+  // 假设类型（HypothesisType；unknown 已在通用区给出）
+  cell_type: "细胞类型",
+  cell_state: "细胞状态",
+  technical_artifact: "技术假象",
+  // 未知的原因（UnknownReason）
+  reference_not_covered: "参考未覆盖",
+  insufficient_evidence: "证据不足",
+  unresolved_conflict: "冲突未解决",
+  quality_limited: "质量受限",
+  // 标签层级（LabelLevel；cell_state 同上）
+  unknown_coarse: "粗粒度：未知",
+  cell_type_broad: "宽粒度细胞类型",
+  cell_type_fine: "细粒度细胞类型",
+  provisional_project: "项目内临时标签",
   // 证据
   differential_expression: "差异表达",
   marker_specificity: "marker 特异性",
@@ -960,10 +1087,6 @@ export const zh: Record<string, string> = {
   "most cards one reviewer is handed at a time": "一次分发给单名复核者的证据卡上限",
   "share above which the summary page calls a population rare": "摘要页面将某群体判为稀有的细胞占比上限",
   "cell count below which the summary page calls a population thin": "摘要页面将某群体判为过少的细胞数下限",
-  "Ad-hoc Tool Approved by PI": "PI 已批准临时工具 (Ad-hoc)",
-  "This sandbox gate was approved. Issue the one-time ledger execution grant to authorize run (§9.6).":
-    "该沙箱审批门已通过。发放一次性台账执行凭据以授权计算节点执行 (§9.6)。",
-  "Issue Execution Grant": "发放一次性执行凭据",
   "Run the analysis now": "现在运行分析",
   "Execute DAG nodes (qc → normalize → pca → cluster → markers → pseudobulk_de → robustness), discover C1-C3 candidates, and draft evidence cards.":
     "顺序执行计算节点 (QC → 标准化 → 降维 → 聚类 → Marker → 差异表达 → 鲁棒性)，自动识别 C1-C3 候选亚群并起草证据卡。",
@@ -1073,4 +1196,180 @@ export const zh: Record<string, string> = {
   "workstation, office laptop": "工位机、办公笔记本",
   "writing…": "正在写入…",
   "Authorise this key": "授权这把密钥",
+
+  // ---------------------------------------------------------------- 原文定位（第三批④）
+  "page {n}": "第 {n} 页",
+  "characters {from} to {to}": "第 {from}–{to} 个字符",
+  "the offsets count characters in the text the parser read out of the file, not bytes of the file itself":
+    "这里的偏移量按解析器从文件里读出的文本字符计数，不是文件本身的字节数",
+  "this passage was indexed before positions were recorded, so the index cannot say where it sits; the text is what was stored":
+    "这段内容入库时还没有记录位置，所以索引说不出它在哪儿；下面显示的就是当时存下的原文",
+  "open the cited passage": "打开被引用的这段",
+  "re-read the passage": "重新读一遍这段",
+  "opening…": "正在读取…",
+  "{n} stored pieces before and {m} after": "索引在这段前面存着 {n} 段、后面存着 {m} 段",
+  cited: "被引用的那段",
+  licence: "许可",
+
+  // ---------------------------------------------------------------- 导出预览与通知（第三批⑤）
+  "preview the choice first: the counts are rows already filed, not the file a worker would write":
+    "先预览这次选择：这些数字是已经建档的行，不是工作进程将要写出的那个文件",
+  "which run": "哪个 run",
+  "optional; limits the artefact to one run's products. The list is this project's runs, so nothing has to be typed.":
+    "可留空；只取某一个 run 的产物。列表就是本项目已有的 run，不需要手工输入编号",
+  "every run in this project": "本项目的所有 run",
+  "which conclusions": "哪些结论",
+  "optional; only cards filed at this status. A status nobody picked asks for every card.":
+    "可留空；只取处于这个状态的证据卡。不选状态，要的就是全部的卡",
+  "every status": "所有状态",
+  "preview what these filters select": "预览这些筛选会选到什么",
+  "these are rows stored in this project right now, counted by the filters shown above. They are not the file: a worker writes that, and until one runs nothing here has left the platform.":
+    "这些是此刻本项目里存着的行，按上面选择的筛选计数。它们不是那个文件：文件由工作进程写出，在它跑起来之前，这里没有任何东西离开过平台。",
+  "cards this delivery would draw from": "这次交付会取用的证据卡",
+  "candidate sets": "候选集",
+  assets: "资产",
+  "the status filter moves the card line only, because it is a column of the card table; the run filter moves all three.":
+    "状态筛选只改变证据卡那一行，因为它只是卡表的一列；run 筛选会同时改变这三行。",
+  "threshold set": "阈值集",
+  "nothing matches this choice, so the job would have nothing to write. Widen the filters or re-read after a review is filed.":
+    "这个选择没有匹配到任何行，也就是说这个任务将无内容可写。请放宽筛选，或等有人提交复核之后再重读。",
+  "what the filters chose": "筛选选了什么",
+  "no filter: every row in this project": "无筛选：本项目的全部行",
+  "this page holds {n} export rows": "本页有 {n} 行导出任务",
+  "this project has more runs than one page, so the list stops at {n}; the run screen pages through the rest.":
+    "本项目的 run 多过一页，所以这里只列到 {n} 个；其余要在运行列表那一屏翻页",
+  "a queued row here is the platform agreeing to a job, not a job in progress: this deployment reports export generation as {state}, so re-reading cannot produce a file.":
+    "这里的已排队只是平台答应接单，不是任务正在执行：本次部署把导出生成报告为 {state}，所以反复重读也不会变出文件。",
+
+  // ---------------------------------------------------------------- 启动闭环（第四批①）
+  "what to run": "要跑哪一个方案",
+  "which plan": "方案",
+  "only a version this project recorded is offered, and its plan id comes with the choice":
+    "下拉里只有本项目登记过的版本；选中就一起带上它的 plan id 与版本号，不需要手打",
+  "choose a recorded plan": "选择一个已登记的方案",
+  "no plan is recorded in this project yet, so there is nothing to launch.":
+    "本项目还没有登记任何方案，所以没有可以启动的运行。",
+  "build one": "去方案向导建一个",
+  "the plan chosen is no longer on this list; re-read and pick again rather than launching a version this project does not hold":
+    "刚才选中的方案已经不在这份列表里了；请重读之后重新选择，不要启动一个本项目并不持有的版本",
+  "the plan starts from these slots": "这个方案从这些输入槽开始",
+  "§9.2: the workflow fills one root slot": "§9.2：这条工作流只填一个根输入槽",
+  "{n} root slots on one plan that takes one": "方案声明了 {n} 个根输入槽，而工作流只能填一个",
+  "launching this plan is allowed and records a run; executing it is refused until one plan declares one slot":
+    "启动它仍然会被接受并记下一个 run，但执行会被拒绝，直到这个方案只声明一个槽位",
+  "the one asset this run is handed": "这次运行交给它的那一个资产",
+  "a launch fills a single root slot, so exactly one registered asset is chosen here; a run handed two of them is a row that cannot execute (§9.2)":
+    "一次启动只填一个根输入槽，所以这里只选一个已登记的资产；交了两个资产的 run 是一行永远执行不了的记录（§9.2）",
+  "produced by run": "由 run 产出",
+  "nothing is registered as data in this project yet.": "本项目还没有登记任何数据。",
+  "register it first": "先去登记数据",
+  "what the run is pinned against": "这次运行钉在什么之上",
+  "not read": "还没读到",
+  "tools offered here": "这套部署在这里提供的工具",
+  "re-read the registry": "重新读一遍工具注册表",
+  "read from this project's tools route, which is the same registry the executor hydrates, so the value is neither typed nor remembered: execution refuses a run pinned against a snapshot this deployment does not hold (§4.1). The snapshot counts the registered steps only - what an ad-hoc node may run is pinned by its own grant row (§9.6)":
+    "这个值读自本项目的工具路由，和执行进程加载的是同一份注册表，所以既不靠手打也不靠记忆：钉着本部署并不持有的快照的 run，会在执行时被拒绝（§4.1）。快照只统计已注册的步骤——临时工具能跑什么由它自己的授权行钉住（§9.6）",
+  "the claim this run sets out to support": "这次运行准备支撑到哪一档可复现结论",
+  "pick a recorded plan first": "先选一个已登记的方案",
+  "pick the one asset this run is handed as its root input": "再选出这次运行要作为根输入交给它的那一个资产",
+  "the registry snapshot could not be read, so nothing can be pinned": "读不到工具注册表快照，所以现在还没有可钉住的版本",
+  "how this request enters the queue": "这个请求如何进入队列",
+  "not a product format": "不是平台产物格式",
+  "the reference workflow reads only the platform's own canonical JSON product, so an asset recorded in another format is refused when the run executes (§6.4)":
+    "参考工作流只读平台自己的规范化 JSON 产物，所以按其他格式登记的资产会在 run 执行时被拒（§6.4）",
+
+  // ---------------------------------------------------------------- 字段级复核编辑（第四批②）
+  "which fields this review restates": "这次复核重写哪些字段",
+  "every line below starts as the value the card holds now, and only a line you change is sent; the fields you change are re-labelled as human-sourced against this review's id, and the value they replace stays readable in the trail (§5.4)":
+    "下面每一行都以卡片当前保存的值起步，只有你改动的那一行会被发出；改过的字段会被重新标成人工来源并挂上这次复核的 id，被替换掉的原值仍然可以在轨迹里读到（§5.4）",
+  "an unknown hypothesis has to say why it is unknown; the card contract refuses it otherwise":
+    "判定为未知的假设必须说明为什么未知；不填的话卡片契约会直接拒绝",
+  "keep what the card states": "沿用卡片已经写明的值",
+  "naming an unknown hypothesis as unknown clears the label this card carries":
+    "把假设说成未知，就同时清空了这张卡片带着的标签",
+  "the words this card says the population is; a label nobody can read is not a conclusion":
+    "这张卡片说这群细胞是什么；一个谁都读不懂的标签不算结论",
+  "a provisional project label cannot carry an ontology id, so this choice clears all three lines":
+    "项目内的临时标签不能带本体 term id，所以选了它就清空这三行",
+  "a cell type label has to name the term, the ontology it comes from and that ontology's version; the contract refuses any one of the three missing":
+    "细胞类型标签必须同时给出 term、它来自哪个本体、以及那个本体的版本；三行缺任何一行，契约都会拒绝",
+  "these three lines are the reference this label cites; leaving them as they are keeps the run's own mapping provenance":
+    "这三行是这个标签引用的出处；不去改动它就保留了 run 自己的映射来源信息",
+  "a term id has to be named by an ontology and a version, and an ontology name has to point at a term: the contract refuses either half on its own":
+    "term id 要有本体名和版本来说明它是谁的，本体名也要指向一个具体的 term：只写一半契约就会拒绝",
+  "the sentence that says why the card stands where it stands": "说明这张卡片为什么停在当前状态的那句话",
+  "the conflict this card carries is still unresolved": "这张卡片带着的冲突仍未解决",
+  "as read from the card": "按卡片读到的值",
+  "{n} of these lines differ from the card as it was read, and those are the fields this review would overwrite":
+    "其中 {n} 行与读到的卡片不一致，这次复核要覆盖的就是这些字段",
+  "nothing below differs from the card as it was read, so this review would have nothing to restate":
+    "下面没有哪一行和读到的卡片不同，所以这次复核并没有要重写的字段",
+  "what the run measured is not offered here: evidence rows, ids, the thresholds version the card was judged against, its status and its signature are decided by the pipeline, the gate and the sign-off form, not by this list":
+    "run 测到的东西不在这里给出：证据行、各类 id、卡片判读所依据的阈值版本、它的状态与签名，都由流水线、门禁和签署表单决定，而不是由这份列表改",
+  "a field review has to restate at least one field; nothing below differs from the card":
+    "字段级复核至少要重写一个字段；下面没有哪一行和读到的卡片不同",
+
+  // ---------------------------------------------------------------- ad-hoc 执行凭据如实填表（第四批③）
+  "Issue the execution grant": "发放这次执行的授权凭据",
+  "the gate says a person allowed this submission; the grant is what turns that decision into one execution. Its row pins the exact bytes of the spec, so the lines below are the ones being signed - not a template (they cannot be read back from anywhere else, because this is the first time the platform sees them)":
+    "审批门说的是有人允许了这份提交；凭据才把这个决定变成一次真正的执行。凭据行钉住的是这份工具说明的逐字节内容，所以下面这些行就是被签字的东西——不是一套模板（它们别处读不回来，因为这是平台第一次看到这份提交）",
+  "the node this grant covers": "这份凭据覆盖的节点",
+  "planned as": "方案里定的是",
+  "read from": "读自",
+  "decided by": "由谁裁定",
+  "the name and the version are not asked for: the route refuses a grant whose spec names anything other than this node's plan entry, so the screen reads them from the plan instead":
+    "名字与版本不需要填：方案里这个节点写的是哪支工具，路由就只认哪支工具，所以屏幕把方案读出来的值直接用上了",
+  "this gate does not name a node, so there is nothing here a grant could cover; the route that raised it should have carried the node id":
+    "这扇门没有指名节点，所以这里没有凭据能覆盖的东西；开出这扇门的接口本应带上节点 id",
+  "the plan version this run pins is no longer listed for the project, so the node it names cannot be read here; a grant is issued against the plan the run actually pins":
+    "这次运行钉住的方案版本已经不在本项目的列表里，所以它指名的节点在这里读不到；凭据是发在运行真正钉住的那份方案上的",
+  "this plan version has no node with that id, so the gate points at nothing the run can execute":
+    "这个方案版本里没有这个 id 的节点，所以这扇门指向的是一个运行执行不了的东西",
+  "this node is planned as a registered tool, and a registered tool needs no grant; only the plan's ad-hoc nodes can be made executable here":
+    "这个节点在方案里定的是已注册工具，而已注册工具不需要凭据；这里只能把方案里的临时工具节点变成可执行",
+  "what the submission is": "这份提交是什么",
+  "the step this code performs, in the words the plan uses for it": "这段代码做的那一步，用方案自己的说法",
+  "one per line, as this code really reads them": "一行一个，按这段代码实际读取的模态写",
+  "a species nobody checked cannot be claimed; leave it out rather than widen it":
+    "没人验证过的物种不能声称支持；宁可少写，也不要放宽",
+  "the image that runs": "真正跑起来的那个镜像",
+  "a tag names a moving target, so the row is pinned by the digest the registry actually holds. Nobody can sign a permission over an image that was looked up later: a digest copied from the push is the only answer that means anything here":
+    "标签指的是一个会动的目标，所以这一行钉的是注册里实际保存的摘要。没有人能对着一个事后才查的镜像签授权：只有从那次推送里抄下来的摘要在这里才算数",
+  "sha256: followed by 64 hexadecimal characters; anything else is refused here and by the contract":
+    "sha256: 开头，后接 64 位十六进制字符；其他写法在这里和契约那边都会被拒",
+  "what it asks for, and what it was measured on": "它要多少资源，又是在什么上实测过的",
+  "the number a run of this image actually produced, not the number asked for":
+    "这个镜像真跑一次实测出来的峰值，不是你申请的那个数",
+  "the dataset or run the measurement was taken on": "这次实测是在哪份数据或哪次运行上做的",
+  "the deployment caps what an ad-hoc node may ask for, and this screen does not restate those caps: ask for more and the grant route refuses, in its own words, below":
+    "本次部署对临时节点能申请的资源设有上限，而这个屏幕不替那些上限报数：申请超过上限，发放凭据的接口会在下方用它自己的话拒绝",
+  "the licence as it was reviewed": "按审过的授权条款写",
+  "an approved licence has to carry the date it was reviewed; not_required is the only status that needs none":
+    "状态为已通过审阅的授权条款必须带上审阅日期；只有“无需审阅”这一档可以不带",
+  "what a reader has to be able to check": "读这份结果的人必须能核对的东西",
+  "one per line": "一行一个",
+  "one per line; the contract refuses a submission that cannot say when its own result stops holding":
+    "一行一个；说不出自己的结论什么时候不再成立的提交，契约会被拒",
+  "whether this code needs raw counts or a normalised matrix": "这段代码要的是原始 counts 还是已归一化的矩阵",
+  "not stated": "还没写",
+  "provenance_fields": "provenance_fields",
+  " - these four are what the contract requires every tool to leave behind, so they are not offered as a choice":
+    " —— 这四个是契约要求每个工具都必须留下的字段，所以这里不作为可选项给出",
+  "how it may fail, and how long the grant stays open": "它失败时怎么走，凭据开多久",
+  "the cage admits only these two: stop, or hand the node to a person":
+    "沙箱只接受这两种：停下来，或者把这个节点交给人",
+  "left as it stands: no network, no GPU, no egress, no retry, project-scoped assets, and the grant is spent by the one execution it authorises (§9.6). A retry would spend a gate twice, so the platform does not offer one here":
+    "照原样固定：不联网、不给 GPU、不出流量、不重试、资产只限本项目，而且这份凭据就被它授权的那一次执行用掉（§9.6）。重试会把一扇门花两次，所以平台这里不提供重试",
+  "optional; the deployment's own window is the ceiling and asking for less is allowed":
+    "可不填；本次部署自己的有效期就是上限，填得更短是可以的",
+  "optional; left open, the row records the gate's own decision reason":
+    "可不填；留空时这一行记的就是那扇门裁定时写下的理由",
+  "{n} lines still have to be stated:": "还有 {n} 行需要由你来写：",
+  "issuing…": "发放中…",
+  "this grant is the execution of one named decision, so the route issues it only for {who}, the subject that decided the gate - not for anyone who merely agrees with it (§11.6)":
+    "这份凭据执行的是一个具名的决定，所以接口只认 {who}——裁定那扇门的那个人；旁人哪怕同意这个决定，也发不出它（§11.6）",
+  "Grant {id} is on the record: {tool}@{version} may execute at node {node}, live until {until}.":
+    "凭据 {id} 已记入台账：{tool}@{version} 可以在节点 {node} 上执行，有效到 {until}。",
+  " one gate buys one grant, so sending these same lines again answers with the row that already stands rather than a second permission (§9.6)":
+    " 一扇门只买一份凭据，所以把这些行原样再发一次，答复的是台账上已经站着的那一行，而不是第二份许可（§9.6）",
 };

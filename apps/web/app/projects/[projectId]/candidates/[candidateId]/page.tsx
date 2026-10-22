@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { Citation } from "@/components/Citation";
+import { FieldRevisionFields, revisionChanges, revisionOf, type Revision } from "@/components/FieldRevision";
 import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote, StatusChip } from "@/components/ui";
 import { findings, knowledge, type Caller } from "@/lib/api";
 import { evidenceMarkers, queryMarkers } from "@/lib/evidencePresentation";
@@ -15,6 +17,7 @@ import type {
   CardEvidenceRead,
   Evidence,
   EvidenceCard,
+  ExpertQueue,
   FinalStatus,
   ReviewDecision,
   ReviewEvent,
@@ -71,18 +74,25 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
     () => (card ? findings.reviews(caller, projectId, card.card_id) : Promise.resolve({ card_id: "", reviews: [] })),
     [caller.token, projectId, card?.card_id],
   );
+  // §13.4 is what says which card comes next, so the queue is read from the run this card belongs to
+  // rather than guessed from whatever screen the person arrived from.
+  const queue = useAsync<ExpertQueue | null>(
+    () => (card ? findings.queue(caller, projectId, card.run_id) : Promise.resolve(null)),
+    [caller.token, projectId, card?.run_id],
+  );
   const review = useSubmit();
   const signOff = useSubmit();
   const [prefillReview, setPrefillReview] = useState<{
     decision?: ReviewDecision;
     rationale?: string;
-    newValue?: string;
+    label?: string;
     scope?: ReviewScope;
   } | null>(null);
 
   function refresh() {
     read.reload();
     trail.reload();
+    queue.reload();
   }
 
   if (read.loading && !card) {
@@ -115,6 +125,28 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
   const reviewResult = review.result as ReviewResponse | null;
   const signOffResult = signOff.result as SignOffResponse | null;
 
+  // Working through a queue means one card after another, in the order the rule produced - not the order
+  // the reviewer happened to open them in. A card the rule did not place gets no next card rather than a
+  // guessed one, and a card that already carries a decision says so before it is opened again.
+  const order = queue.data?.queue ?? [];
+  const place = order.indexOf(card.card_id);
+  const step = (offset: number) => {
+    const cardId = place >= 0 ? order[place + offset] : undefined;
+    if (!cardId || !queue.data) return null;
+    const score = queue.data.scores.find((one) => one.card_id === cardId);
+    const status = queue.data.card_statuses.find((one) => one.card_id === cardId);
+    return {
+      cardId,
+      name: score?.display_name ?? cardId,
+      href: `/projects/${projectId}/candidates/${encodeURIComponent(
+        score?.candidate_id ?? status?.candidate_id ?? "",
+      )}`,
+      reviewerId: status?.reviewer_id ?? null,
+    };
+  };
+  const previous = step(-1);
+  const next = step(1);
+
   return (
     <>
       <Panel
@@ -135,6 +167,26 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
         }
       >
         <ProblemNote error={read.error} />
+        {queue.data ? (
+          <p className="muted">
+            {place >= 0 ? (
+              <>
+                {t("place {p} of {n} in this run's queue", { p: place + 1, n: order.length })} ·{" "}
+                {previous ? <Link href={previous.href}>{t("previous card")}</Link> : t("no card before this one")} ·{" "}
+                {next ? <Link href={next.href}>{t("next card")}</Link> : t("no card after this one")}
+                {next?.reviewerId ? t(" — {name} already carries a decision", { name: next.name }) : null}
+              </>
+            ) : (
+              t("this card is not in the queue the rules produce for run {run}, so there is no next card to go to", {
+                run: card.run_id,
+              })
+            )}
+          </p>
+        ) : queue.loading ? (
+          <p className="muted">{t("reading the queue of this run…")}</p>
+        ) : (
+          <p className="muted">{t("The queue of this run could not be read, so no next card is offered.")}</p>
+        )}
         <div className="card-screen">
           <div className="card-body">
             <dl className="facts">
@@ -286,7 +338,6 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                         setPrefillReview({
                           decision: "revise",
                           scope: "card",
-                          newValue: "",
                           rationale: t("Review memo suggestion: {action}", { action: read.data?.reviewer_memo?.recommended_action ?? "" }),
                         });
                       }}
@@ -508,7 +559,7 @@ function KnowledgeAdvice({ card, caller, projectId, clusterId, onPrefill }: {
   caller: Caller;
   projectId: string;
   clusterId: string;
-  onPrefill: (value: { decision: ReviewDecision; scope: ReviewScope; newValue: string; rationale: string }) => void;
+  onPrefill: (value: { decision: ReviewDecision; scope: ReviewScope; label?: string; rationale: string }) => void;
 }) {
   const t = useT();
   const recordedMarkers = evidenceMarkers(card.evidence);
@@ -573,10 +624,12 @@ function KnowledgeAdvice({ card, caller, projectId, clusterId, onPrefill }: {
             <details>
               <summary>{t("citations")} ({result.citations.length})</summary>
               {result.citations.map((citation, index) => (
-                <blockquote key={`${citation.chunk.chunk_id}:${index}`}>
-                  <strong>{citation.source_doc?.title ?? citation.chunk.doc_id}</strong> · {citation.chunk.section_path}
-                  <p>{citation.chunk.content}</p>
-                </blockquote>
+                <Citation
+                  key={`${citation.chunk.chunk_id}:${index}`}
+                  caller={caller}
+                  projectId={projectId}
+                  hit={citation}
+                />
               ))}
             </details>
           ) : null}
@@ -593,7 +646,7 @@ function KnowledgeAdvice({ card, caller, projectId, clusterId, onPrefill }: {
                 onPrefill({
                   decision: "revise",
                   scope: "field",
-                  newValue: JSON.stringify({ candidate_label: selectedType }),
+                  label: selectedType,
                   rationale: t("Knowledge-base suggestion for review: {label}. Rationale: {rationale}", { label: selectedType, rationale: result.rationale }),
                 });
                 setFilled(true);
@@ -670,7 +723,7 @@ function ReviewForm({
   prefill?: {
     decision?: ReviewDecision;
     rationale?: string;
-    newValue?: string;
+    label?: string;
     scope?: ReviewScope;
   } | null;
 }) {
@@ -678,32 +731,41 @@ function ReviewForm({
   const [scope, setScope] = useState<ReviewScope>("card");
   const [decision, setDecision] = useState<ReviewDecision>("approve");
   const [rationale, setRationale] = useState("");
-  const [newValue, setNewValue] = useState("");
+  const [rev, setRev] = useState<Revision>(() => revisionOf(card));
   const [supersedes, setSupersedes] = useState("");
-  const [parseError, setParseError] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  /** The card's restatable fields as one key: a re-read that changes them moves the baseline under the
+   * editor, while a re-read that leaves them alone does not clear what a person is in the middle of typing. */
+  const storedKey = JSON.stringify(revisionOf(card));
+  useEffect(() => {
+    setRev(revisionOf(card));
+  }, [storedKey]);
 
   useEffect(() => {
     if (prefill) {
       if (prefill.decision) setDecision(prefill.decision);
       if (prefill.rationale) setRationale(prefill.rationale);
-      if (prefill.newValue !== undefined) setNewValue(prefill.newValue);
       if (prefill.scope) setScope(prefill.scope);
-      setParseError(null);
+      if (prefill.label !== undefined) setRev((current) => ({ ...current, candidate_label: prefill.label ?? "" }));
+      setProblem(null);
     }
   }, [prefill]);
 
+  const fieldChanges = scope === "field" ? revisionChanges(card, rev) : {};
+
+  const setRevision = (name: keyof Revision, value: string | boolean) =>
+    setRev((current) => ({ ...current, [name]: value }));
+
   function send() {
-    setParseError(null);
+    setProblem(null);
     let parsed: Record<string, unknown> | undefined;
     if (scope === "field") {
-      try {
-        const value: unknown = JSON.parse(newValue);
-        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
-        parsed = value as Record<string, unknown>;
-      } catch {
-        setParseError(t("Review changes must be a valid JSON object. No review was submitted."));
+      if (!Object.keys(fieldChanges).length) {
+        setProblem(t("a field review has to restate at least one field; nothing below differs from the card"));
         return;
       }
+      parsed = fieldChanges;
     }
     void submit
       .run(() =>
@@ -730,7 +792,7 @@ function ReviewForm({
     >
       <div className="grid">
         <Field label={t("scope")}>
-          <select value={scope} onChange={(event) => { setScope(event.target.value as ReviewScope); setParseError(null); }}>
+          <select value={scope} onChange={(event) => { setScope(event.target.value as ReviewScope); setProblem(null); }}>
             {SCOPES.map((one) => (
               <option key={one} value={one}>
                 {`${t(one)} (${one})`}
@@ -751,24 +813,18 @@ function ReviewForm({
       <Field label={t("rationale")} hint={t("required; it is the sentence a reader of the delivery will see")}>
         <textarea rows={3} value={rationale} onChange={(event) => setRationale(event.target.value)} />
       </Field>
-      {scope === "field" ? (
-        <Field
-          label="new_value"
-          hint={t(
-            'the card fields to overwrite, e.g. {"candidate_label": "intermediate state", "label_level": "cell_state"} — they become human-sourced',
-          )}
-        >
-          <textarea rows={4} className="mono" value={newValue} onChange={(event) => { setNewValue(event.target.value); setParseError(null); }} />
-        </Field>
-      ) : null}
+      {scope === "field" ? <FieldRevisionFields card={card} rev={rev} set={setRevision} /> : null}
       <Field
         label="supersedes_review_id"
         hint={t("a re-read that keeps the earlier verdict still gets its own row")}
       >
         <input className="mono" value={supersedes} onChange={(event) => setSupersedes(event.target.value)} />
       </Field>
-      {parseError ? <div className="error" role="alert">{parseError}</div> : null}
-      <button type="submit" disabled={submit.busy || !rationale.trim() || (scope === "field" && !newValue.trim())}>
+      {problem ? <div className="error" role="alert">{problem}</div> : null}
+      <button
+        type="submit"
+        disabled={submit.busy || !rationale.trim() || (scope === "field" && !Object.keys(fieldChanges).length)}
+      >
         {submit.busy ? t("recording…") : t("Record review")}
       </button>
       {scope === "card" ? (

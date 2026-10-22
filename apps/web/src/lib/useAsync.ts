@@ -95,3 +95,19 @@ export function useSubmit(): {
 
   return { busy, error, result, run };
 }
+
+/**
+ * A read that re-runs itself while a person is watching, so a tracker does not freeze at first paint.
+ *
+ * A run moves without the browser being told: the state machine answers when asked, and §9.2 keeps the
+ * journal as the only record of why it moved. Polling is the honest shape here - the screen re-reads the
+ * same endpoint it read the first time and shows whatever the API says now, rather than accumulating a
+ * local copy of the state that could disagree with the next reviewer.
+ */
+export function useAutoRefresh(reload: () => void, intervalMs: number, live: boolean) {
+  useEffect(() => {
+    if (!live) return undefined;
+    const timer = setInterval(reload, intervalMs);
+    return () => clearInterval(timer);
+  }, [reload, intervalMs, live]);
+}

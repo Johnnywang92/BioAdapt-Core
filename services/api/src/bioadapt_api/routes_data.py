@@ -172,7 +172,9 @@ def list_plans(session: SessionDep, page: Page = Depends(page_params)) -> dict:
     """The plan versions this project has recorded, oldest first (§9.7).
 
     Only the fields a person chooses on are projected here: the contract itself is what a run pins, and a
-    listing that quietly trimmed it would read like an editable summary of it.
+    listing that quietly trimmed it would read like an editable summary of it. ``root_inputs`` is one of the
+    projected fields because a launch has to be handed an asset per slot - the screen that names the slots
+    is the only place that can say what is still missing, and the plan already declares them.
     """
     session.enforce(Action.RUN_READ, f"{session.project_id}:plan_list", "plan_collection")
     rows = session.catalog.list_plans(limit=page.limit, offset=page.offset)
@@ -183,6 +185,7 @@ def list_plans(session: SessionDep, page: Page = Depends(page_params)) -> dict:
                 "plan_version": row["plan_version"],
                 "objective": row["objective"],
                 "plan_sha256": row["plan_sha256"],
+                "root_inputs": list(row["plan"]["root_inputs"]),
                 "created_by": row["created_by"],
                 "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                 "nodes": [

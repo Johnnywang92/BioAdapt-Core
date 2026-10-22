@@ -421,7 +421,9 @@ def test_a_service_account_may_not_list_projects(client, auth):
 def test_recorded_plans_are_listable_with_their_digests_and_nodes(client, auth):
     recorded = client.post(
         f"/v1/projects/{PROJECT_ID}/plans",
-        json=plan(plan_id="plan_wizard", plan_version="2").model_dump(mode="json"),
+        json=plan(
+            plan_id="plan_wizard", plan_version="2", root_inputs=["counts", "donor_metadata"]
+        ).model_dump(mode="json"),
         headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]),
     )
     assert recorded.status_code == 201
@@ -434,6 +436,9 @@ def test_recorded_plans_are_listable_with_their_digests_and_nodes(client, auth):
     assert wizard["plan_sha256"] == recorded.json()["plan_sha256"]
     assert wizard["created_by"] == PI
     assert [node["tool_name"] for node in wizard["nodes"]] == ["scanpy_pipeline"]
+    #: §9.2: a launch is handed one asset per root slot, so the slot names a person has to choose against
+    #: come from the recorded contract rather than from whatever the screen assumes.
+    assert wizard["root_inputs"] == ["counts", "donor_metadata"]
 
 
 def test_the_tool_catalog_reports_the_registry_the_engine_hydrates(client, auth):

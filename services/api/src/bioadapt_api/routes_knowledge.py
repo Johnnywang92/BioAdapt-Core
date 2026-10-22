@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from bioadapt_knowledge import (
     BioSuggestion,
+    ChunkReading,
     DocumentType,
     KnowledgeAssistant,
     KnowledgeDocument,
@@ -195,6 +196,35 @@ def list_documents(
     )
     index = get_knowledge_index(session)
     return index.list_documents(project_id=project_id, doc_type=doc_type, limit=limit, offset=offset)
+
+
+@router.get(
+    "/projects/{project_id}/knowledge/chunks/{chunk_id}",
+    response_model=ChunkReading,
+)
+def read_chunk(
+    project_id: str,
+    chunk_id: str,
+    session: SessionDep,
+    radius: int = Query(1, ge=0, le=3, description="stored pieces to show on each side of the cited one"),
+) -> ChunkReading:
+    """Where a cited passage sits, and what the index kept on either side of it.
+
+    A citation nobody can open is a citation a reviewer has to take on trust, so this route returns the
+    locator the parse recorded and nothing it did not: the offsets count characters in the text the parser
+    produced from the file, the page is the page the backend reported, and a chunk indexed before locators
+    existed simply carries none. The file itself is not re-read here.
+    """
+    session.enforce(
+        Action.ASSET_READ,
+        resource_id=f"project/{project_id}/knowledge_chunk/{chunk_id}",
+        resource_type="knowledge_document",
+    )
+    index = get_knowledge_index(session)
+    reading = index.read_chunk(chunk_id, project_id=project_id, radius=radius)
+    if reading is None:
+        raise not_found("knowledge_chunk", chunk_id)
+    return reading
 
 
 @router.delete(

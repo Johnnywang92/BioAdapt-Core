@@ -16,6 +16,7 @@ from bioadapt_schemas.enums import (
     AssetRole,
     CandidateType,
     FilteringState,
+    FinalStatus,
     PrivacyTier,
     RetentionClass,
     ReviewDecision,
@@ -510,3 +511,89 @@ def test_reading_the_queue_needs_a_role_that_can_read_the_run(client, auth, draf
     response = client.get(f"{DRAFT_BASE}/cards/queue", headers=auth("user_curator_01", [Role.KNOWLEDGE_CURATOR]))
     assert response.status_code == 403
     assert f"{DRAFT_RUN}:card_queue" in response.json()["message"]
+
+
+def test_the_queue_says_which_cards_a_person_has_already_acted_on(client, auth, drafted):
+    """Continuous review (§13.4 read against §9.1): progress is a column on the filed card, not the order.
+
+    The status cannot come from the drafts the queue re-derives - a draft is always filed as ``unknown`` -
+    so a card nobody has filed yet reads as no status at all. The screen has to be able to tell "not filed"
+    apart from "filed and left alone", or it will show a reviewer work they never did.
+    """
+    headers = auth(EXPERT, [Role.DOMAIN_EXPERT])
+    before = client.get(f"{DRAFT_BASE}/cards/queue", headers=headers).json()
+    assert before["drafted"] == len(before["card_statuses"])
+    assert {item["card_id"] for item in before["card_statuses"]} == {item["card_id"] for item in before["scores"]}
+    assert {item["candidate_id"] for item in before["card_statuses"]} == {
+        drafted["focus_candidate_id"],
+        drafted["common_candidate_id"],
+    }
+    assert all(item["final_status"] is None for item in before["card_statuses"])
+    assert all(item["reviewer_id"] is None for item in before["card_statuses"])
+
+    filed = client.post(f"{DRAFT_BASE}/cards/draft", json={}, headers=auth(ANALYST, [Role.ANALYST]))
+    assert filed.status_code == 200, filed.text
+    after = client.get(f"{DRAFT_BASE}/cards/queue", headers=headers).json()
+    assert [item["final_status"] for item in after["card_statuses"]] == [str(FinalStatus.UNKNOWN)] * after["drafted"]
+    assert all(item["reviewer_id"] is None for item in after["card_statuses"])
+
+
+def test_a_decision_shows_in_the_queue_without_moving_the_order(client, auth, drafted):
+    """The order is the rule's, so finishing a card cannot reshuffle the list a reviewer is working down."""
+    client.post(f"{DRAFT_BASE}/cards/draft", json={}, headers=auth(ANALYST, [Role.ANALYST]))
+    headers = auth(EXPERT, [Role.DOMAIN_EXPERT])
+    before = client.get(f"{DRAFT_BASE}/cards/queue", headers=headers).json()
+    first = before["queue"][0]
+
+    reviewed = client.post(
+        f"{BASE}/cards/{first}/reviews",
+        json={
+            "scope": str(ReviewScope.CARD),
+            "decision": str(ReviewDecision.REJECT),
+            "rationale": "the cluster is a doublet artefact, not a population",
+        },
+        headers=headers,
+    )
+    assert reviewed.status_code == 200, reviewed.text
+
+    after = client.get(f"{DRAFT_BASE}/cards/queue", headers=headers).json()
+    assert after["queue"] == before["queue"]
+    assert after["scores"] == before["scores"]
+
+    decided = next(item for item in after["card_statuses"] if item["card_id"] == first)
+    assert decided["final_status"] == str(FinalStatus.REJECTED)
+    assert decided["reviewer_id"] == EXPERT
+    untouched = [item for item in after["card_statuses"] if item["card_id"] != first]
+    assert untouched, "a queue of one card cannot show that the other cards were left alone"
+    assert all(item["final_status"] == str(FinalStatus.UNKNOWN) for item in untouched)
+    assert all(item["reviewer_id"] is None for item in untouched)
+
+
+def test_marking_a_card_unknown_without_moving_the_status_still_reads_as_acted_on(client, auth, drafted):
+    """A ``mark unknown`` decision leaves the label where it was but is still a person having acted.
+
+    Pinned because a screen that decides "somebody has looked at this" from the status alone would count
+    this card as untouched and send the reviewer back over ground they already covered (§9.3).
+    """
+    client.post(f"{DRAFT_BASE}/cards/draft", json={}, headers=auth(ANALYST, [Role.ANALYST]))
+    headers = auth(EXPERT, [Role.DOMAIN_EXPERT])
+    queue = client.get(f"{DRAFT_BASE}/cards/queue", headers=headers).json()
+    first = queue["queue"][0]
+
+    reviewed = client.post(
+        f"{BASE}/cards/{first}/reviews",
+        json={
+            "scope": str(ReviewScope.CARD),
+            "decision": str(ReviewDecision.MARK_UNKNOWN),
+            "rationale": "the set needs a second atlas before it can be called anything",
+        },
+        headers=headers,
+    )
+    assert reviewed.status_code == 200, reviewed.text
+
+    status = next(
+        item for item in client.get(f"{DRAFT_BASE}/cards/queue", headers=headers).json()["card_statuses"]
+        if item["card_id"] == first
+    )
+    assert status["final_status"] == str(FinalStatus.UNKNOWN)
+    assert status["reviewer_id"] == EXPERT

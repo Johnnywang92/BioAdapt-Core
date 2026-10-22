@@ -7,13 +7,37 @@ import { Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/
 import { DeploymentNotice } from "@/components/DeploymentStatus";
 import { NextSteps, RoleHelp } from "@/components/NextSteps";
 import { ThresholdConfirm } from "@/components/ThresholdConfirm";
-import { intentKey, projects as projectsApi, runs as runsApi, type Caller } from "@/lib/api";
+import {
+  assets as assetsApi,
+  intentKey,
+  plans as plansApi,
+  projects as projectsApi,
+  runs as runsApi,
+  tools as toolsApi,
+  type Caller,
+} from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useSubmit } from "@/lib/useAsync";
-import type { Page, Project, ReproducibilityLevel, RunListItem, RunSummary } from "@/lib/types";
+import type {
+  DataAsset,
+  Page,
+  PlanSummary,
+  Project,
+  ReproducibilityLevel,
+  RunListItem,
+  RunSummary,
+  ToolCatalog,
+} from "@/lib/types";
 
 const LEVELS: ReproducibilityLevel[] = ["byte", "numeric", "conclusion"];
+const PRIORITIES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+/**
+ * §9.7: the launch pickers read at the hard cap. A plan or an asset that exists but lands on an unseen
+ * page would look like it was never recorded, and the person would be sent off to re-register it.
+ */
+const PICKER_LIMIT = 500;
 
 export default function ProjectOverview({ params }: { params: { projectId: string } }) {
   const t = useT();
@@ -167,7 +191,18 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
   );
 }
 
-/** Starting a run (sections 9.2, 9.7): the key is shown so a person can tell a replay from a second run. */
+/**
+ * Starting a run (sections 9.2, 9.7): every field here is chosen from a row the project already holds.
+ *
+ * The plan and its version come from `GET /plans` as one choice, because a version without its plan id is
+ * not launchable and a typed pair can name a plan that was never recorded. The input asset comes from
+ * `GET /assets` and is single, not multiple: §9.2 fills one root slot, and a launch handed two assets is a
+ * run row that cannot execute. The registry snapshot comes from `GET /tools`, which is the same
+ * construction the executor hydrates - so it is read on every load rather than remembered: the snapshot
+ * covers the registered set this deployment holds, and execution refuses a run pinned against anything
+ * else (§4.1). A live ad-hoc grant is deliberately not part of it (§9.6). The idempotency key
+ * stays visible and editable, because telling a replay apart from a second run is a person's call.
+ */
 function LaunchRun({
   caller,
   projectId,
@@ -179,11 +214,19 @@ function LaunchRun({
 }) {
   const t = useT();
   const submit = useSubmit();
+  const plans = useAsync<Page<PlanSummary>>(
+    () => plansApi.list(caller, projectId, { limit: PICKER_LIMIT }),
+    [caller.token, projectId],
+  );
+  const stored = useAsync<Page<DataAsset>>(
+    () => assetsApi.list(caller, projectId, { limit: PICKER_LIMIT }),
+    [caller.token, projectId],
+  );
+  const catalog = useAsync<ToolCatalog>(() => toolsApi.read(caller, projectId), [caller.token, projectId]);
+
+  const [digest, setDigest] = useState("");
+  const [assetId, setAssetId] = useState("");
   const [form, setForm] = useState({
-    plan_id: "plan_scrnaseq",
-    plan_version: "1",
-    input_asset_ids: "as_counts",
-    tool_registry_snapshot: "6ab935c8c9aa698b582cfc2fd8e1570b995890d9dcd2e81d13709b47030e4730",
     priority: "5",
     reproducibility_level_target: "conclusion" as ReproducibilityLevel,
   });
@@ -193,24 +236,42 @@ function LaunchRun({
     setKey(intentKey(`run_${projectId}`));
   }, [projectId]);
 
+  const rows = plans.data?.items ?? [];
+  const assets = stored.data?.items ?? [];
+  /**
+   * The chosen plan is looked up on every read rather than remembered: a re-read that no longer carries
+   * these bytes means the launch would pin a version this project does not hold, and the route refuses it.
+   */
+  const plan = digest ? rows.find((one) => one.plan_sha256 === digest) ?? null : null;
+  const asset = assets.find((one) => one.asset_id === assetId) ?? null;
+  const snapshot = catalog.data?.snapshot_id ?? "";
+  const pinnedTools = plan
+    ? [...new Set(plan.nodes.map((one) => `${one.tool_name}@${one.tool_version}`))]
+    : [];
+
   const set = (name: keyof typeof form) => (event: { target: { value: string } }) =>
     setForm((current) => ({ ...current, [name]: event.target.value }));
 
+  /** Why the button is not clickable yet, in the screen's own words rather than a silent no-op. */
+  const blocked = !plan
+    ? t("pick a recorded plan first")
+    : !asset
+      ? t("pick the one asset this run is handed as its root input")
+      : !snapshot
+        ? t("the registry snapshot could not be read, so nothing can be pinned")
+        : null;
+
   function launch() {
-    const assets = form.input_asset_ids
-      .split(",")
-      .map((one) => one.trim())
-      .filter(Boolean);
-    if (!assets.length) return;
+    if (!plan || !asset || !snapshot) return;
     void submit.run(async () => {
       const created = await runsApi.launch(
         caller,
         projectId,
         {
-          plan_id: form.plan_id,
-          plan_version: form.plan_version,
-          input_asset_ids: assets,
-          tool_registry_snapshot: form.tool_registry_snapshot,
+          plan_id: plan.plan_id,
+          plan_version: plan.plan_version,
+          input_asset_ids: [asset.asset_id],
+          tool_registry_snapshot: snapshot,
           parameters: {},
           reproducibility_level_target: form.reproducibility_level_target,
           priority: Number(form.priority),
@@ -249,25 +310,136 @@ function LaunchRun({
           launch();
         }}
       >
-        <div className="grid">
-          <Field label="plan_id">
-            <input value={form.plan_id} onChange={set("plan_id")} className="mono" />
-          </Field>
-          <Field label="plan_version">
-            <input value={form.plan_version} onChange={set("plan_version")} className="mono" />
-          </Field>
-        </div>
-        <Field label="input_asset_ids" hint={t("comma separated; each one has to be registered in this project")}>
-          <input value={form.input_asset_ids} onChange={set("input_asset_ids")} className="mono" />
-        </Field>
-        <div className="grid">
+        <fieldset>
+          <legend>{t("what to run")}</legend>
           <Field
-            label="tool_registry_snapshot"
-            hint={t("the registry version the run is claimed reproducible against")}
+            label={t("which plan")}
+            hint={t("only a version this project recorded is offered, and its plan id comes with the choice")}
           >
-            <input value={form.tool_registry_snapshot} onChange={set("tool_registry_snapshot")} className="mono" />
+            <select value={digest} onChange={(event) => setDigest(event.target.value)}>
+              <option value="">{t("choose a recorded plan")}</option>
+              {rows.map((one) => (
+                <option key={one.plan_sha256} value={one.plan_sha256}>
+                  {`${one.plan_id} · v${one.plan_version} · ${one.objective}`}
+                </option>
+              ))}
+            </select>
           </Field>
-          <Field label="reproducibility_level_target">
+          <ProblemNote error={plans.error} />
+          <Loading on={plans.loading} />
+          {plans.data && !rows.length ? (
+            <Empty>
+              {t("no plan is recorded in this project yet, so there is nothing to launch.")}{" "}
+              <Link href={`/projects/${encodeURIComponent(projectId)}/plans`}>{t("build one")}</Link>
+            </Empty>
+          ) : null}
+          {digest && !plan ? (
+            <Notice>
+              {t(
+                "the plan chosen is no longer on this list; re-read and pick again rather than launching a version this project does not hold",
+              )}
+            </Notice>
+          ) : null}
+          {plan ? (
+            <dl className="facts">
+              <dt>{t("the plan starts from these slots")}</dt>
+              <dd className="mono">{plan.root_inputs.join(", ") || t("none declared")}</dd>
+              <dt>{t("steps")}</dt>
+              <dd>
+                {plan.nodes.length} · <span className="mono">{pinnedTools.join(", ") || "—"}</span>
+              </dd>
+              <dt>{t("recorded by")}</dt>
+              <dd className="mono">
+                {plan.created_by}
+                {plan.created_at ? ` · ${plan.created_at}` : ""}
+              </dd>
+            </dl>
+          ) : null}
+          {plan && plan.root_inputs.length > 1 ? (
+            <p className="muted">
+              <span className="chip chip--provisional" title={t("§9.2: the workflow fills one root slot")}>
+                {t("{n} root slots on one plan that takes one", { n: String(plan.root_inputs.length) })}
+              </span>{" "}
+              {t(
+                "launching this plan is allowed and records a run; executing it is refused until one plan declares one slot",
+              )}
+            </p>
+          ) : null}
+        </fieldset>
+
+        <fieldset>
+          <legend>{t("the one asset this run is handed")}</legend>
+          <p className="muted">
+            {t(
+              "a launch fills a single root slot, so exactly one registered asset is chosen here; a run handed two of them is a row that cannot execute (§9.2)",
+            )}
+          </p>
+          <ProblemNote error={stored.error} />
+          <Loading on={stored.loading} />
+          <div className="rows">
+            {assets.map((one) => (
+              <label className="check" key={one.asset_id}>
+                <input
+                  type="radio"
+                  name="input_asset"
+                  checked={assetId === one.asset_id}
+                  onChange={() => setAssetId(one.asset_id)}
+                />
+                <span className="mono">{one.asset_id}</span>
+                <span className="muted">
+                  {`${one.format} · ${one.size_bytes} ${t("bytes")} · ${t(one.privacy_tier)} · ${t(
+                    one.retention_class,
+                  )}`}
+                </span>
+                <span className="muted">
+                  {one.created_by_run_id
+                    ? `${t("produced by run")} ${one.created_by_run_id}`
+                    : t("registered by hand")}
+                </span>
+                {one.format !== "json" ? (
+                  <span
+                    className="chip chip--unknown"
+                    title={t(
+                      "the reference workflow reads only the platform's own canonical JSON product, so an asset recorded in another format is refused when the run executes (§6.4)",
+                    )}
+                  >
+                    {t("not a product format")}
+                  </span>
+                ) : null}
+              </label>
+            ))}
+          </div>
+          {stored.data && !assets.length ? (
+            <Empty>
+              {t("nothing is registered as data in this project yet.")}{" "}
+              <Link href={`/projects/${encodeURIComponent(projectId)}/data`}>{t("register it first")}</Link>
+            </Empty>
+          ) : null}
+        </fieldset>
+
+        <fieldset>
+          <legend>{t("what the run is pinned against")}</legend>
+          <dl className="facts">
+            <dt>tool_registry_snapshot</dt>
+            <dd className="mono">{snapshot || t("not read")}</dd>
+            <dt>{t("tools offered here")}</dt>
+            <dd className="mono">
+              {(catalog.data?.tools ?? []).map((one) => `${one.tool_name}@${one.tool_version}`).join(", ") || "—"}
+            </dd>
+          </dl>
+          <ProblemNote error={catalog.error} />
+          <Loading on={catalog.loading} />
+          <p className="muted">
+            {t(
+              "read from this project's tools route, which is the same registry the executor hydrates, so the value is neither typed nor remembered: execution refuses a run pinned against a snapshot this deployment does not hold (§4.1). The snapshot counts the registered steps only - what an ad-hoc node may run is pinned by its own grant row (§9.6)",
+            )}
+          </p>
+          <p>
+            <button className="secondary" type="button" onClick={() => catalog.reload()}>
+              {t("re-read the registry")}
+            </button>
+          </p>
+          <Field label="reproducibility_level_target" hint={t("the claim this run sets out to support")}>
             <select value={form.reproducibility_level_target} onChange={set("reproducibility_level_target")}>
               {LEVELS.map((level) => (
                 <option key={level} value={level}>
@@ -276,19 +448,31 @@ function LaunchRun({
               ))}
             </select>
           </Field>
-        </div>
-        <div className="grid">
-          <Field label="priority" hint={t("0 lowest, 9 highest")}>
-            <input value={form.priority} onChange={set("priority")} inputMode="numeric" />
-          </Field>
-          <Field
-            label="Idempotency-Key"
-            hint={t("a resend of this click replays the original run; a new intent gets a new key")}
-          >
-            <input className="mono" value={key} onChange={(event) => setKey(event.target.value)} />
-          </Field>
-        </div>
-        <button type="submit" disabled={submit.busy}>
+        </fieldset>
+
+        <fieldset>
+          <legend>{t("how this request enters the queue")}</legend>
+          <div className="grid">
+            <Field label="priority" hint={t("0 lowest, 9 highest")}>
+              <select value={form.priority} onChange={set("priority")}>
+                {PRIORITIES.map((one) => (
+                  <option key={one} value={String(one)}>
+                    {one}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="Idempotency-Key"
+              hint={t("a resend of this click replays the original run; a new intent gets a new key")}
+            >
+              <input className="mono" value={key} onChange={(event) => setKey(event.target.value)} />
+            </Field>
+          </div>
+        </fieldset>
+
+        {blocked ? <p className="muted">{blocked}</p> : null}
+        <button type="submit" disabled={submit.busy || blocked !== null}>
           {submit.busy ? t("launching…") : t("Launch")}
         </button>
       </form>

@@ -20,6 +20,7 @@ import type {
   BioSuggestion,
   CandidateSet,
   CardEvidenceRead,
+  ChunkReading,
   CredentialRegistration,
   DataAsset,
   DeploymentCapabilities,
@@ -27,6 +28,7 @@ import type {
   ExpertQueue,
   ExportEnvelope,
   ExportKind,
+  ExportPreview,
   ExportRow,
   IamCredential,
   KnowledgeDocument,
@@ -44,6 +46,7 @@ import type {
   ReviewScope,
   RunEventFrame,
   RunExecution,
+  RunJournalEvent,
   RunListItem,
   RunState,
   RunSummary,
@@ -336,9 +339,9 @@ export const approvals = {
     projectId: string,
     runId: string,
     nodeId: string,
-    body: { approval_id: string; spec: Record<string, unknown>; valid_for_minutes?: number },
+    body: { approval_id: string; spec: Record<string, unknown>; reason?: string; valid_for_minutes?: number },
   ) =>
-    call<{ grant_id: string; run_id: string; node_id: string; expires_at: string }>(
+    call<{ grant_id: string; run_id: string; node_id: string; expires_at: string; live: boolean }>(
       caller,
       `${projectPath(projectId)}/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/adhoc-grants`,
       {
@@ -390,12 +393,38 @@ export const runs = {
       caller,
       `${projectPath(projectId)}/runs/${encodeURIComponent(runId)}/budget`,
     ),
+  /**
+   * The run's journal (§9.2): every move states the actor, the reason and the spend behind it. This is
+   * where a tracker reads *why* a run sits in the state it is in, instead of a screen guessing.
+   */
+  journal: (
+    caller: Caller,
+    projectId: string,
+    runId: string,
+    params: { kind?: string; limit?: number; offset?: number } = {},
+  ) =>
+    call<Page<RunJournalEvent>>(
+      caller,
+      `${projectPath(projectId)}/runs/${encodeURIComponent(runId)}/transitions${queryString(params)}`,
+    ),
 };
 
 /** Candidates, cards, the queue and review (sections 5.4, 5.6, 9.3, 13.1, 13.4). */
 export const findings = {
-  listCandidates: (caller: Caller, projectId: string, params: { run_id?: string; cluster_id?: string; limit?: number; offset?: number } = {}) =>
-    call<Page<CandidateSet>>(caller, `${projectPath(projectId)}/candidates${queryString(params)}`),
+  listCandidates: (
+    caller: Caller,
+    projectId: string,
+    params: {
+      run_id?: string;
+      cluster_id?: string;
+      min_size?: number;
+      max_size?: number;
+      min_donors?: number;
+      reviewed?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => call<Page<CandidateSet>>(caller, `${projectPath(projectId)}/candidates${queryString(params)}`),
   /** Section 5.6: a cluster label is only an alias, so it is answered only together with its run. */
   evidence: (
     caller: Caller,
@@ -469,6 +498,12 @@ export const exports_ = {
     }),
   read: (caller: Caller, projectId: string, exportId: string) =>
     call<ExportRow>(caller, `${projectPath(projectId)}/exports/${encodeURIComponent(exportId)}`),
+  /** §9.7: the reach of the same two filters, read before a job row exists. */
+  preview: (
+    caller: Caller,
+    projectId: string,
+    params: { kind?: ExportKind; run_id?: string; final_status?: string } = {},
+  ) => call<ExportPreview>(caller, `${projectPath(projectId)}/exports/preview${queryString(params)}`),
 };
 
 /** Audit and traces (section 11.2): the workbench shows a person their own trail. */
@@ -515,6 +550,12 @@ export const knowledge = {
       method: "POST",
       body: { cluster_id: clusterId, markers, tissue },
     }),
+  /** §6.5: open a cited passage where the parse recorded it, with the stored pieces around it. */
+  chunk: (caller: Caller, projectId: string, chunkId: string, radius = 1) =>
+    call<ChunkReading>(
+      caller,
+      `${projectPath(projectId)}/knowledge/chunks/${encodeURIComponent(chunkId)}${queryString({ radius })}`,
+    ),
 };
 
 export function queryString(params: Record<string, unknown>): string {

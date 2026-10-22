@@ -231,10 +231,30 @@ def list_candidates(
     page: Page = Depends(page_params),
     run_id: Optional[str] = Query(None),
     cluster_id: Optional[str] = Query(None),
+    min_size: Optional[int] = Query(None, ge=1, description="smallest population, in cells"),
+    max_size: Optional[int] = Query(None, ge=1, description="largest population, in cells"),
+    min_donors: Optional[int] = Query(None, ge=1, description="fewest donors the population has to span"),
+    reviewed: Optional[bool] = Query(
+        None, description="only candidates a person has acted on (true) or nobody has yet (false)"
+    ),
 ) -> dict:
+    """The candidate search behind §5.6: every filter is a column the run wrote, never a screen-side guess.
+
+    A population's size and donor span are stored on the candidate, and whether anyone has acted on it is
+    read from its card, so a filtered page is the same fact set the card screen shows one at a time.
+    """
     session.enforce(Action.RUN_READ, f"{session.project_id}:candidate_list", "candidate_collection")
+    if min_size is not None and max_size is not None and min_size > max_size:
+        raise invalid("min_size", f"min_size {min_size} is above max_size {max_size}, so no population can match")
     rows = session.catalog.list_candidates(
-        display_name=cluster_id, run_id=run_id, limit=page.limit, offset=page.offset
+        display_name=cluster_id,
+        run_id=run_id,
+        min_size=min_size,
+        max_size=max_size,
+        min_donors=min_donors,
+        reviewed=reviewed,
+        limit=page.limit,
+        offset=page.offset,
     )
     return page.envelope([row.model_dump(mode="json") for row in rows])
 
@@ -310,12 +330,34 @@ def read_expert_queue(
 
     The ceiling is a gate reading of the stored numbers, never a column on the card, so the order can only
     be produced by re-deriving the drafts - which is also why re-running a queue cannot drift from the run.
+
+    ``card_statuses`` is the one part of the answer that does not come from the drafts: a re-derived draft
+    is always filed as ``unknown``, so whether a person has already acted on a card is only in the row the
+    review route wrote. A reviewer working through the queue needs that, and needs it read from the store
+    rather than inferred from the order the screen was handed.
     """
     session.enforce(Action.RUN_READ, f"{run_id}:card_queue", "evidence_card_collection")
     drafts = session.evidence_cards(run_id).drafts()
     asked = [item for item in (client_ask or "").split(",") if item.strip()]
     queue = build_queue(drafts, client_ask=asked, thresholds=session.thresholds, limit=limit)
-    return {"run_id": run_id, "drafted": len(drafts), **queue.as_dict()}
+    filed = session.catalog.card_review_states([draft.card_id for draft in drafts])
+    statuses = []
+    for draft in drafts:
+        state = filed.get(draft.card_id)
+        statuses.append(
+            {
+                "card_id": draft.card_id,
+                "candidate_id": draft.candidate_id,
+                "final_status": state["final_status"] if state else None,
+                "reviewer_id": state["reviewer_id"] if state else None,
+            }
+        )
+    return {
+        "run_id": run_id,
+        "drafted": len(drafts),
+        "card_statuses": statuses,
+        **queue.as_dict(),
+    }
 
 
 @router.post("/projects/{project_id}/cards/{card_id}/reviews")

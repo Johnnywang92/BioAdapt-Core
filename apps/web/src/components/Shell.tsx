@@ -18,6 +18,7 @@ const SCREENS: [string, string][] = [
   ["/data", "data"],
   ["/plans", "plans"],
   ["/approvals", "approvals"],
+  ["/runs", "runs"],
   ["/queue", "expert queue"],
   ["/knowledge", "knowledge base"],
   ["/exports", "exports"],

@@ -11,6 +11,7 @@ Features:
 from bioadapt_knowledge.chunking import chunk_document
 from bioadapt_knowledge.entities import (
     BioSuggestion,
+    ChunkReading,
     DocumentChunk,
     DocumentType,
     KnowledgeDocument,
@@ -24,6 +25,7 @@ from bioadapt_knowledge.vectorizer import DeterministicTfidfEmbedder, Embedder, 
 
 __all__ = [
     "BioSuggestion",
+    "ChunkReading",
     "DeterministicTfidfEmbedder",
     "DocumentChunk",
     "DocumentType",

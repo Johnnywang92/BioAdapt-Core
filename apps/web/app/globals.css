@@ -254,6 +254,23 @@ textarea {
   background: var(--surface);
 }
 
+/* A choice row ticks a box and then names the row: the sizing rule above is for text fields, and applying
+   it to a tick made every option a full-width bordered block. */
+label.check {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+label.check input[type="checkbox"],
+label.check input[type="radio"] {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
 .error {
   border: 1px solid #f0c2c2;
   background: #fdeaea;
@@ -309,6 +326,24 @@ textarea {
 .evidence summary {
   cursor: pointer;
   color: var(--ink-soft);
+}
+
+/* One cited passage (§6.5). The same component appears under a RAG answer and under a suggestion, so the
+   blockquote itself carries the look rather than each screen inventing one. */
+blockquote {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+blockquote p {
+  margin: 0;
 }
 
 .side {

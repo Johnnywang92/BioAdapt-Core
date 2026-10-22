@@ -52,7 +52,6 @@ class RunRequest(Contract):
     reproducibility_level_target: ReproducibilityLevel = ReproducibilityLevel.BYTE
     tool_registry_snapshot: str = REFERENCE_REGISTRY_SNAPSHOT
     priority: int = Field(5, ge=0, le=9)
-    priority: int = Field(5, ge=0, le=9)
 
 
 def _run_id(project_id: str, idempotency_key: str, plan_digest: str) -> str:

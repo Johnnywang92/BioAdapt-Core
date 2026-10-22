@@ -208,16 +208,18 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
 | --- | --- | --- |
 | `/` | 项目入口 | 项目列表、隐私分级（`privacy_tier`）色彩徽章、创建项目 |
 | `/keys` | 登录密钥与身份目录 | 谁可以用密钥文件登录：登记公钥并授予角色/项目范围/二次因子/单人/流水线，列出与吊销（§11.2，见 6.1.1） |
-| `/projects/{id}` | 项目总览与基线确认 | **Phase 1 阶段 0 基线判据确认面板**（PI 一键采用/自定 24 项判据并置位确认）；**部署运行状态**（`DeploymentStatus`）与参考快照 |
+| `/projects/{id}` | 项目总览与基线确认 | **Phase 1 阶段 0 基线判据确认面板**（PI 一键采用/自定 24 项判据并置位确认）；**部署运行状态**（`DeploymentStatus`）与参考快照；**第四批①启动闭环**：起 run 面板的 `plan_id`+`plan_version` 从 `GET …/plans` 已登记的版本里选一个（连带显示它声明的根输入槽），输入资产从 `GET …/assets` 里单选（§9.2 只填一个根槽，交两个的 run 注定执行不了），`tool_registry_snapshot` 从 `GET …/tools` 读现值，屏上不再有任何手打的技术 id |
 | `/projects/{id}/data` | 数据登记 | 资产登记（§5.9 完整性字段）、**支持拖拽批量上传** |
-| `/projects/{id}/plans` | 分析计划与批准 | 计划 JSON 录入、结构校验与哈希固定 |
-| `/projects/{id}/runs/{runId}` | run 状态与执行 | run 状态机、journal 审计、三轴预算监控；**Phase 2 进程内 Run 执行器 Seam**（界面一键触发 11 节点 DAG 计算、候选聚类与自动起草证据卡） |
-| `/projects/{id}/queue` | 专家复核队列 | 按影响 × 不确定性排序、原因透明度（Reasons）、每周复核预算上限守卫 |
-| `/projects/{id}/candidates/{candidateId}` | 单屏证据卡 | **多组学跨模态冲突警示**、**结构化生信审查备忘录**（供体检验力不足与混杂度警示）、**私有知识库内联 RAG 建议与一键采纳**（One-click review adoption）、天花板（Ceiling）读数、三类复核与专家签字 |
+| `/projects/{id}/plans` | 分析计划与批准 | **第二批方案向导**（节点的工具名/版本/槽位/资源下限/审批要求全部读自 `GET …/tools`，即执行进程 hydrate 的同一份注册表）与计划 JSON 录入，服务端校验器把关，哈希固定 |
+| `/projects/{id}/runs` | 运行列表 | **第三批①运行跟踪**：一行一个 run，状态是状态机留下的、队列位置是调度器刚回答的；「盯着这个列表」每 5 秒重读同一端点，不写任何东西 |
+| `/projects/{id}/runs/{runId}` | run 状态与执行 | run 状态机、三轴预算监控；**第三批①journal 时间线**（每一次移动：何时、从哪到哪、谁动的、给了什么理由，重试与花费行同属一条轨迹，§9.2）；**Phase 2 进程内 Run 执行器 Seam**（界面一键触发 11 节点 DAG 计算、候选聚类与自动起草证据卡） |
+| `/projects/{id}/runs/{runId}/candidates` | 候选集筛选 | **第三批②检索筛选**：按簇名、规模上下界、供体数下限、是否已有人复核过筛选；条件写进地址栏，筛选后的页面可以直接以链接交给别人 |
+| `/projects/{id}/queue` | 专家复核队列 | 按影响 × 不确定性排序、原因透明度（Reasons）、每周复核预算上限守卫；**第三批③连续复核**：显示 {n}/{m} 已有人做过决定与「谁做过动作」列，给出「接着复核下一张」入口。顺序始终由 §13.4 规则派生，做过决定的卡不会重排队列 |
+| `/projects/{id}/candidates/{candidateId}` | 单屏证据卡 | **多组学跨模态冲突警示**、**结构化生信审查备忘录**（供体检验力不足与混杂度警示）、**私有知识库内联 RAG 建议与一键采纳**（One-click review adoption）、天花板（Ceiling）读数、三类复核与专家签字；**第三批③**按本 run 队列给出上一张/下一张导航；**第四批②字段级复核**：field 范围不再手写 `new_value` JSON，改为一屏按字段改（hypothesis/label/ontology/status_reason/冲突位），只把改动的行发出去，卡片读到的原值仍留在轨迹里（§5.4） |
 | `/projects/{id}/candidates/{candidateId}/alignment` | 跨轮对齐历史 | 跨轮候选集对齐追踪（§5.6） |
-| `/projects/{id}/knowledge` | 私有知识库 | **离线本地知识库**：支持批量拖拽上传 docx/pdf/markdown/txt 文档、离线向量化与分块、文献/标记库 RAG 语义检索测试 |
-| `/projects/{id}/approvals` | 审批收件箱 | 审批门待办列表；**Ad-hoc 工具授权发放面板**（对已决定的 `adhoc_tool` 门直接在界面上配置并生成一次性执行凭证） |
-| `/projects/{id}/exports` | 导出请求 | 四类产物导出请求与状态追踪 |
+| `/projects/{id}/knowledge` | 私有知识库 | **离线本地知识库**：支持批量拖拽上传 docx/pdf/markdown/txt 文档、离线向量化与分块、文献/标记库 RAG 语义检索测试；**第三批④引用原文定位**：引用条可打开被引原段，显示解析器记录的页码与字符偏移并读取该段前后已存储的分块 |
+| `/projects/{id}/approvals` | 审批收件箱 | 审批门待办列表；**第四批③ad-hoc 执行凭据如实填表**：对已批准的 `adhoc_tool` 门，节点的工具名与版本读自这个 run 钉住的那份方案（`GET …/plans` 的 `nodes`），`task`、镜像摘要、资源与实测、授权条款、质量检查与假设/失效条件等由签字的人逐行写；缺任何一项就按住不发，屏上不再替人编一份 spec（§9.6），拒绝与失败一律显示服务端原话 |
+| `/projects/{id}/exports` | 导出请求 | 四类产物导出请求与状态追踪；**第三批⑤导出预览与通知**：run 与结论状态改为从本项目已有的行里选（不必再手打技术 id），排队前先预览这两个筛选能选到多少已建档的行，预览走的是与排队同一道 §1.5 门禁；列表按状态计数并把失败原因按服务端原话列出，「盯着这个列表」只是重读 |
 
 ### 6.3 从头做一次单细胞分析（顺序 + 示例数据实测数字）
 
@@ -247,14 +249,14 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
 | --- | --- | --- | --- | --- |
 | 1 | 建项目 | `/` | `POST /v1/projects` | `privacy_tier` 故意无默认值；`created_by` 取自 token，不许手填 |
 | 2 | 登记数据 | `/data` | `POST …/assets` → 预签 PUT → `POST …/assets/{id}/complete`（[:139](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L139)、[:164](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_data.py#L164)） | 浏览器算 SHA-256 并预填 `asset_id`/`content_fingerprint`；支持拖拽批量上传；**行只在 complete 成功后存在** |
-| 3 | 记录计划 | `/plans` | `POST …/plans` | 这一屏收**整份计划 JSON**，服务端校验器是唯一把关（不做静默规范化）；返回 `plan_sha256` |
-| 4 | 起 run | `/projects/{id}` 的 Launch a run | `POST …/runs`（`Idempotency-Key` 头必填，缺即 invalid，[routes_runs.py:79](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_runs.py#L79)） | 202 + `run_id = sha256(project\|key\|digest)[:12]`；自动回退到参考工具快照；同键不同体 409 |
+| 3 | 记录计划 | `/plans` | `POST …/plans` · `GET …/plans` | 这一屏收**整份计划 JSON**，服务端校验器是唯一把关（不做静默规范化）；POST 返回 `plan_sha256`，GET 列出版本时带上 `root_inputs`，起 run 那一屏据此说明还要交几个资产（**第四批①**） |
+| 4 | 起 run | `/projects/{id}` 的 Launch a run | `POST …/runs`（`Idempotency-Key` 头必填，缺即 invalid，[routes_runs.py:95](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_runs.py#L95)） | 202 + `run_id = sha256(project\|key\|digest)[:12]`；同键不同体 409；`tool_registry_snapshot` 缺省时服务端回退到参考快照，但工作台已改为把 `GET …/tools` 的 `snapshot_id` 原样提交（**第四批①**） |
 | 5 | 批准与推进 | `/approvals` | `POST …/runs/{id}/approvals` → `…/approvals/{aid}/decision` → `POST …/runs/{id}/transitions` | transitions 是**唯一**状态机入口；请求门的人不能自批；服务账号永远不能批；支持界面发放 Ad-hoc 工具授权 |
 | 6 | 计算与起草 | `/projects/{id}/runs/{id}` | `POST …/runs/{id}/execute` | **进程内执行接缝**：一键跑完 11 节点 DAG 计算链、自动发现 C1-C3 候选集并起草证据卡入库 |
 | 7 | 候选集与卡 | `/queue` | `POST …/runs/{id}/cards/draft` | 一簇一个 `CandidateSet`，成员指纹由 `derive_candidate` 复现 |
-| 8 | 排队 | `/queue` | `GET …/runs/{id}/cards/queue` | 分数 `impact(0-3) × uncertainty(0-3) + client ask(0/2)`（[queue/page.tsx:141](file:///Users/yifanwang/workspace/BioAdapt-Core/apps/web/app/projects/%5BprojectId%5D/queue/page.tsx#L141)），上限受 §13.4 的每周复核预算约束 |
-| 9 | 复核与签字 | `/candidates/{id}` | `POST …/cards/{card_id}/reviews` → `…/sign_off` | 起草或复核过这张卡的人**不能再签它**（§13.1）；显示多组学跨模态冲突、生信审查备忘录；支持知识库 RAG 建议一键采纳；标签与 ontology 由人写入 |
-| 10 | 导出 | `/exports` | `POST …/exports` → `GET …/exports/{id}` | 本仓无导出 worker，队列里的行永远 `QUEUED` |
+| 8 | 排队 | `/queue` | `GET …/runs/{id}/cards/queue` | 分数 `impact(0-3) × uncertainty(0-3) + client ask(0/2)`（[queue/page.tsx:141](file:///Users/yifanwang/workspace/BioAdapt-Core/apps/web/app/projects/%5BprojectId%5D/queue/page.tsx#L141)），上限受 §13.4 的每周复核预算约束；响应另带 `card_statuses`，即每张卡已归档的 `final_status` 与做过动作的人，顺序不因此改变（**第三批③**） |
+| 9 | 复核与签字 | `/candidates/{id}` | `POST …/cards/{card_id}/reviews` → `…/sign_off` | 起草或复核过这张卡的人**不能再签它**（§13.1）；显示多组学跨模态冲突、生信审查备忘录；支持知识库 RAG 建议一键采纳；标签与 ontology 由人写入。**第四批②**：field 范围用按字段的编辑器改（只发改动的那几行，`previous_value` 仍按读到的卡片送出，所以过期复核照旧 409），不再手写 `new_value` JSON |
+| 10 | 导出 | `/exports` | `GET …/exports/preview` → `POST …/exports` → `GET …/exports/{id}` | **第三批⑤**：预览用与排队相同的两道检查（项目隐私级与 §1.5 已测量切集），返回的是此刻已建档的行数，不是文件内容；本仓无导出 worker，队列里的行永远 `QUEUED` |
 
 **计算链：11 个节点与实测输出**（实现在 [steps.py:151](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/steps.py#L151) 起，工具版本一律 `1.0.0`）
 
@@ -304,7 +306,7 @@ PY
 想把手上的一管数据跑成结论，下面四条是需要了解的接缝状态。前两条在最新版本中已提供内建接缝：
 
 1. **HTTP 起的 run 现已有进程内执行接缝（In-process Run Execution Seam）。** 原先 `InMemoryQueue` 仅受理 run 而不调度计算。当前版本在 API 侧提供了 `POST /v1/projects/{p}/runs/{r}/execute`（支持 `auto_approve_gates=true` 自动放行审批门），并在工作台 `/projects/{id}/runs/{runId}` 提供了「启动执行（Execute In-Process）」按钮。触发后将在本进程内完整运行 11 节点 DAG 计算链、自动发现 C1-C3 候选亚群并起草证据卡入库，打通了新建项目的单机完整分析闭环（生产环境仍需 Slurm / K8s / Cromwell 分布式计算执行器）。
-2. **`tool_registry_snapshot` 已支持参考快照自动兜底，审批页补齐授予界面。** 原先启动 run 必须手填未暴露的快照哈希。当前版本中 `RunRequest` 已将 `tool_registry_snapshot` 默认设置为参考快照哈希 `REFERENCE_REGISTRY_SNAPSHOT`（`6ab935c8c9aa698b582cfc2fd8e1570b995890d9dcd2e81d13709b47030e4730`），调用方缺省即自动回退；工作台项目主页 `DeploymentStatus` 组件直接展示部署快照状态；审批收件箱 `/projects/{id}/approvals` 亦补齐了针对已决策 `adhoc_tool` 审批门发放 Ad-hoc 授权的操作界面。
+2. **`tool_registry_snapshot` 已经不需要人填。** 服务端仍留着兜底：`RunRequest` 的缺省值是参考快照哈希 `REFERENCE_REGISTRY_SNAPSHOT`（`6ab935c8…`），缺省即回退。但工作台不再依赖它——项目主页的启动面板把 `GET /v1/projects/{p}/tools` 读回来的 `snapshot_id` 原样提交，而那个值正是执行进程 hydrate 的同一份注册表算出来的（[toolset.py:102](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/toolset.py#L102)），对不上号就是 [routes_runs.py:241](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/routes_runs.py#L241) 那次 refusal。注意快照只统计**已注册**工具，临时授权不进快照（§9.6，见第 6.6 段那条说明），所以启动前重读一次注册表就够了。同一屏还顺带把 `plan_id`+`plan_version` 与输入资产改成从 `GET …/plans`、`GET …/assets` 里选（**第四批①**）。
 3. **对象平面到不了。** 预签 URL 的 host 写死 `https://object.internal/{key}?…`（[objectstore.py:108](file:///Users/yifanwang/workspace/BioAdapt-Core/packages/storage/src/bioadapt_storage/objectstore.py#L108)），浏览器 PUT 不进去，于是 `complete` 永远 409 `nothing has been uploaded`。要接 MinIO/S3。
 4. **格式对不上——转换器已经补到落盘，注册那一步还在人身上。** 计算侧只认 `format == "json"`（平台自己的 product codec），h5ad 行会被拒（[runner.py:69](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L69)、[:744](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/runner.py#L744)）。入口现在是 [scripts/convert_h5ad.py:73](file:///Users/yifanwang/workspace/BioAdapt-Core/scripts/convert_h5ad.py#L73)：`read_h5ad()` → `ExpressionProduct` → [admit()/write_admission()](file:///Users/yifanwang/workspace/BioAdapt-Core/workflows/scrnaseq/src/bioadapt_scrnaseq/admission.py#L126)，吐 `as_xxxx.json`（canonical JSON 的 `expression_v1` 资产）加 `as_xxxx.manifest.json`，后者 `asset` 那个对象就是 `POST /v1/projects/{p}/assets` 的请求体。剩下两件：`anndata`/`numpy`/`scanpy` 仍不在 `.venv` 里（装它要另批）；CLI 只往目录里写文件，因为参考部署的 index 与对象平面活在同一个进程的内存里，第二个进程插不进正在跑的 8000，而断点 3 的 `object.internal` 还堵着那次 PUT。
 
@@ -456,7 +458,7 @@ curl -s -H "Authorization: Bearer $TOK" \
 
 `ceiling` 是计划值与项目配额**逐轴取小**的结果，不是某一轴的主从关系。
 
-其余常用读接口：`GET …/transitions`（journal，每次移动都带理由）、`GET …/approvals?state=pending`、`GET …/approvals?overdue=true`、`GET …/candidates`、`GET …/candidates/{id}/evidence`、`GET …/candidates/{id}/alignment`、`GET …/audit`、`GET …/assets`。
+其余常用读接口：`GET …/transitions`（journal，每次移动都带理由）、`GET …/approvals?state=pending`、`GET …/approvals?overdue=true`、`GET …/candidates`、`GET …/candidates/{id}/evidence`、`GET …/candidates/{id}/alignment`、`GET …/audit`、`GET …/assets`、`GET …/knowledge/chunks/{chunk_id}?radius=0..3`（引用的原段与其前后已存储的分块，**第三批④**）、`GET …/exports/preview?kind=&run_id=&final_status=`（**第三批⑤**）、`GET …/plans`（已登记的版本，带 `root_inputs`）、`GET …/tools`（这套部署提供的工具行与 `snapshot_id`，起 run 那一屏的两个选择都读自这里，**第四批①**）。
 
 ### 7.3 写操作：审批闭环
 
@@ -790,7 +792,7 @@ app = create_app(ApiState(
 
 - **已完成闭合项**：
   1. **Phase 1 阶段 0 阈值确认界面**（已闭合）：工作台项目总览页已提供 24 项判据确认面板，支持 PI 一键采用基线或重述确认，解除未确认时的结论出口 403 阻断。
-  2. **Ad-hoc 工具授权界面**（已闭合）：工作台 `/projects/{id}/approvals` 已针对已批准的 `adhoc_tool` 审批门提供授权配置与一键发放界面（`POST …/adhoc-grants`）。
+  2. **Ad-hoc 工具授权界面**（已闭合，**第四批③**改为如实填表）：工作台 `/projects/{id}/approvals` 针对已批准的 `adhoc_tool` 门发放 `POST …/adhoc-grants`。节点上工具名与版本读自这个 run 钉住的方案，其余 spec 行由签字的人填写，缺项即按住不发；早先那版界面会替人拼一份样例 spec（假 `container_digest`、写死 `node_id || "qc"`）并用 `alert()` 报成功，现在都不再存在。
   3. **Phase 2 进程内 Run 执行器 Seam**（已闭合）：工作台 `/projects/{id}/runs/{runId}` 提供了「启动执行」按钮，API 提供了 `POST …/runs/{id}/execute` 端点，单机参考部署可直接跑通 11 节点 DAG、候选集发现与证据卡起草。
   4. **私有知识库与离线 RAG 辅助**（已闭合）：本地支持 docx/pdf/markdown 拖拽上传、无外部依赖向量化与单细胞特征检索建议，并可在证据卡上由专家一键采纳。
 - **现存未完成项**：

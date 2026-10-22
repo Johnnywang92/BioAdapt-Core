@@ -3,20 +3,33 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { Chip, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
+import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { DeploymentNotice } from "@/components/DeploymentStatus";
 import { approvals as approvalsApi, runs as runsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
-import { useAsync, useSubmit } from "@/lib/useAsync";
-import type { Approval, ApprovalKind, RunExecution, RunSummary } from "@/lib/types";
+import { useAsync, useAutoRefresh, useSubmit } from "@/lib/useAsync";
+import type {
+  Approval,
+  ApprovalKind,
+  Page,
+  RunExecution,
+  RunJournalEvent,
+  RunSummary,
+} from "@/lib/types";
 
 const KINDS: ApprovalKind[] = ["plan", "node", "adhoc_tool", "escalation"];
+
+/** The four kinds one journal line can be (§9.2); the API validates the value, so this only offers it. */
+const EVENT_KINDS = ["state", "node_retry", "business_retry", "usage"];
 
 export default function RunPage({ params }: { params: { projectId: string; runId: string } }) {
   const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
   const runId = decodeURIComponent(params.runId);
+  // One switch, shared by the two reads that answer "where is it now, and why there": a person watching
+  // a run does not want to start and stop two pollers.
+  const [live, setLive] = useState(false);
 
   if (!caller) {
     return (
@@ -28,19 +41,140 @@ export default function RunPage({ params }: { params: { projectId: string; runId
 
   return (
     <>
-      <RunSummaryPanel caller={caller} projectId={projectId} runId={runId} />
+      <RunSummaryPanel caller={caller} projectId={projectId} runId={runId} live={live} setLive={setLive} />
+      <Journal caller={caller} projectId={projectId} runId={runId} live={live} />
       <Gate caller={caller} projectId={projectId} runId={runId} />
     </>
   );
 }
 
-function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; projectId: string; runId: string }) {
+/**
+ * The run's own audit trail (§9.2): who moved it, from which state to which, and the sentence they gave.
+ *
+ * Nothing here is composed by the screen. A tracker that inferred "it is probably clustering" from a
+ * timestamp would be the one place a run could be wrong about itself, so the panel shows the journal
+ * rows and the reason field in the server's own words.
+ */
+function Journal({
+  caller,
+  projectId,
+  runId,
+  live,
+}: {
+  caller: Caller;
+  projectId: string;
+  runId: string;
+  live: boolean;
+}) {
+  const t = useT();
+  const [kind, setKind] = useState("");
+  const read = useAsync<Page<RunJournalEvent>>(
+    () => runsApi.journal(caller, projectId, runId, { ...(kind ? { kind } : {}), limit: 100 }),
+    [caller.token, projectId, runId, kind],
+  );
+  useAutoRefresh(read.reload, 5000, live);
+
+  return (
+    <Panel
+      title={t("Journal")}
+      note={t(
+        "every state change is written here with the actor who moved it and the reason they gave; a retry and a spend line are the same trail (§9.2)",
+      )}
+      actions={
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={kind} onChange={(event) => setKind(event.target.value)} aria-label={t("kind")}>
+            <option value="">{t("every kind")}</option>
+            {EVENT_KINDS.map((one) => (
+              <option key={one} value={one}>
+                {`${t(one)} (${one})`}
+              </option>
+            ))}
+          </select>
+          <button className="secondary" type="button" disabled={read.loading} onClick={read.reload}>
+            {t("re-read")}
+          </button>
+        </div>
+      }
+    >
+      <ProblemNote error={read.error} />
+      <Loading on={read.loading} />
+      {read.data && read.data.items.length ? (
+        <table>
+          <thead>
+            <tr>
+              <th>{t("when")}</th>
+              <th>{t("kind")}</th>
+              <th>{t("from")}</th>
+              <th>{t("to")}</th>
+              <th>{t("who")}</th>
+              <th>{t("why it moved")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {read.data.items.map((event) => (
+              <tr key={event.event_id}>
+                <td className="mono">{event.at ?? "—"}</td>
+                <td>
+                  <Chip title={event.kind}>{t(event.kind)}</Chip>
+                </td>
+                <td>{t(event.from_state)}</td>
+                <td>
+                  <Chip title={event.to_state} status={event.to_state === "FAILED" ? "rejected" : undefined}>
+                    {t(event.to_state)}
+                  </Chip>
+                </td>
+                <td>
+                  <span className="mono">{event.actor_id}</span>
+                  <div className="muted mono">
+                    {t(event.actor_kind)}
+                    {event.node_id ? ` · ${event.node_id}` : ""}
+                    {event.attempt > 1 ? ` · ${t("attempt")} ${event.attempt}` : ""}
+                    {event.loop_iteration > 0 ? ` · ${t("iteration")} ${event.loop_iteration}` : ""}
+                  </div>
+                </td>
+                <td>
+                  {event.reason}
+                  {event.compute_minutes > 0 || event.model_cost_usd > 0 ? (
+                    <div className="muted">
+                      {t("{compute} compute minutes · {cost} model cost", {
+                        compute: event.compute_minutes,
+                        cost: event.model_cost_usd,
+                      })}
+                    </div>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <Empty>{t("No journal line has been written for this run, so nothing has moved it yet.")}</Empty>
+      )}
+    </Panel>
+  );
+}
+
+function RunSummaryPanel({
+  caller,
+  projectId,
+  runId,
+  live,
+  setLive,
+}: {
+  caller: Caller;
+  projectId: string;
+  runId: string;
+  live: boolean;
+  setLive: (value: boolean) => void;
+}) {
   const t = useT();
   const read = useAsync<RunSummary>(() => runsApi.read(caller, projectId, runId), [caller.token, projectId, runId]);
   const budget = useAsync(
     () => runsApi.budget(caller, projectId, runId),
     [caller.token, projectId, runId],
   );
+  useAutoRefresh(read.reload, 5000, live);
+  useAutoRefresh(budget.reload, 5000, live);
   const cancel = useSubmit();
   const [reason, setReason] = useState("");
   const [executing, setExecuting] = useState(false);
@@ -70,6 +204,15 @@ function RunSummaryPanel({ caller, projectId, runId }: { caller: Caller; project
       )}
       actions={
         <div style={{ display: "flex", gap: 8 }}>
+          <button
+            type="button"
+            className={live ? undefined : "secondary"}
+            aria-pressed={live}
+            onClick={() => setLive(!live)}
+            title={t("watching re-reads this run and its journal every five seconds; it never signs anything off")}
+          >
+            {live ? t("watching") : t("watch this run")}
+          </button>
           <button className="secondary" type="button" onClick={() => { read.reload(); budget.reload(); }}>
             {t("re-read")}
           </button>
@@ -277,6 +420,16 @@ function ExecutionResult({ projectId, execution }: { projectId: string; executio
         <Link href={`/projects/${projectId}/queue?run_id=${encodeURIComponent(runId)}`}>
           {t("Review the drafts in the expert queue")}
         </Link>
+      ) : null}
+      {execution.candidate_count > 0 ? (
+        <p>
+          <Link href={`/projects/${projectId}/runs/${encodeURIComponent(runId)}/candidates`}>
+            {t("Search the populations this run produced")}
+          </Link>{" "}
+          <span className="muted">
+            {t("— {n} populations, each one only a name inside this run (§5.6)", { n: execution.candidate_count })}
+          </span>
+        </p>
       ) : null}
     </div>
   );

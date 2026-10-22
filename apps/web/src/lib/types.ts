@@ -229,6 +229,8 @@ export interface PlanSummary {
   plan_version: string;
   objective: string;
   plan_sha256: string;
+  /** The slots a launch has to be handed an asset for (§9.2); the rest of the graph is produced inside the run. */
+  root_inputs: string[];
   created_by: string;
   created_at: string | null;
   nodes: PlanNode[];
@@ -313,6 +315,29 @@ export interface RunEventFrame {
   state: RunState;
   queue_position: number | null;
   frame: number;
+}
+
+/**
+ * One line of the run's journal (§9.2). `reason` is the server's own sentence for the move - a
+ * transition without one is refused at the route, so a tracker never has to invent an explanation.
+ */
+export interface RunJournalEvent {
+  event_id: string;
+  run_id: string;
+  kind: string;
+  from_state: RunState;
+  to_state: RunState;
+  actor_id: string;
+  actor_kind: string;
+  reason: string;
+  input_hash: string;
+  versions: Record<string, unknown>;
+  attempt: number;
+  node_id: string | null;
+  loop_iteration: number;
+  compute_minutes: number;
+  model_cost_usd: number;
+  at: string | null;
 }
 
 export interface Approval {
@@ -486,10 +511,20 @@ export interface CardScore {
   reasons: string[];
 }
 
+/** §9.1: what the filed row says about one card. The draft is always unknown, so this is the only
+ * place that knows whether a person has acted - and null means nobody has filed the card yet. */
+export interface CardStatus {
+  card_id: string;
+  candidate_id: string;
+  final_status: FinalStatus | null;
+  reviewer_id: string | null;
+}
+
 /** Section 13.4: the short list, what was filed instead, and the two numbers behind every place. */
 export interface ExpertQueue {
   run_id: string;
   drafted: number;
+  card_statuses: CardStatus[];
   queue: string[];
   observed: string[];
   scores: CardScore[];
@@ -580,6 +615,22 @@ export interface ExportRow {
   ttl_seconds?: number;
 }
 
+/**
+ * How far the two export filters reach in the catalog before a job exists (§9.7, 第三批⑤).
+ *
+ * The counts are stored rows, not the artefact: a delivery is written by a worker, and until one runs
+ * nobody can show its contents. `by_status` is cut by the chosen run alone, so a screen can say what a
+ * status pick leaves the other statuses rather than only what it keeps.
+ */
+export interface ExportPreview {
+  kind: ExportKind;
+  filters: { run_id: string | null; final_status: string | null };
+  thresholds_version: string;
+  evidence_cards: { matched: number; by_status: Partial<Record<FinalStatus, number>> };
+  candidate_sets: { matched: number };
+  data_assets: { matched: number; size_bytes: number };
+}
+
 export type DocumentType = "paper" | "lab_note" | "analysis_log" | "protocol" | "other";
 
 export interface KnowledgeDocument {
@@ -600,20 +651,35 @@ export interface KnowledgeDocument {
   metadata: Record<string, unknown>;
 }
 
+/** One piece the knowledge index stored. The locator is what the parse recorded, so it can be absent:
+ * a page only when the format has pages, and offsets only when the section was sliced out of the text. */
+export interface DocumentChunk {
+  chunk_id: string;
+  doc_id: string;
+  chunk_index: number;
+  section_path: string;
+  content: string;
+  token_count: number;
+  page?: number | null;
+  char_start?: number | null;
+  char_end?: number | null;
+  metadata: Record<string, unknown>;
+}
+
 export interface RetrievalHit {
-  chunk: {
-    chunk_id: string;
-    doc_id: string;
-    chunk_index: number;
-    section_path: string;
-    content: string;
-    token_count: number;
-    metadata: Record<string, unknown>;
-  };
+  chunk: DocumentChunk;
   score: number;
   dense_rank?: number | null;
   sparse_rank?: number | null;
   source_doc?: KnowledgeDocument | null;
+}
+
+/** §6.5: a cited passage, where it sits, and the pieces the same index kept on either side of it. */
+export interface ChunkReading {
+  chunk: DocumentChunk;
+  document?: KnowledgeDocument | null;
+  before: DocumentChunk[];
+  after: DocumentChunk[];
 }
 
 export interface RagAnswer {

@@ -51,6 +51,12 @@ class DocumentChunk(ImmutableContract):
     section_path: str = "General"
     content: str
     token_count: int = 0
+    # Where this piece sits in the document the parser read: a page when the format has pages, and the
+    # character span inside the text the index was built from. None means the parser could not say, and a
+    # citation that cannot say is shown without a locator rather than with a guessed one (§6.5).
+    page: Optional[int] = None
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
     vector: Optional[list[float]] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -67,6 +73,19 @@ class RetrievalHit(ImmutableContract):
         title = self.source_doc.title if self.source_doc else self.chunk.doc_id
         section = f" § {self.chunk.section_path}" if self.chunk.section_path else ""
         return f"[{title}{section}]"
+
+
+class ChunkReading(ImmutableContract):
+    """One cited passage, where the parser says it sits, and the stored pieces either side of it.
+
+    The index keeps chunks rather than the whole file, so context can only be the neighbouring pieces the
+    same parse produced. Returning those is honest; returning a span of text nobody stored would not be.
+    """
+
+    chunk: DocumentChunk
+    document: Optional[KnowledgeDocument] = None
+    before: list[DocumentChunk] = Field(default_factory=list)
+    after: list[DocumentChunk] = Field(default_factory=list)
 
 
 class RagAnswer(ImmutableContract):

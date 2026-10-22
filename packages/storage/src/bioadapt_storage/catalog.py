@@ -9,7 +9,7 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Callable, Optional
@@ -27,7 +27,7 @@ from bioadapt_schemas.entities import (
     RunManifest,
     sha256_of_json,
 )
-from bioadapt_schemas.enums import RunEventKind, RunState, UsageScope
+from bioadapt_schemas.enums import FinalStatus, RunEventKind, RunState, UsageScope
 from bioadapt_schemas.evidence import EvidenceCard
 from bioadapt_schemas.identifiers import sha256_hex
 from bioadapt_schemas.orchestration import AdhocToolGrant, Approval, RunCheckpoint, RunEvent
@@ -1005,6 +1005,10 @@ class Catalog:
         display_name: Optional[str] = None,
         run_id: Optional[str] = None,
         exclude_candidate_id: Optional[str] = None,
+        min_size: Optional[int] = None,
+        max_size: Optional[int] = None,
+        min_donors: Optional[int] = None,
+        reviewed: Optional[bool] = None,
         limit: int,
         offset: int = 0,
     ) -> list[CandidateSet]:
@@ -1016,11 +1020,30 @@ class Catalog:
         if run_id:
             clauses.append("run_id = ?")
             params.append(run_id)
+        if min_size is not None:
+            clauses.append("size >= ?")
+            params.append(min_size)
+        if max_size is not None:
+            clauses.append("size <= ?")
+            params.append(max_size)
+        if min_donors is not None:
+            clauses.append("donor_count >= ?")
+            params.append(min_donors)
         #: Excluded in the index, not after the page was cut: a candidate reading its own label group
         #: would otherwise lose one row from every page it is asked for.
         if exclude_candidate_id:
             clauses.append("candidate_id <> ?")
             params.append(exclude_candidate_id)
+        if reviewed is not None:
+            #: Whether a person has acted on this candidate is a fact about its card, not a column here,
+            #: so it is asked as a scoped subquery - and still resolved before the page is cut.
+            clause = (
+                "exists (select 1 from evidence_card where evidence_card.project_id = ?"
+                " and evidence_card.candidate_id = candidate_set.candidate_id"
+                " and evidence_card.final_status <> ?)"
+            )
+            clauses.append(clause if reviewed else f"not {clause}")
+            params.extend([self.scope, str(FinalStatus.UNKNOWN)])
         where = " and ".join(clauses) if clauses else "1=1"
         rows = self._scoped("candidate_set", f"{where} order by run_id, candidate_id", *params, limit=limit, offset=offset)
         return [self._candidate(row) for row in rows]
@@ -1076,6 +1099,27 @@ class Catalog:
             (self.scope, card_id),
         ).fetchone()
         return row["annotation_version_id"] if row else None
+
+    def card_review_states(self, card_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        """What the filed rows say about these cards, keyed by card id.
+
+        Drafting re-derives a card on every read, so a draft always comes back ``unknown`` no matter what a
+        person has since decided; only the filed row carries the decision and the reviewer's id. A card
+        nobody has filed is simply absent from the result, which is how a caller tells the two apart.
+        """
+        if not card_ids:
+            return {}
+        marks = ", ".join("?" for _ in card_ids)
+        rows = self._scoped("evidence_card", f"card_id in ({marks}) order by card_id", *card_ids)
+        states: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            card = self._decode("evidence_card", row)["card"]
+            states[row["card_id"]] = {
+                "final_status": card["final_status"],
+                "reviewer_id": card.get("reviewer_id"),
+                "reviewed_at": card.get("reviewed_at"),
+            }
+        return states
 
     # ------------------------------------------------------------------ idempotency and exports
 
@@ -1139,6 +1183,48 @@ class Catalog:
         params: tuple[Any, ...] = (status,) if status else ()
         rows = self._scoped("export_job", f"{where} order by created_at", *params, limit=limit, offset=offset)
         return [self._decode("export_job", row) for row in rows]
+
+    def export_filter_reach(self, *, run_id: Optional[str] = None, final_status: Optional[str] = None) -> dict[str, Any]:
+        """How far the two export filters reach into the rows this project holds.
+
+        The artefact itself is a worker's output, so nothing here can show its contents before the job
+        runs. What the stored rows *can* answer is how much they are, and the two filters do not reach the
+        same tables: ``final_status`` is a column of the card table and of no other, so candidate sets and
+        assets are narrowed by the run alone. The per-status breakdown is cut by the run alone too - a
+        person who picked one status has to be able to see what that pick leaves the others.
+        """
+        narrowed: list[str] = []
+        params: list[Any] = []
+        if run_id:
+            narrowed.append("run_id = ?")
+            params.append(run_id)
+        run_where = " and ".join(narrowed) if narrowed else "1=1"
+        card_where = f"{run_where} and final_status = ?" if final_status else run_where
+        card_params: tuple[Any, ...] = (*params, final_status) if final_status else tuple(params)
+        asset_where = "created_by_run_id = ?" if run_id else "1=1"
+
+        def count(table: str, where: str, *args: Any) -> int:
+            sql = f'select count(*) as n from "{table}" where "project_id" = ? and {where}'
+            return int(self.conn.execute(sql, (self.scope, *args)).fetchone()["n"])
+
+        statuses = {
+            row["final_status"]: row["n"]
+            for row in self.conn.execute(
+                f'select final_status, count(*) as n from "evidence_card" '
+                f'where "project_id" = ? and {run_where} group by final_status order by final_status',
+                (self.scope, *params),
+            )
+        }
+        size_row = self.conn.execute(
+            f'select coalesce(sum(size_bytes), 0) as bytes from "data_asset" '
+            f'where "project_id" = ? and {asset_where}',
+            (self.scope, *params),
+        ).fetchone()
+        return {
+            "evidence_cards": {"matched": count("evidence_card", card_where, *card_params), "by_status": statuses},
+            "candidate_sets": {"matched": count("candidate_set", run_where, *params)},
+            "data_assets": {"matched": count("data_asset", asset_where, *params), "size_bytes": int(size_row["bytes"])},
+        }
 
     # ------------------------------------------------------------------ identity directory
 

@@ -9,7 +9,7 @@ import { findings, runs as runsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useDebounced, useSubmit } from "@/lib/useAsync";
-import type { CardScore, DraftResponse, ExpertQueue, Page, RunListItem } from "@/lib/types";
+import type { CardScore, CardStatus, DraftResponse, ExpertQueue, Page, RunListItem } from "@/lib/types";
 
 /**
  * The expert queue (plan V2.0 section 13.4).
@@ -107,6 +107,14 @@ function Queue({ caller, projectId, runId }: { caller: Caller; projectId: string
   const scores = new Map<string, CardScore>(
     (queue.data?.scores ?? []).map((score) => [score.card_id, score]),
   );
+  // Which cards a person has already acted on is read off the filed rows, never off the order: a
+  // re-derived draft is always unknown, and the queue's order is the rule's, so finishing a card
+  // cannot move the list a reviewer is working down (§13.4 read against §9.1).
+  const statuses = new Map<string, CardStatus>(
+    (queue.data?.card_statuses ?? []).map((status) => [status.card_id, status]),
+  );
+  const acted = (queue.data?.card_statuses ?? []).filter((status) => status.reviewer_id).length;
+  const nextCardId = (queue.data?.queue ?? []).find((cardId) => !statuses.get(cardId)?.reviewer_id) ?? null;
   const drafted = draft.result as DraftResponse | null;
 
   return (
@@ -166,10 +174,38 @@ function Queue({ caller, projectId, runId }: { caller: Caller; projectId: string
               {t(" {n} drafted", { n: queue.data.drafted })}
               {t(" · {n} in the queue", { n: queue.data.queue.length })}
               {t(" · {n} filed as observed", { n: queue.data.observed.length })}
+              {t(" · {n} of {m} already carry a decision", { n: acted, m: queue.data.drafted })}
               {t(" · cap {cap}", { cap: queue.data.limit })}
               {t(" · rules")} <span className="mono">{queue.data.rule_version}</span> {t("on thresholds")}{" "}
               <span className="mono">{queue.data.thresholds_version}</span>
             </p>
+            <Notice>
+              {nextCardId ? (
+                <>
+                  {t("Continue with")}{" "}
+                  <Link
+                    href={`/projects/${projectId}/candidates/${encodeURIComponent(
+                      scores.get(nextCardId)?.candidate_id ?? statuses.get(nextCardId)?.candidate_id ?? "",
+                    )}`}
+                  >
+                    {scores.get(nextCardId)?.display_name ?? nextCardId}
+                  </Link>
+                  , {t("place {p} of {n} in this queue", { p: queue.data.queue.indexOf(nextCardId) + 1, n: queue.data.queue.length })}
+                  .{" "}
+                  <span className="muted">
+                    {t(
+                      "the first card in this order that no person has acted on; the order itself is the rule's and does not move as you work (§13.4)",
+                    )}
+                  </span>
+                </>
+              ) : (
+                <span className="muted">
+                  {t(
+                    "every card in this queue already carries a decision. Nothing here signs anything off: a decision is made on a card, by a named person.",
+                  )}
+                </span>
+              )}
+            </Notice>
             <table>
               <thead>
                 <tr>
@@ -179,12 +215,14 @@ function Queue({ caller, projectId, runId }: { caller: Caller; projectId: string
                   <th>{t("uncertainty")}</th>
                   <th>{t("ask")}</th>
                   <th>{t("score")}</th>
+                  <th>{t("who has acted")}</th>
                   <th>{t("why this place")}</th>
                 </tr>
               </thead>
               <tbody>
                 {queue.data.queue.map((cardId, index) => {
                   const score = scores.get(cardId);
+                  const status = statuses.get(cardId);
                   return (
                     <tr key={cardId}>
                       <td>{index + 1}</td>
@@ -197,6 +235,18 @@ function Queue({ caller, projectId, runId }: { caller: Caller; projectId: string
                       <td>{score?.uncertainty ?? "—"}</td>
                       <td>{score?.client_ask ? <Chip status="supported">{t("yes")}</Chip> : t("no")}</td>
                       <td>{score?.score ?? "—"}</td>
+                      <td>
+                        {status?.final_status && status.reviewer_id ? (
+                          <>
+                            <StatusChip status={status.final_status} />{" "}
+                            <span className="mono muted">{status.reviewer_id}</span>
+                          </>
+                        ) : status?.final_status ? (
+                          <span className="muted">{t("filed, no decision yet")}</span>
+                        ) : (
+                          <span className="muted">{t("not filed yet")}</span>
+                        )}
+                      </td>
                       <td>
                         <ul className="evidence-list">
                           {(score?.reasons ?? []).map((reason) => (

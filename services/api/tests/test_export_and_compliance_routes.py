@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from bioadapt_policies.access import MAX_PRESIGNED_TTL_SECONDS, Role
 from bioadapt_policies.egress import FieldCategory
-from bioadapt_schemas.enums import PrivacyTier, RetentionClass
+from bioadapt_schemas.enums import FinalStatus, PrivacyTier, RetentionClass
 from bioadapt_schemas.errors import ErrorClass
 from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS
 from bioadapt_storage.traces import TraceRecord
@@ -222,6 +222,70 @@ def test_exports_are_listed_and_filtered_by_status(client, auth, catalog):
     body = client.get(f"{BASE}/exports?status=QUEUED", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR])).json()
     assert {item["export_id"] for item in body["items"]} == queued
     assert all(item["status"] == "QUEUED" for item in body["items"])
+
+
+def test_a_preview_says_what_the_filters_reach_without_queuing_anything(client, auth, seeded):
+    """第三批⑤: the number wanted before the click, read from the rows that are already filed."""
+    headers = auth(PI, [Role.PRINCIPAL_INVESTIGATOR])
+    body = client.get(f"{BASE}/exports/preview", headers=headers).json()
+    assert body["kind"] == "tables"
+    assert body["filters"] == {"run_id": None, "final_status": None}
+    assert body["evidence_cards"] == {"matched": 2, "by_status": {"unknown": 2}}
+    assert body["candidate_sets"]["matched"] == 2
+    assert body["data_assets"] == {"matched": 1, "size_bytes": 1024}
+    #: A preview is a read. The job list has to be exactly as empty afterwards as it was before.
+    assert client.get(f"{BASE}/exports", headers=headers).json()["items"] == []
+
+
+def test_the_two_export_filters_do_not_reach_the_same_rows(client, auth, catalog, seeded):
+    filed = catalog.get_card(seeded["card_id"])
+    catalog.update_card(filed.model_copy(update={"final_status": FinalStatus.SUPPORTED}))
+    headers = auth(PI, [Role.PRINCIPAL_INVESTIGATOR])
+
+    supported = client.get(f"{BASE}/exports/preview?final_status=supported", headers=headers).json()
+    #: final_status is a column of the card table and of no other, so only the card line moves - and the
+    #: breakdown still shows what the pick leaves the others, which is the difference between a filter and
+    #: a mistake nobody noticed.
+    assert supported["evidence_cards"]["matched"] == 1
+    assert supported["evidence_cards"]["by_status"] == {"supported": 1, "unknown": 1}
+    assert supported["candidate_sets"]["matched"] == 2
+
+    one_run = client.get(f"{BASE}/exports/preview?run_id=" + seeded["run_id"], headers=headers).json()
+    assert one_run["evidence_cards"]["matched"] == 1
+    assert one_run["evidence_cards"]["by_status"] == {"supported": 1}
+    assert one_run["candidate_sets"]["matched"] == 1
+    #: Nothing in the seed records which run wrote the matrix, so naming a run drops it out of the count.
+    assert one_run["data_assets"] == {"matched": 0, "size_bytes": 0}
+
+
+def test_a_preview_is_refused_where_the_queue_would_be_refused(client, auth, catalog):
+    """§1.5 twice over: the preview runs the two gates queueing runs, so a person is warned before a job row exists."""
+    headers = auth(PI, [Role.PRINCIPAL_INVESTIGATOR])
+    catalog.update_project_thresholds(DEFAULT_THRESHOLDS)
+    refused = client.get(f"{BASE}/exports/preview", headers=headers)
+    assert refused.status_code == 403, refused.text
+    assert "v0-unconfirmed" in refused.json()["message"]
+    assert client.get(f"{BASE}/exports", headers=headers).json()["items"] == []
+
+    catalog.update_project_thresholds(ATTESTED_CUTS)
+    assert client.get(f"{BASE}/exports/preview", headers=headers).status_code == 200
+
+
+def test_a_strict_local_project_cannot_preview_a_delivery_it_cannot_have(client, auth):
+    response = client.get(
+        f"/v1/projects/{LOCAL_PROJECT_ID}/exports/preview",
+        headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR], project_ids=[PROJECT_ID, LOCAL_PROJECT_ID]),
+    )
+    assert response.status_code == 403
+    assert "data plane" in response.json()["message"]
+
+
+def test_an_unknown_run_is_absent_from_the_preview_as_it_is_from_the_queue(client, auth):
+    response = client.get(
+        f"{BASE}/exports/preview?run_id=run_missing", headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR])
+    )
+    assert response.status_code == 404
+    assert response.json()["class"] == str(ErrorClass.NOT_FOUND)
 
 
 def test_a_local_egress_of_allowed_fields_is_decided_and_stored(client, auth, catalog):

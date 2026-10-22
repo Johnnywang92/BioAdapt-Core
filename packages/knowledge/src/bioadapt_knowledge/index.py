@@ -22,7 +22,7 @@ from typing import Any, Literal, Sequence
 from bioadapt_schemas.enums import PrivacyTier
 
 from .chunking import chunk_document
-from .entities import DocumentChunk, DocumentType, KnowledgeDocument, RetrievalHit
+from .entities import ChunkReading, DocumentChunk, DocumentType, KnowledgeDocument, RetrievalHit
 from .parsers.registry import parse_document
 from .vectorizer import DeterministicTfidfEmbedder, Embedder, cosine_similarity
 
@@ -88,6 +88,9 @@ class KnowledgeIndex:
                     section_path TEXT NOT NULL,
                     content TEXT NOT NULL,
                     token_count INTEGER NOT NULL,
+                    page INTEGER,
+                    char_start INTEGER,
+                    char_end INTEGER,
                     vector_blob BLOB,
                     metadata_json TEXT NOT NULL,
                     FOREIGN KEY (doc_id) REFERENCES knowledge_documents(doc_id) ON DELETE CASCADE
@@ -100,6 +103,13 @@ class KnowledgeIndex:
                 ON knowledge_chunks(doc_id);
                 """
             )
+            #: An index built before chunks carried a locator keeps its rows and gains empty columns;
+            #: re-ingesting a document fills them. Until then those chunks read as unlocatable, which is
+            #: what the screen is told — it never shows a position the parse did not record.
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(knowledge_chunks)")}
+            for column in ("page", "char_start", "char_end"):
+                if column not in columns:
+                    self._conn.execute(f"ALTER TABLE knowledge_chunks ADD COLUMN {column} INTEGER;")
             self._conn.execute(
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunks_fts USING fts5(
@@ -199,8 +209,9 @@ class KnowledgeIndex:
                     """
                     INSERT INTO knowledge_chunks (
                         chunk_id, doc_id, chunk_index, section_path,
-                        content, token_count, vector_blob, metadata_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                        content, token_count, page, char_start, char_end,
+                        vector_blob, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                     """,
                     (
                         chunk.chunk_id,
@@ -209,6 +220,9 @@ class KnowledgeIndex:
                         chunk.section_path,
                         chunk.content,
                         chunk.token_count,
+                        chunk.page,
+                        chunk.char_start,
+                        chunk.char_end,
                         vec_blob,
                         json.dumps(chunk.metadata, ensure_ascii=False),
                     ),
@@ -244,6 +258,64 @@ class KnowledgeIndex:
             if not row:
                 return None
             return self._row_to_document(row)
+
+    def read_chunk(
+        self,
+        chunk_id: str,
+        *,
+        project_id: str | None = None,
+        radius: int = 1,
+    ) -> ChunkReading | None:
+        """One stored chunk, the document it came from, and the pieces the same parse put either side.
+
+        The index keeps chunks rather than the file, so the widest honest context is the neighbouring
+        pieces. ``project_id`` is not decoration: chunks are addressed by id, and an id belonging to
+        another project's index has to read as absent rather than as somebody else's passage.
+        """
+        sql = """
+            SELECT
+                c.chunk_id, c.doc_id, c.chunk_index, c.section_path,
+                c.content, c.token_count, c.page, c.char_start, c.char_end,
+                c.metadata_json as chunk_meta,
+                d.project_id, d.filename, d.doc_type, d.title, d.author,
+                d.species, d.tissue, d.privacy_tier, d.license_class,
+                d.file_sha256, d.chunk_count, d.created_at, d.summary,
+                d.metadata_json as doc_meta
+            FROM knowledge_chunks c
+            JOIN knowledge_documents d ON d.doc_id = c.doc_id
+            WHERE c.chunk_id = ?
+        """
+        params: list[Any] = [chunk_id]
+        if project_id:
+            sql += " AND d.project_id = ?"
+            params.append(project_id)
+        sql += ";"
+
+        with self._lock:
+            row = self._conn.execute(sql, params).fetchone()
+            if row is None:
+                return None
+            #: The join is on the id the two tables share, so the chunk's doc_id is the document's.
+            chunk = self._row_to_chunk(row)
+            document = self._row_to_document(row)
+            before = self._neighbours(chunk, operator="<", radius=radius)
+            after = self._neighbours(chunk, operator=">", radius=radius)
+
+        return ChunkReading(chunk=chunk, document=document, before=before, after=after)
+
+    def _neighbours(self, chunk: DocumentChunk, *, operator: str, radius: int) -> list[DocumentChunk]:
+        """The stored pieces just before or just after one chunk, in reading order."""
+        sql = f"""
+            SELECT
+                chunk_id, doc_id, chunk_index, section_path, content, token_count,
+                page, char_start, char_end, metadata_json as chunk_meta
+            FROM knowledge_chunks
+            WHERE doc_id = ? AND chunk_index {operator} ?
+            ORDER BY chunk_index {"DESC" if operator == "<" else "ASC"} LIMIT ?;
+        """
+        rows = self._conn.execute(sql, (chunk.doc_id, chunk.chunk_index, radius)).fetchall()
+        pieces = [self._row_to_chunk(row) for row in rows]
+        return pieces[::-1] if operator == "<" else pieces
 
     def list_documents(
         self,
@@ -326,7 +398,8 @@ class KnowledgeIndex:
         sql = """
             SELECT
                 c.chunk_id, c.doc_id, c.chunk_index, c.section_path,
-                c.content, c.token_count, c.metadata_json as chunk_meta,
+                c.content, c.token_count, c.page, c.char_start, c.char_end,
+                c.metadata_json as chunk_meta,
                 d.project_id, d.filename, d.doc_type, d.title, d.author,
                 d.species, d.tissue, d.privacy_tier, d.license_class,
                 d.file_sha256, d.chunk_count, d.created_at, d.summary,
@@ -391,7 +464,8 @@ class KnowledgeIndex:
         sql = """
             SELECT
                 c.chunk_id, c.doc_id, c.chunk_index, c.section_path,
-                c.content, c.token_count, c.vector_blob, c.metadata_json as chunk_meta,
+                c.content, c.token_count, c.page, c.char_start, c.char_end,
+                c.vector_blob, c.metadata_json as chunk_meta,
                 d.project_id, d.filename, d.doc_type, d.title, d.author,
                 d.species, d.tissue, d.privacy_tier, d.license_class,
                 d.file_sha256, d.chunk_count, d.created_at, d.summary,
@@ -525,6 +599,7 @@ class KnowledgeIndex:
     @staticmethod
     def _row_to_chunk(row: sqlite3.Row) -> DocumentChunk:
         meta_json = row["chunk_meta"] if "chunk_meta" in row.keys() else row["metadata_json"]
+        keys = row.keys()
         return DocumentChunk(
             chunk_id=row["chunk_id"],
             doc_id=row["doc_id"],
@@ -532,5 +607,8 @@ class KnowledgeIndex:
             section_path=row["section_path"],
             content=row["content"],
             token_count=row["token_count"],
+            page=row["page"] if "page" in keys else None,
+            char_start=row["char_start"] if "char_start" in keys else None,
+            char_end=row["char_end"] if "char_end" in keys else None,
             metadata=json.loads(meta_json) if meta_json else {},
         )

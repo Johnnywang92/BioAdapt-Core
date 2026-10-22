@@ -25,6 +25,7 @@ def _parse_with_pypdf(raw_bytes: bytes) -> tuple[str, list[ParsedSection]]:
                     content=page_text.strip(),
                     level=1,
                     path=f"Page {idx + 1}",
+                    page=idx + 1,
                 )
             )
             full_texts.append(page_text.strip())
@@ -47,6 +48,7 @@ def _parse_with_pymupdf(raw_bytes: bytes) -> tuple[str, list[ParsedSection]]:
                     content=page_text.strip(),
                     level=1,
                     path=f"Page {idx + 1}",
+                    page=idx + 1,
                 )
             )
             full_texts.append(page_text.strip())

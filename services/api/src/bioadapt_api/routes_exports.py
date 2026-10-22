@@ -147,6 +147,45 @@ def list_exports(
     return page.envelope([_view(row) for row in rows])
 
 
+@router.get("/projects/{project_id}/exports/preview")
+def preview_export(
+    session: SessionDep,
+    kind: ExportKind = Query(ExportKind.TABLES),
+    run_id: Optional[str] = Query(None, description="narrow to the rows one run produced"),
+    final_status: Optional[str] = Query(None, description="card status, read as the export filter reads it"),
+) -> dict:
+    """How far this choice reaches, over the two gates queueing would run.
+
+    The artefact is a worker's output and cannot be shown before the job runs, so this answers the question
+    a person actually has before clicking: how many filed rows the filters address right now. It then runs
+    ``create_export``'s own checks - the privacy policy and §1.5's measured cuts - so a delivery this project
+    cannot have is refused here, in the policy's own words, rather than after a job row exists.
+
+    ``final_status`` is deliberately the same free string the queue route takes: a value that matches no
+    card has to read the same way on both, as a preview of zero rather than as two endpoints disagreeing.
+    """
+    project = session.catalog.get_project()
+    session.enforce(
+        Action.ASSET_EXPORT,
+        f"{session.project_id}:{kind}:preview",
+        "export",
+        privacy_tier=project.privacy_tier,
+        attributes={"kind": str(kind)},
+    )
+    session.require_measured_cuts(Action.ASSET_EXPORT, f"{session.project_id}:{kind}:preview")
+    if run_id is not None:
+        try:
+            session.catalog.run_state(run_id)
+        except LookupError:
+            raise not_found("run", run_id) from None
+    return {
+        "kind": str(kind),
+        "filters": {"run_id": run_id, "final_status": final_status},
+        "thresholds_version": session.thresholds.version,
+        **session.catalog.export_filter_reach(run_id=run_id, final_status=final_status),
+    }
+
+
 @router.get("/projects/{project_id}/exports/{export_id}")
 def read_export(export_id: str, session: SessionDep, ttl_seconds: int = Query(MAX_PRESIGNED_TTL_SECONDS)) -> dict:
     row = _get_export(session, export_id)
