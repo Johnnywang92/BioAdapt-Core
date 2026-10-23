@@ -1427,4 +1427,35 @@ export const zh: Record<string, string> = {
     "时长只来自同时记录了开始与结束时间的 run；日志按节点记录用量，不记录节点自己的墙钟时间",
   "not on this screen: a worker's health and the queue's depth. No heartbeat is stored, and the reference scheduler keeps its queue in memory, so neither can be read from the catalog.":
     "本页不显示：工作进程的健康状况与队列深度。系统没有保存心跳，参考调度器把队列放在内存里，所以这两项都无法从目录中如实读出。",
+
+  // ---------------------------------------------------------------- 工具目录
+  "tool catalog": "工具目录",
+  "Tool catalog": "工具目录",
+  "Registered tools": "已注册工具",
+  "the tool set this deployment can run for this project; a plan names a tool by name and version, and a run pins the snapshot below":
+    "这套部署能为本项目运行的工具集合；方案用名字和版本指认一个工具，run 则钉住下面的快照",
+  "a launch has to name this snapshot; a run approved against another one is refused rather than executed against a different tool set":
+    "启动时必须报出这个快照；钉在别的快照上的 run 会被拒绝，而不是换一套工具集去执行",
+  "one row per tool, read from the registry the executor hydrates; a tool that is not here is a tool no plan node can name":
+    "每个工具一行，读自执行进程 hydrate 的同一份注册表；不在这里的工具，方案节点就指认不了",
+  "This deployment holds no tool for this project.": "这套部署没有为这个项目登记任何工具。",
+  "tool and version": "工具与版本",
+  task: "任务",
+  "resources floor": "资源下限",
+  "measured peak": "实测峰值",
+  gate: "闸门",
+  runnable: "可执行",
+  "no runner": "没有执行器",
+  "the full contract": "完整契约",
+  image: "镜像",
+  class: "类别",
+  schemas: "输入输出契约",
+  "reference compatibility": "参考兼容性",
+  network: "网络",
+  "failure policy": "失败策略",
+  "privacy policy": "隐私策略",
+  "quality checks": "质检项",
+  assumptions: "假设",
+  "invalid when": "失效条件",
+  "conclusion outputs": "结论产物槽",
 };

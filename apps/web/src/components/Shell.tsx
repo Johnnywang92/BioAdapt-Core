@@ -19,6 +19,7 @@ const SCREENS: [string, string][] = [
   ["/knowledge", "knowledge base"],
   ["/exports", "exports"],
   ["/stats", "statistics"],
+  ["/tools", "tool catalog"],
 ];
 
 const LOCALE_LABELS: Record<string, string> = { en: "EN", zh: "中文" };

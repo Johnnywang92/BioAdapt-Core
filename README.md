@@ -220,6 +220,7 @@ npm run dev -- -p 3100        # 不加 -p 时 Next 默认 3000
 | `/projects/{id}/knowledge` | 私有知识库 | **离线本地知识库**：支持批量拖拽上传 docx/pdf/markdown/txt 文档、离线向量化与分块、文献/标记库 RAG 语义检索测试；**第三批④引用原文定位**：引用条可打开被引原段，显示解析器记录的页码与字符偏移并读取该段前后已存储的分块 |
 | `/projects/{id}/approvals` | 审批收件箱 | 审批门待办列表；**第四批③ad-hoc 执行凭据如实填表**：对已批准的 `adhoc_tool` 门，节点的工具名与版本读自这个 run 钉住的那份方案（`GET …/plans` 的 `nodes`），`task`、镜像摘要、资源与实测、授权条款、质量检查与假设/失效条件等由签字的人逐行写；缺任何一项就按住不发，屏上不再替人编一份 spec（§9.6），拒绝与失败一律显示服务端原话 |
 | `/projects/{id}/exports` | 导出请求 | 四类产物导出请求与状态追踪；**第三批⑤导出预览与通知**：run 与结论状态改为从本项目已有的行里选（不必再手打技术 id），排队前先预览这两个筛选能选到多少已建档的行，预览走的是与排队同一道 §1.5 门禁；列表按状态计数并把失败原因按服务端原话列出，「盯着这个列表」只是重读 |
+| `/projects/{id}/tools` | 工具目录 | **只读**：这套部署能为本项目运行什么，全部读自 `GET …/tools`（即执行进程 hydrate 的同一份注册表）。顶部是起 run 要报的 `snapshot_id`；每个工具一行（镜像 repository:tag、读取/写出槽、资源下限、实测峰值与实测数据集、是否需要过门），展开后是完整契约：镜像 digest、许可与复核日期、输入输出 schema、参考兼容性（`id_system`/`requires_counts`/`needs_log`）、网络与失败策略、质检项、假设与失效条件。**这一页不提供任何写入口**：已注册工具由部署侧 `reference_deployment()`（[toolset.py:29](file:///Users/yifanwang/workspace/BioAdapt-Core/services/api/src/bioadapt_api/toolset.py#L29)）决定，一次性的 ad-hoc 工具仍在审批收件箱按门填写 |
 
 ### 6.3 从头做一次单细胞分析（顺序 + 示例数据实测数字）
 

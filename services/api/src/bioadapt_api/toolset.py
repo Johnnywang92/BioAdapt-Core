@@ -119,6 +119,9 @@ def tool_row(spec: ToolSpec) -> dict[str, Any]:
         "invalid_when": list(spec.invalid_when),
         "input_schema": spec.input_schema.model_dump(mode="json"),
         "output_schema": spec.output_schema.model_dump(mode="json"),
+        #: The image is the tool's identity: a tag names a moving target, so the digest is the answer
+        #: that means something (§9.4). A catalog that hid it would answer "which software" with a name.
+        "container_image": spec.container_image.model_dump(mode="json"),
         "reference_compatibility": spec.reference_compatibility.model_dump(mode="json"),
         "network_mode": str(spec.network.mode),
         "egress_allowlist": list(spec.egress_allowlist),
