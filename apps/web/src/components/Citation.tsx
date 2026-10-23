@@ -87,8 +87,7 @@ export function Citation({ caller, projectId, hit }: { caller: Caller; projectId
           ))}
           {reading.document ? (
             <p className="mono muted">
-              sha256 {reading.document.file_sha256} · {t("licence")} {reading.document.license_class} ·{" "}
-              {t(reading.document.privacy_tier)}
+              sha256 {reading.document.file_sha256} · {t("licence")} {reading.document.license_class}
             </p>
           ) : null}
         </div>

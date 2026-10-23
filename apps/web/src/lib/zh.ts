@@ -90,23 +90,10 @@ export const zh: Record<string, string> = {
   "open it": "打开它",
   "what the delivery has to answer; it scopes which candidates matter": "交付要回答的问题；它划定了哪些候选项算数",
   "§13.4: this number is what the queue size has to fit inside": "§13.4：队列的规模必须能装进这个数字里",
-  "no default on purpose": "故意不设默认值",
   choose: "请选择",
   "creating…": "创建中…",
   "Create project": "创建项目",
   "paste a token first": "先粘贴 token",
-  "public": "公开",
-  restricted: "受限",
-  strict_local: "严格本地",
-  hgr_controlled: "人类遗传资源受控",
-  "model calls and exports are allowed within the provider terms":
-    "在服务商条款允许的范围内可以调用模型、可以导出",
-  "no raw egress; aggregate derivation only, and any cloud model call is checked field by field":
-    "原始数据不得出境；只做聚合派生，且每一次云端模型调用都逐字段核对",
-  "raw data and sensitive derivations stay local; no cloud model call at all":
-    "原始数据与敏感派生一律留在本地；完全不调用云端模型",
-  "human genetic resource controlled: local compute, export refused, approval required":
-    "人类遗传资源受控：本地计算、导出直接拒绝、必须走审批",
   "This token reaches no registered project yet. Create one below, or ask for a token scoped to the project you work on.":
     "这个 token 还到达不了任何已登记的项目。可以在下方新建一个，或索取一个 scoped 到你正在做的项目的 token。",
   "project id": "项目 id",
@@ -279,8 +266,6 @@ export const zh: Record<string, string> = {
   "the digest is computed from these bytes; a mismatch at completion is a conflict, not a warning":
     "摘要由这些字节算出；完成阶段对不上是一个冲突，不是一个警告",
   bytes: "字节",
-  "leave it at the project tier unless this object is genuinely less sensitive":
-    "除非这个对象确实更不敏感，否则保持与项目相同的层级",
   "cross_project_allowed is what lets another project read this row at all":
     "只有 cross_project_allowed 才允许别的项目读到这一行",
   "unknown requires upstream pipeline metadata, so it is deliberately not the default guess here":
@@ -297,7 +282,6 @@ export const zh: Record<string, string> = {
   "Signed for": "已为",
   asset: "对象",
   format: "格式",
-  tier: "层级",
   retention: "保留",
   filtering: "过滤",
   "produced by": "产出者",
@@ -338,7 +322,6 @@ export const zh: Record<string, string> = {
   "The reference pseudobulk step sums counts and refuses a matrix declared as":
     "参考流程的 pseudobulk 步骤对计数求和，它会拒绝一个声明为",
   "Declaration fields": "声明字段",
-  "defaults to the project tier": "默认取项目的层级",
   "An unknown filtering state is a statement that nobody can show the filtering was done, so the pipeline that produced the object becomes part of the record. All four fields go to the API verbatim.":
     "把 filtering_state 声明为 unknown，是在说无人能证明过滤做过，于是产出这个对象的流程成为记录的一部分。四个字段都会原样发给 API。",
   "Register this file": "登记这个文件",
@@ -474,8 +457,6 @@ export const zh: Record<string, string> = {
   Queue: "排队",
   "a download link is handed out per read and expires; the row itself is the durable thing":
     "下载链接按每次读取发放并且会过期；真正长期存在的是这一行记录",
-  "This project is {tier}: the export route refuses it whatever the role of the caller (§5.9). Delivery happens from the local side, so nothing is queued here.":
-    "本项目的层级是 {tier}：无论调用者是什么角色，导出路由都会拒绝（§5.9）。交付要从本地这一侧完成，所以这里不会排队。",
   export: "导出",
   "requested by": "申请人",
   created: "创建时间",
@@ -539,11 +520,8 @@ export const zh: Record<string, string> = {
     "可以执行人格化主体已经授权的工作；凡是属于人的决定，一律拒绝",
   "nothing is read until a token is set — the API resolves the caller from it":
     "设了 token 之前不读取任何东西——API 从它解析出调用者",
-  "the tier on this row is what every later screen inherits: it decides egress, model calls and whether an export is possible at all":
-    "这一行上的层级是后面每一屏继承的约束：它决定能否出境、能否调用模型、以及导出这件事是否可能",
   "study goal": "研究目标",
   species: "物种",
-  "privacy tier": "隐私层级",
   "none declared": "未声明",
   "annotation target": "注释目标",
   "review budget": "评审预算",
@@ -936,7 +914,6 @@ export const zh: Record<string, string> = {
   "Concordant Quadrant": "协同象限 (mRNA 与蛋白共高表达)",
   "Batch Document Upload": "批量拖拽上传",
   "Manual Text Input": "手输 / 粘贴文本",
-  "strict local privacy tier": "严格本地执行 (STRICT_LOCAL)：零外部大模型调用，数据与文献 100% 留存本地",
   "Click or drag files here": "点击选择文件或将文件拖拽至此处",
   "Successfully ingested documents": "已成功解析并建立本地混合索引！",
 
@@ -958,12 +935,6 @@ export const zh: Record<string, string> = {
   "No export worker is connected. An export request can be recorded, but it will not generate a file. Ask the deployment administrator to connect a worker; polling cannot resolve this.": "当前未接入导出执行器。可登记导出请求，但不会生成文件；反复刷新无法解决，请部署管理员接入执行器。",
   "This capability has not been confirmed. Check the deployment status above before submitting; a recorded request does not guarantee execution.": "此能力尚待确认。提交前请核查上方部署状态；请求已登记不代表一定会执行。",
   "The request was recorded. A download is available only after a worker generates the file; see the deployment status above.": "请求已登记。只有执行器生成文件后才能下载；请查看上方部署状态。",
-  "Privacy policy not confirmed": "隐私策略待确认",
-  "The project privacy policy has not been read successfully. Do not assume local-only processing.": "尚未成功读取此项目的隐私策略，不能据此认定所有处理都在本地执行。",
-  "External model calls and exports remain subject to project policies and provider terms.": "外部模型调用和导出仍须遵守项目策略与提供方条款。",
-  "Raw data cannot leave the project. Only permitted aggregate derivations may be used externally; cloud calls are checked field by field.": "原始数据不得离开项目。仅允许的聚合派生数据可用于外部处理，云端调用须逐字段核查。",
-  "Local processing only. Cloud model calls and this export route are blocked by project policy.": "仅限本地处理。项目策略禁止云端模型调用及此导出通道。",
-  "Human genetic resources are controlled. Cloud model calls and this export route are blocked by project policy.": "人类遗传资源受控。项目策略禁止云端模型调用及此导出通道。",
   "The card reports discordant modalities. Review the source evidence before drawing a conclusion; the alert alone does not establish a mechanism or statistical significance.": "此卡报告模态信号不一致。请先核查来源证据；此提示本身不证明生物学机制或统计显著性。",
   "Unresolved evidence conflict": "尚未解决的证据冲突",
   "This card has an unresolved conflict. It is not necessarily a cross-modal conflict; inspect its contradicting evidence and gate reasons.": "此卡存在未解决的证据冲突，但不一定属于跨模态冲突。请在复核前查看反对证据。",
@@ -1364,4 +1335,23 @@ export const zh: Record<string, string> = {
     "凭据 {id} 已记入台账：{tool}@{version} 可以在节点 {node} 上执行，有效到 {until}。",
   " one gate buys one grant, so sending these same lines again answers with the row that already stands rather than a second permission (§9.6)":
     " 一扇门只买一份凭据，所以把这些行原样再发一次，答复的是台账上已经站着的那一行，而不是第二份许可（§9.6）",
+
+  // ---------------------------------------------------------------- 顶栏、身份抽屉与 404
+  screens: "页面导航",
+  "identity and project settings": "身份与项目设置",
+  "sign in": "登录",
+  language: "语言",
+  close: "关闭",
+  menu: "菜单",
+  "what this declaration does and does not mean": "这份声明说明了什么、又没说明什么",
+
+  // ---------------------------------------------------------------- 证据卡与空态
+  "show the {n} field-level sources": "查看 {n} 个字段级来源",
+  "not recorded": "未记录",
+  "The rule placed no card in this queue. Nothing is hidden here: an empty queue means the scores or thresholds produced no ask this week.":
+    "规则没有把任何证据卡放进这个队列。这里没有隐藏什么：空队列意味着本周的分数或阈值没有产生可问的问题。",
+  "This page could not be found.": "找不到这个页面。",
+  "A card is reachable only through a run and the expert queue; every screen starts from the project list.":
+    "证据卡只能从一次运行和专家队列进入；每个屏幕都从项目列表开始。",
+  "Back to the start": "回到首页",
 };

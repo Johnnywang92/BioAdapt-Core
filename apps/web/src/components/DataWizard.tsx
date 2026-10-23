@@ -9,16 +9,16 @@ import { assets as assetsApi, type Caller } from "@/lib/api";
 import { digestHex, distinct, inspectDocument, looksH5ad, type Inspection } from "@/lib/countsDocument";
 import { useT } from "@/lib/i18n";
 import { useSubmit } from "@/lib/useAsync";
-import type { DataAsset, FilteringState, PrivacyTier, Project, RetentionClass, UsageScope } from "@/lib/types";
+import type { DataAsset, FilteringState, Project, RetentionClass, UsageScope } from "@/lib/types";
 
 /**
  * Registering data without a form to fill in (§5.9).
  *
  * The person picks a file; the rest is read from it. An id is derived from the digest, the format and
- * contract version come from the document, and the privacy tier defaults to the project's own - so the
- * only fields left to choose are the ones that are genuinely a person's declaration: whether the
- * object was filtered, and what it may be used for. Nothing here is registered behind a failed read:
- * a file this screen cannot parse is reported as one, and the upload does not happen.
+ * contract version come from the document, and the privacy tier is the project's own - so the only
+ * fields left to choose are the ones that are genuinely a person's declaration: whether the object
+ * was filtered, and what it may be used for. Nothing here is registered behind a failed read: a file
+ * this screen cannot parse is reported as one, and the upload does not happen.
  */
 export function DataWizard({ caller, projectId, project }: { caller: Caller; projectId: string; project: Project }) {
   const t = useT();
@@ -33,7 +33,6 @@ export function DataWizard({ caller, projectId, project }: { caller: Caller; pro
   const [tooBig, setTooBig] = useState(false);
   const [isH5ad, setIsH5ad] = useState(false);
   const [form, setForm] = useState({
-    privacy_tier: "" as PrivacyTier | "",
     usage_scope: "this_project_only" as UsageScope,
     retention_class: "run_linked" as RetentionClass,
     filtering_state: "none" as FilteringState,
@@ -84,7 +83,7 @@ export function DataWizard({ caller, projectId, project }: { caller: Caller; pro
   const preview = read && "preview" in read ? read.preview : null;
   const problem = read && "problem" in read ? read.problem : null;
   const assetId = digest ? `as_${digest.slice(0, 12)}` : "";
-  const tier = (form.privacy_tier || project.privacy_tier) as PrivacyTier;
+  const tier = project.privacy_tier;
   // §5.4: "unknown" is a claim that nobody can show the filtering was done, and the contract only
   // admits it together with the pipeline that made it unknowable.
   const needsPipeline = form.filtering_state === "unknown";
@@ -250,15 +249,6 @@ export function DataWizard({ caller, projectId, project }: { caller: Caller; pro
         <details>
           <summary>{t("Declaration fields")}</summary>
           <div className="grid">
-            <Field label="privacy_tier" hint={t("defaults to the project tier")}>
-              <select value={form.privacy_tier} onChange={set("privacy_tier")}>
-                <option value="">{`${t(project.privacy_tier)} (${project.privacy_tier})`}</option>
-                <option value="public">{`${t("public")} (public)`}</option>
-                <option value="restricted">{`${t("restricted")} (restricted)`}</option>
-                <option value="strict_local">{`${t("strict_local")} (strict_local)`}</option>
-                <option value="hgr_controlled">{`${t("hgr_controlled")} (hgr_controlled)`}</option>
-              </select>
-            </Field>
             <Field
               label="usage_scope"
               hint={t("cross_project_allowed is what lets another project read this row at all")}

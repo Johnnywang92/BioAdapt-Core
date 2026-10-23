@@ -4,21 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
+import { Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { projects, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useIdentity } from "@/lib/identity";
 import { useAsync, useSubmit } from "@/lib/useAsync";
-import type { Page, PrivacyTier, Project, ProjectCreate } from "@/lib/types";
-
-const TIERS: PrivacyTier[] = ["public", "restricted", "strict_local", "hgr_controlled"];
-
-const TIER_NOTE: Record<PrivacyTier, string> = {
-  public: "model calls and exports are allowed within the provider terms",
-  restricted: "no raw egress; aggregate derivation only, and any cloud model call is checked field by field",
-  strict_local: "raw data and sensitive derivations stay local; no cloud model call at all",
-  hgr_controlled: "human genetic resource controlled: local compute, export refused, approval required",
-};
+import type { Page, Project, ProjectCreate } from "@/lib/types";
 
 /** A readable id from the words of the goal, offered so nobody has to invent one; it stays editable. */
 function suggestProjectId(goal: string): string {
@@ -34,9 +25,7 @@ function suggestProjectId(goal: string): string {
 /**
  * Starting a project (plan V2.0 section 5.8).
  *
- * The tier is asked for here, once, because every later screen inherits its limits from it: a
- * strict-local project has no cloud path to choose from, and the export screen will refuse rather
- * than offer one (§11.2). Choosing the tier is a person's decision, so this form has no default.
+ * A new project is registered at the restricted tier; the privacy tier is not a field on any screen.
  *
  * The id is never something to look up in another system: `GET /projects` lists what this token can
  * open, and a new project is picked from the ids the token already carries, because §11.2 answers a
@@ -56,7 +45,6 @@ export default function StartPage() {
     project_id: "",
     study_goal: "",
     species: "",
-    privacy_tier: "" as PrivacyTier | "",
     annotation_granularity_target: "",
     review_load_budget_hours_per_week: "4",
   });
@@ -80,7 +68,7 @@ export default function StartPage() {
       project_id: id,
       study_goal: form.study_goal,
       species: form.species,
-      privacy_tier: form.privacy_tier as PrivacyTier,
+      privacy_tier: "restricted",
       created_by: caller.subjectId,
       annotation_granularity_target: form.annotation_granularity_target,
       review_load_budget_hours_per_week: Number(form.review_load_budget_hours_per_week),
@@ -150,7 +138,6 @@ export default function StartPage() {
                 <tr>
                   <th>{t("study goal")}</th>
                   <th>{t("species")}</th>
-                  <th>{t("privacy tier")}</th>
                   <th>{t("created")}</th>
                   <th />
                 </tr>
@@ -163,9 +150,6 @@ export default function StartPage() {
                       <div className="mono muted">{one.project_id}</div>
                     </td>
                     <td>{one.species}</td>
-                    <td>
-                      <Chip title={one.privacy_tier}>{t(one.privacy_tier)}</Chip>
-                    </td>
                     <td>{one.created_at ?? "—"}</td>
                     <td>
                       <button className="secondary" type="button" onClick={() => open(one.project_id)}>
@@ -262,19 +246,6 @@ export default function StartPage() {
               placeholder="cell_type_broad"
             />
           </Field>
-          <Field
-            label="privacy_tier"
-            hint={form.privacy_tier ? t(TIER_NOTE[form.privacy_tier as PrivacyTier]) : t("no default on purpose")}
-          >
-            <select value={form.privacy_tier} onChange={set("privacy_tier")}>
-              <option value="">{t("choose")}</option>
-              {TIERS.map((tier) => (
-                <option key={tier} value={tier}>
-                  {`${t(tier)} (${tier})`}
-                </option>
-              ))}
-            </select>
-          </Field>
           <button
             type="submit"
             disabled={
@@ -283,8 +254,7 @@ export default function StartPage() {
               !(form.project_id.trim() || suggested) ||
               !form.study_goal.trim() ||
               !form.species.trim() ||
-              !form.annotation_granularity_target.trim() ||
-              !form.privacy_tier
+              !form.annotation_granularity_target.trim()
             }
           >
             {submit.busy ? t("creating…") : t("Create project")}

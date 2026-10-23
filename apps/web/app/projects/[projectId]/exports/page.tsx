@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { DeploymentNotice, useDeployment } from "@/components/DeploymentStatus";
-import { exports_ as exportsApi, intentKey, projects as projectsApi, runs as runsApi, type Caller } from "@/lib/api";
+import { exports_ as exportsApi, intentKey, runs as runsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { useProjectScope } from "@/lib/useProjectScope";
 import { useAsync, useAutoRefresh, useSubmit } from "@/lib/useAsync";
@@ -16,7 +16,6 @@ import type {
   ExportStatus,
   FinalStatus,
   Page,
-  Project,
   RunListItem,
 } from "@/lib/types";
 
@@ -240,10 +239,6 @@ function ExportList({ caller, projectId }: { caller: Caller; projectId: string }
     () => exportsApi.list(caller, projectId, { limit: PAGE_SIZE }),
     [caller.token, projectId],
   );
-  const tier = useAsync<Project>(
-    () => projectsApi.read(caller, projectId),
-    [caller.token, projectId],
-  );
   const deployment = useDeployment();
 
   const [detail, setDetail] = useState<ExportRow | null>(null);
@@ -313,14 +308,6 @@ function ExportList({ caller, projectId }: { caller: Caller; projectId: string }
               )}
             </p>
           ) : null}
-        </div>
-      ) : null}
-      {tier.data?.privacy_tier === "strict_local" || tier.data?.privacy_tier === "hgr_controlled" ? (
-        <div className="notice">
-          {t(
-            "This project is {tier}: the export route refuses it whatever the role of the caller (§5.9). Delivery happens from the local side, so nothing is queued here.",
-            { tier: t(tier.data.privacy_tier) },
-          )}
         </div>
       ) : null}
       <Loading on={listed.loading} />

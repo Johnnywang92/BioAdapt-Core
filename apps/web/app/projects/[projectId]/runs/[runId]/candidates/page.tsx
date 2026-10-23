@@ -42,6 +42,29 @@ function Search({ projectId, runId }: { projectId: string; runId: string }) {
   const ask = (name: string) => (event: { target: { value: string } }) =>
     setDraft((current) => ({ ...current, [name]: event.target.value }));
 
+  const applied = Object.fromEntries(
+    FIELDS.map((name) => [name, searchParams.get(name) ?? ""]).filter(([, value]) => value !== ""),
+  );
+  const query = searchParams.toString();
+
+  // The read has to be declared before the signed-out return: the identity arrives after the first
+  // client render, and a hook that only exists once a token is set changes the hook count.
+  const read = useAsync<Page<CandidateSet>>(
+    () =>
+      caller
+        ? findings.listCandidates(caller, scoped, {
+            run_id: runId,
+            ...(applied.cluster_id ? { cluster_id: applied.cluster_id } : {}),
+            ...(applied.min_size ? { min_size: Number(applied.min_size) } : {}),
+            ...(applied.max_size ? { max_size: Number(applied.max_size) } : {}),
+            ...(applied.min_donors ? { min_donors: Number(applied.min_donors) } : {}),
+            ...(applied.reviewed ? { reviewed: applied.reviewed === "yes" } : {}),
+            limit: PAGE_SIZE,
+          })
+        : Promise.resolve({ items: [], limit: 0, offset: 0 }),
+    [caller?.token, scoped, runId, query],
+  );
+
   if (!caller) {
     return (
       <Panel title={t("Find a population")} note={t("nothing is read until a token is set")}>
@@ -49,25 +72,6 @@ function Search({ projectId, runId }: { projectId: string; runId: string }) {
       </Panel>
     );
   }
-
-  const applied = Object.fromEntries(
-    FIELDS.map((name) => [name, searchParams.get(name) ?? ""]).filter(([, value]) => value !== ""),
-  );
-  const query = searchParams.toString();
-
-  const read = useAsync<Page<CandidateSet>>(
-    () =>
-      findings.listCandidates(caller, scoped, {
-        run_id: runId,
-        ...(applied.cluster_id ? { cluster_id: applied.cluster_id } : {}),
-        ...(applied.min_size ? { min_size: Number(applied.min_size) } : {}),
-        ...(applied.max_size ? { max_size: Number(applied.max_size) } : {}),
-        ...(applied.min_donors ? { min_donors: Number(applied.min_donors) } : {}),
-        ...(applied.reviewed ? { reviewed: applied.reviewed === "yes" } : {}),
-        limit: PAGE_SIZE,
-      }),
-    [caller.token, scoped, runId, query],
-  );
 
   const apply = () => {
     const next = new URLSearchParams();

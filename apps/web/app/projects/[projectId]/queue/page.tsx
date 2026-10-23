@@ -206,6 +206,7 @@ function Queue({ caller, projectId, runId }: { caller: Caller; projectId: string
                 </span>
               )}
             </Notice>
+            <div className="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -259,8 +260,18 @@ function Queue({ caller, projectId, runId }: { caller: Caller; projectId: string
                     </tr>
                   );
                 })}
+                {queue.data.queue.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="empty-cell">
+                      {t(
+                        "The rule placed no card in this queue. Nothing is hidden here: an empty queue means the scores or thresholds produced no ask this week.",
+                      )}
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
+            </div>
           </>
         ) : null}
       </Panel>

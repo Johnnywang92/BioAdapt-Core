@@ -14,9 +14,9 @@ import { Chip, Field } from "@/components/ui";
  * who drafted a conclusion from the person who signs it - a demo that cannot switch identities
  * cannot show that rule working.
  */
-export function IdentityBar() {
+export function IdentityBar({ embedded = false, onDone }: { embedded?: boolean; onDone?: () => void }) {
   const t = useT();
-  const { identity, projectId, error, setToken, setProjectId, clear, selectPreset, enterSoloMode } = useIdentity();
+  const { identity, projectId, error, setToken, setProjectId, clear, selectPreset } = useIdentity();
   const [draftToken, setDraftToken] = useState("");
   const [draftProject, setDraftProject] = useState("");
   const [note, setNote] = useState<string | null>(null);
@@ -34,12 +34,14 @@ export function IdentityBar() {
     }
     setToken(draftToken);
     setNote(null);
+    onDone?.();
   }
 
   async function handlePreset(roleKey: string) {
     const ok = await selectPreset(roleKey);
     if (ok) {
       setNote(null);
+      onDone?.();
     } else {
       setNote(`Token for ${roleKey} is not available from dev API. Paste from .workbench/tokens.json.`);
     }
@@ -52,73 +54,65 @@ export function IdentityBar() {
     }
     setProjectId(draftProject);
     setNote(null);
+    onDone?.();
   }
 
   const expiry = identity ? expiryNote(identity.token) : null;
 
-  return (
-    <div className="panel">
-      <header>
-        <div>
-          <h2>{t("Acting as")}</h2>
-          <p className="muted">
-            {t(
-              "The token decides the role; this panel only says which token a person is holding. A service account can draft, and can never sign off or decide an approval (§11.4).",
-            )}
-          </p>
-        </div>
-      </header>
+  const body = (
+    <div className="identity-body">
+      <p className="muted">
+        {t(
+          "The token decides the role; this panel only says which token a person is holding. A service account can draft, and can never sign off or decide an approval (§11.4).",
+        )}
+      </p>
 
-      {/* 快速角色 / 单人模式切换条 */}
-      <div style={{ marginBottom: 16, padding: "12px", background: "var(--card-bg, #f8f9fa)", borderRadius: "8px", border: "1px solid var(--border, #e9ecef)" }}>
-        <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 8, color: "var(--fg, #495057)" }}>
-          ⚡ {t("Quick Role Switcher (Reference / Dev)")}
-        </div>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+      <div className="identity-quick">
+        <div className="identity-quick__title">{t("Quick Role Switcher (Reference / Dev)")}</div>
+        <div className="identity-quick__buttons">
           <button
             type="button"
-            className={identity?.isSolo ? undefined : "secondary"}
-            style={identity?.isSolo ? { background: "#10b981", borderColor: "#059669", color: "#fff", fontWeight: 700 } : {}}
+            className={identity?.isSolo ? "identity-preset is-active" : "identity-preset secondary"}
             onClick={() => handlePreset("solo")}
             title={t("Full permissions without SoD blocks: self-approvals and self-sign-offs enabled")}
           >
-            👤 {t("Solo Mode (All-in-One)")}
+            {t("Solo Mode (All-in-One)")}
           </button>
           <button
             type="button"
-            className={identity?.subjectId === "user_analyst_01" && !identity?.isSolo ? undefined : "secondary"}
+            className={identity?.subjectId === "user_analyst_01" && !identity?.isSolo ? "identity-preset is-active" : "identity-preset secondary"}
             onClick={() => handlePreset("analyst")}
           >
-            🧑‍🔬 {t("Analyst")}
+            {t("Analyst")}
           </button>
           <button
             type="button"
-            className={identity?.subjectId === "user_pi_01" && !identity?.isSolo ? undefined : "secondary"}
+            className={identity?.subjectId === "user_pi_01" && !identity?.isSolo ? "identity-preset is-active" : "identity-preset secondary"}
             onClick={() => handlePreset("pi")}
           >
-            👑 {t("PI (Lead)")}
+            {t("PI (Lead)")}
           </button>
           <button
             type="button"
-            className={identity?.subjectId === "user_expert_01" ? undefined : "secondary"}
+            className={identity?.subjectId === "user_expert_01" ? "identity-preset is-active" : "identity-preset secondary"}
             onClick={() => handlePreset("expert")}
           >
-            🩺 {t("Domain Expert")}
+            {t("Domain Expert")}
           </button>
           <button
             type="button"
-            className={identity?.subjectId === "user_expert_02" ? undefined : "secondary"}
+            className={identity?.subjectId === "user_expert_02" ? "identity-preset is-active" : "identity-preset secondary"}
             onClick={() => handlePreset("expert2")}
           >
-            🔬 {t("Expert 2 (Independent)")}
+            {t("Expert 2 (Independent)")}
           </button>
         </div>
       </div>
 
       {identity?.isSolo ? (
-        <div style={{ padding: "8px 12px", marginBottom: 12, background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: "6px", color: "#065f46", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 8 }}>
-          <span>✨</span>
-          <span><strong>{t("Solo Mode Active")}:</strong> {t("Separation of duties (SoD) restrictions are bypassed. You can request and self-approve gates, issue adhoc grants, and sign off conclusions as the author.")}</span>
+        <div className="identity-solo-note">
+          <strong>{t("Solo Mode Active")}:</strong>{" "}
+          {t("Separation of duties (SoD) restrictions are bypassed. You can request and self-approve gates, issue adhoc grants, and sign off conclusions as the author.")}
         </div>
       ) : null}
 
@@ -127,11 +121,11 @@ export function IdentityBar() {
 
       {identity ? (
         <div className="rows">
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div className="identity-chips">
             <strong className="mono">{subject}</strong>
             {identity.isSolo ? (
               <Chip title="solo_mode" status="supported">
-                ⚡ {t("Solo Operator")}
+                {t("Solo Operator")}
               </Chip>
             ) : null}
             {identity.roles.map((role) => (
@@ -181,7 +175,7 @@ export function IdentityBar() {
       )}
 
       <form
-        style={{ marginTop: 12 }}
+        className="identity-project"
         onSubmit={(event) => {
           event.preventDefault();
           openProject();
@@ -194,15 +188,35 @@ export function IdentityBar() {
             placeholder="prj_reference_pbmc"
           />
         </Field>
-        <button type="submit" disabled={!identity}>
-          {t("Open project")}
-        </button>
-        {projectId ? (
-          <span className="muted" style={{ marginLeft: 8 }}>
-            {t("current")} <span className="mono">{projectId}</span>
-          </span>
-        ) : null}
+        <div className="identity-project__actions">
+          <button type="submit" disabled={!identity}>
+            {t("Open project")}
+          </button>
+          {projectId ? (
+            <span className="muted">
+              {t("current")} <span className="mono">{projectId}</span>
+            </span>
+          ) : null}
+        </div>
       </form>
+    </div>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <div className="panel">
+      <header>
+        <div>
+          <h2>{t("Acting as")}</h2>
+          <p className="muted">
+            {t(
+              "The token decides the role; this panel only says which token a person is holding. A service account can draft, and can never sign off or decide an approval (§11.4).",
+            )}
+          </p>
+        </div>
+      </header>
+      {body}
     </div>
   );
 }

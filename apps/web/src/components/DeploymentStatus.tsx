@@ -24,6 +24,7 @@ const STATUS_LABELS = {
   unavailable: "Not connected",
   unknown: "Not confirmed",
 };
+const CAPABILITIES: Capability[] = ["object_upload", "run_execution", "export_generation"];
 
 const DeploymentContext = createContext<AsyncState<DeploymentCapabilities> | null>(null);
 
@@ -38,25 +39,60 @@ export function useDeployment() {
   return state;
 }
 
+/**
+ * A one-line declaration strip. The three capabilities are still named on every screen, because a
+ * person has to know that uploading or starting a run will not complete here, but the explanation is
+ * kept in the disclosure instead of occupying the top of every page.
+ */
 export function DeploymentStatus() {
   const t = useT();
   const { data, error, loading, reload } = useDeployment();
   const known = !error && !loading ? data : null;
+  const statusOf = (capability: Capability) => known?.[capability] ?? "unknown";
+  const statuses = CAPABILITIES.map(statusOf);
+  const overall = statuses.includes("unavailable")
+    ? "unavailable"
+    : statuses.includes("unknown")
+      ? "unknown"
+      : "configured";
   return (
     <section className="deployment-status" aria-label={t("Deployment capabilities")}>
       <div className="deployment-heading">
+        <span className={`status-dot status-dot--${overall}`} aria-hidden="true" />
         <strong>{t("Deployment capabilities")}</strong>
-        <Chip>{t(known?.mode === "reference" ? "Reference demonstration" : known?.mode === "configured" ? "Configured deployment" : "Deployment not confirmed")}</Chip>
-        <button type="button" className="secondary" onClick={reload} disabled={loading}>{t("re-read")}</button>
+        <Chip>
+          {t(
+            known?.mode === "reference"
+              ? "Reference demonstration"
+              : known?.mode === "configured"
+                ? "Configured deployment"
+                : "Deployment not confirmed",
+          )}
+        </Chip>
+        <span className="deployment-capabilities">
+          {CAPABILITIES.map((capability) => (
+            <span className="capability" key={capability}>
+              <span className={`status-dot status-dot--${statusOf(capability)}`} aria-hidden="true" />
+              {t(LABELS[capability])}: {t(STATUS_LABELS[statusOf(capability) as keyof typeof STATUS_LABELS])}
+            </span>
+          ))}
+        </span>
+        <button type="button" className="small-button secondary" onClick={reload} disabled={loading}>
+          {t("re-read")}
+        </button>
       </div>
-      <div className="deployment-capabilities">
-        {(Object.keys(LABELS) as Capability[]).map((capability) => (
-          <span key={capability}>{t(LABELS[capability])}: {t(STATUS_LABELS[known?.[capability] ?? "unknown"])}</span>
-        ))}
-      </div>
-      <p className="muted" role="status">
-        {t(loading ? "Reading deployment declaration…" : error ? "Deployment information could not be read. Capabilities remain unconfirmed; ask the deployment administrator to check the API, then retry." : "These are deployment declarations, not live health checks or permission grants. Project policies still apply.")}
-      </p>
+      <details className="deployment-details">
+        <summary>{t("what this declaration does and does not mean")}</summary>
+        <p className="muted" role="status">
+          {t(
+            loading
+              ? "Reading deployment declaration…"
+              : error
+                ? "Deployment information could not be read. Capabilities remain unconfirmed; ask the deployment administrator to check the API, then retry."
+                : "These are deployment declarations, not live health checks or permission grants. Project policies still apply.",
+          )}
+        </p>
+      </details>
     </section>
   );
 }

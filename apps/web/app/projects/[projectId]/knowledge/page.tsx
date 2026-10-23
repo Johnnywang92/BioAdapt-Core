@@ -105,7 +105,6 @@ function KnowledgeWorkspace({ caller, projectId }: { caller: Caller; projectId: 
             filename: file.name,
             doc_type: inferredType,
             content_text: text,
-            privacy_tier: "restricted",
           });
         } else {
           // Binary files: PDF, DOCX
@@ -125,7 +124,6 @@ function KnowledgeWorkspace({ caller, projectId }: { caller: Caller; projectId: 
             filename: file.name,
             doc_type: inferredType,
             content_b64: b64,
-            privacy_tier: "restricted",
           });
         }
         successCount++;
@@ -155,7 +153,6 @@ function KnowledgeWorkspace({ caller, projectId }: { caller: Caller; projectId: 
         content_text: contentText,
         author: author || undefined,
         tissue: tissue || undefined,
-        privacy_tier: "restricted",
       });
       setTitle("");
       setFilename("");
@@ -555,7 +552,6 @@ function KnowledgeWorkspace({ caller, projectId }: { caller: Caller; projectId: 
                     <div style={{ fontSize: "0.8rem", color: "var(--muted)", marginTop: "0.3rem", display: "flex", gap: "8px", flexWrap: "wrap" }}>
                       <span>📁 {d.filename}</span>
                       <span>📑 {d.chunk_count} 个切片</span>
-                      <span style={{ color: "#059669" }}>🔒 {d.privacy_tier}</span>
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: "6px", alignItems: "center", flexShrink: 0 }}>

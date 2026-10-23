@@ -122,7 +122,11 @@ export function Loading({ on }: { on: boolean }) {
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="muted">{children}</p>;
+  return (
+    <div className="empty-state">
+      <p>{children}</p>
+    </div>
+  );
 }
 
 /** A card link: the queue and the trail both point at the one-screen review, never at a raw id. */

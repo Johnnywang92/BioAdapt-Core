@@ -23,8 +23,8 @@ const SCOPE: UsageScope[] = [
 export default function DataPage({ params }: { params: { projectId: string } }) {
   const t = useT();
   const { caller, projectId, blocked } = useProjectScope(params.projectId);
-  // The wizard defaults the object's tier to the project's own, so it has to read the project rather
-  // than assume one.
+  // Both registration routes give an asset the project's own tier, so the project has to be read
+  // rather than assumed.
   const project = useAsync<Project | null>(
     () => (caller ? projectsApi.read(caller, projectId) : Promise.resolve(null)),
     [caller?.token, projectId],
@@ -45,7 +45,7 @@ export default function DataPage({ params }: { params: { projectId: string } }) 
       <ProblemNote error={project.error} />
       <details className="advanced">
         <summary>{t("declare every field myself")}</summary>
-        <Register caller={caller} projectId={projectId} />
+        <Register caller={caller} projectId={projectId} tier={project.data?.privacy_tier ?? "restricted"} />
       </details>
       <Registered caller={caller} projectId={projectId} />
     </>
@@ -58,7 +58,15 @@ export default function DataPage({ params }: { params: { projectId: string } }) 
  * so a 409 at completion means the object plane really holds something else — it cannot mean that a
  * number was typed in wrong somewhere upstream.
  */
-function Register({ caller, projectId }: { caller: Caller; projectId: string }) {
+function Register({
+  caller,
+  projectId,
+  tier,
+}: {
+  caller: Caller;
+  projectId: string;
+  tier: DataAsset["privacy_tier"];
+}) {
   const t = useT();
   const submit = useSubmit();
   const deployment = useDeployment();
@@ -70,7 +78,6 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
     asset_id: "",
     format: "h5ad",
     schema_version: "1",
-    privacy_tier: "",
     usage_scope: "this_project_only" as UsageScope,
     retention_class: "run_linked" as RetentionClass,
     filtering_state: "unknown" as FilteringState,
@@ -131,7 +138,7 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
       format: form.format,
       schema_version: form.schema_version,
       size_bytes: bytes.byteLength,
-      privacy_tier: (form.privacy_tier || "") as DataAsset["privacy_tier"],
+      privacy_tier: tier,
       usage_scope: form.usage_scope,
       retention_class: form.retention_class,
       filtering_state: form.filtering_state,
@@ -188,18 +195,6 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
         <div className="grid">
           <Field label="schema_version">
             <input value={form.schema_version} onChange={set("schema_version")} />
-          </Field>
-          <Field
-            label="privacy_tier"
-            hint={t("leave it at the project tier unless this object is genuinely less sensitive")}
-          >
-            <select value={form.privacy_tier} onChange={set("privacy_tier")}>
-              <option value="">{t("choose")}</option>
-              <option value="public">{`${t("public")} (public)`}</option>
-              <option value="restricted">{`${t("restricted")} (restricted)`}</option>
-              <option value="strict_local">{`${t("strict_local")} (strict_local)`}</option>
-              <option value="hgr_controlled">{`${t("hgr_controlled")} (hgr_controlled)`}</option>
-            </select>
           </Field>
         </div>
         <div className="grid">
@@ -270,7 +265,7 @@ function Register({ caller, projectId }: { caller: Caller; projectId: string }) 
         </Field>
         <button
           type="submit"
-          disabled={unavailable || !bytes || submit.busy || !form.asset_id || !form.privacy_tier || !pipelineWhole}
+          disabled={unavailable || !bytes || submit.busy || !form.asset_id || !pipelineWhole}
         >
           {submit.busy ? t("declaring, uploading, completing…") : t("Register")}
         </button>
@@ -317,40 +312,40 @@ function Registered({ caller, projectId }: { caller: Caller; projectId: string }
         </Notice>
       ) : null}
       {listed.data && listed.data.items.length ? (
-        <table>
-          <thead>
-            <tr>
-              <th>{t("asset")}</th>
-              <th>{t("format")}</th>
-              <th>{t("tier")}</th>
-              <th>{t("scope")}</th>
-              <th>{t("retention")}</th>
-              <th>{t("filtering")}</th>
-              <th>{t("bytes")}</th>
-              <th>{t("produced by")}</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {listed.data.items.map((asset) => (
-              <tr key={asset.asset_id}>
-                <td className="mono">{asset.asset_id}</td>
-                <td>{asset.format}</td>
-                <td>{t(asset.privacy_tier)}</td>
-                <td>{t(asset.usage_scope)}</td>
-                <td>{t(asset.retention_class)}</td>
-                <td>{t(asset.filtering_state)}</td>
-                <td>{asset.size_bytes}</td>
-                <td className="mono">{asset.created_by_run_id ?? t("registered by hand")}</td>
-                <td>
-                  <button className="secondary" type="button" onClick={() => void askFor(asset.asset_id)}>
-                    {t("download")}
-                  </button>
-                </td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>{t("asset")}</th>
+                <th>{t("format")}</th>
+                <th>{t("scope")}</th>
+                <th>{t("retention")}</th>
+                <th>{t("filtering")}</th>
+                <th>{t("bytes")}</th>
+                <th>{t("produced by")}</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {listed.data.items.map((asset) => (
+                <tr key={asset.asset_id}>
+                  <td className="mono">{asset.asset_id}</td>
+                  <td>{asset.format}</td>
+                  <td>{t(asset.usage_scope)}</td>
+                  <td>{t(asset.retention_class)}</td>
+                  <td>{t(asset.filtering_state)}</td>
+                  <td>{asset.size_bytes}</td>
+                  <td className="mono">{asset.created_by_run_id ?? t("registered by hand")}</td>
+                  <td>
+                    <button className="secondary" type="button" onClick={() => void askFor(asset.asset_id)}>
+                      {t("download")}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         !listed.loading && <Empty>{t("Nothing is registered in this project yet.")}</Empty>
       )}

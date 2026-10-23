@@ -66,9 +66,6 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
     <>
       <Panel
         title={`${t("Project")} ${projectId}`}
-        note={t(
-          "the tier on this row is what every later screen inherits: it decides egress, model calls and whether an export is possible at all",
-        )}
         actions={
           <button className="secondary" type="button" onClick={() => { project.reload(); listed.reload(); }}>
             {t("re-read")}
@@ -83,8 +80,6 @@ export default function ProjectOverview({ params }: { params: { projectId: strin
             <dd>{project.data.study_goal}</dd>
             <dt>{t("species")}</dt>
             <dd>{project.data.species}</dd>
-            <dt>{t("privacy tier")}</dt>
-            <dd>{t(project.data.privacy_tier)}</dd>
             <dt>{t("annotation target")}</dt>
             <dd>{project.data.annotation_granularity_target}</dd>
             <dt>{t("review budget")}</dt>
@@ -383,9 +378,7 @@ function LaunchRun({
                 />
                 <span className="mono">{one.asset_id}</span>
                 <span className="muted">
-                  {`${one.format} · ${one.size_bytes} ${t("bytes")} · ${t(one.privacy_tier)} · ${t(
-                    one.retention_class,
-                  )}`}
+                  {`${one.format} · ${one.size_bytes} ${t("bytes")} · ${t(one.retention_class)}`}
                 </span>
                 <span className="muted">
                   {one.created_by_run_id

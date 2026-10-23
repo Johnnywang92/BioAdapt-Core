@@ -231,11 +231,11 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
                   : t("not screened on this card")}
               </dd>
               <dt>{t("composition")}</dt>
-              <dd>{preview(card.composition_check)}</dd>
+              <dd>{card.composition_check ? <JsonSummary value={card.composition_check} /> : t("not recorded")}</dd>
               <dt>{t("stability")}</dt>
-              <dd>{card.stability_summary ? preview(card.stability_summary) : t("no perturbation summary")}</dd>
+              <dd>{card.stability_summary ? <JsonSummary value={card.stability_summary} /> : t("no perturbation summary")}</dd>
               <dt>{t("novelty vs coverage")}</dt>
-              <dd>{card.novelty_vs_coverage ? preview(card.novelty_vs_coverage) : "—"}</dd>
+              <dd>{card.novelty_vs_coverage ? <JsonSummary value={card.novelty_vs_coverage} /> : "—"}</dd>
               <dt>{t("cross modal")}</dt>
               <dd>{t(card.cross_modal_status)}</dd>
             </dl>
@@ -462,40 +462,47 @@ function Card({ caller, projectId, candidateId }: { caller: Caller; projectId: s
             </Panel>
 
             <Panel title={t("Who wrote each number")} note={t("§10.4: a value produced by a model is a defect, not a draft")}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>{t("field")}</th>
-                    <th>{t("source")}</th>
-                    <th>{t("object")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(card.field_provenance).map(([name, provenance]) => (
-                    <tr key={name}>
-                      <td className="mono">{name}</td>
-                      <td>
-                        <Chip
-                          title={provenance.source}
-                          status={
-                            provenance.source === "model" ? "conflict" : provenance.source === "human" ? "supported" : undefined
-                          }
-                        >
-                          {t(provenance.source)}
-                        </Chip>
-                      </td>
-                      <td className="mono">{provenance.object_id}</td>
-                    </tr>
-                  ))}
-                  {!Object.keys(card.field_provenance).length ? (
-                    <tr>
-                      <td colSpan={3} className="muted">
-                        {t("this card carries no field provenance rows")}
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+              <details className="advanced">
+                <summary>
+                  {t("show the {n} field-level sources", { n: Object.keys(card.field_provenance).length })}
+                </summary>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{t("field")}</th>
+                        <th>{t("source")}</th>
+                        <th>{t("object")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(card.field_provenance).map(([name, provenance]) => (
+                        <tr key={name}>
+                          <td className="mono">{name}</td>
+                          <td>
+                            <Chip
+                              title={provenance.source}
+                              status={
+                                provenance.source === "model" ? "conflict" : provenance.source === "human" ? "supported" : undefined
+                              }
+                            >
+                              {t(provenance.source)}
+                            </Chip>
+                          </td>
+                          <td className="mono">{provenance.object_id}</td>
+                        </tr>
+                      ))}
+                      {!Object.keys(card.field_provenance).length ? (
+                        <tr>
+                          <td colSpan={3} className="muted">
+                            {t("this card carries no field provenance rows")}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
             </Panel>
 
             <Panel title={t("Trail")} note={t("every revision supersedes a review id; nothing is silently overwritten")}>
@@ -914,11 +921,26 @@ function fieldsOf(card: EvidenceCard, changed: Record<string, unknown>): Record<
   return Object.fromEntries(Object.keys(changed).map((name) => [name, stored[name] ?? null]));
 }
 
+function size(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.length}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).length}}`;
+  return String(value);
+}
+
 function preview(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value !== "object") return String(value);
   const entries = Object.entries(value as Record<string, unknown>).slice(0, 3);
-  return entries.map(([key, one]) => `${key}=${typeof one === "object" ? JSON.stringify(one) : String(one)}`).join(" · ") || "—";
+  return entries.map(([key, one]) => `${key}=${size(one)}`).join(" · ") || "—";
+}
+
+function JsonSummary({ value }: { value: unknown }) {
+  return (
+    <details className="json-summary">
+      <summary>{preview(value)}</summary>
+      <pre className="code-block">{JSON.stringify(value, null, 2)}</pre>
+    </details>
+  );
 }
 
 function CrossModalSummary({ card }: { card: EvidenceCard }) {
