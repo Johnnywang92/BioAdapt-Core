@@ -95,6 +95,10 @@ class RunJournal(Protocol):
 
     def plan_of(self, run_id: str) -> AnalysisPlan: ...
 
+    def waits_before(self, run_id: str, from_state: RunState, to_state: RunState) -> int:
+        """How many times this run has already parked on this edge."""
+        ...
+
     def granted_for(
         self, run_id: str, kind: ApprovalKind, *, node_id: Optional[str] = None
     ) -> Optional[Approval]: ...
@@ -456,7 +460,7 @@ class WorkflowRunner:
             if gated is not None:
                 return gated
 
-        admitted = self._admit(node)
+        admitted = self._admit(run_id, node)
         if isinstance(admitted, _Stop):
             return admitted
         spec: ToolSpec = admitted
@@ -616,7 +620,7 @@ class WorkflowRunner:
             f"and assigned to {approval.assigned_to}",
         )
 
-    def _admit(self, node: PlanNode) -> Union[ToolSpec, _Stop]:
+    def _admit(self, run_id: str, node: PlanNode) -> Union[ToolSpec, _Stop]:
         """Resolve the node's tool, and refuse one the registry says may not run at all.
 
         An ad-hoc grant is not tested here. Its spend happens in ``_spend_adhoc_grant``, after the
@@ -624,17 +628,57 @@ class WorkflowRunner:
         approval, and a grant spent by the run that stored it cannot answer a second time - so asking
         the question before the checkpoint would leave a resumed run unable to get past its first node
         even though it intends to recompute nothing (§4.1, §9.6).
+
+        An ad-hoc tool the registry does not hold is a wait, not a wedge. The registry holds such a
+        tool only while a live grant covers it, so before the grant is issued the node names a tool
+        that is not there - and the plain reading of that is a run that can only fail. Nothing has
+        gone wrong: a person has yet to issue the grant, and the run goes on once they do (§9.6).
         """
         try:
             return self.registry.resolve(node.tool_name, node.tool_version, now=self.clock())
         except ForbiddenToolError as error:
             return self._stop_for(ErrorClass.POLICY_BLOCKED, f"node {node.node_id} may not run: {error}")
         except UnknownToolError as error:
+            if node.tool_class is ToolClass.PROJECT_ADHOC:
+                return self._adhoc_grant_wait(run_id, node)
             return self._stop_for(
                 ErrorClass.GATE_BLOCKED,
                 f"node {node.node_id} names a tool the registry does not hold: {error}; preflight has "
                 "to re-run once it is registered",
             )
+
+    def _adhoc_grant_wait(self, run_id: str, node: PlanNode) -> _Stop:
+        """Say what an ad-hoc step without an executable grant is waiting for (§9.6).
+
+        The ledger keys a grant by run and node, so it answers exactly one question: has a person
+        issued the execution this step needs. No row means the decision is still pending, and the run
+        waits in a branch it may be sent back from. A row that is no longer live means the execution
+        it bought is spent or its window has closed, which asks for a new decision, not a retry.
+        """
+        recorded = self.catalog.find_tool_grant(
+            node.tool_name, node.tool_version, run_id=run_id, node_id=node.node_id
+        )
+        if recorded is None:
+            return self._stop_for(
+                ErrorClass.NEEDS_INPUT,
+                f"node {node.node_id} runs {node.tool_name}@{node.tool_version}, an ad-hoc step the "
+                f"ledger holds no grant row for {run_id}/{node.node_id}; the step waits on the execution "
+                "grant a person issues over the ad-hoc gate (§9.6)",
+            )
+        if not recorded.is_live(self.clock()):
+            return self._stop_for(
+                ErrorClass.NEEDS_INPUT,
+                f"node {node.node_id} waits on the execution grant {recorded.grant_id}, which is no longer "
+                "live: the execution it bought is spent or its window has closed, so the step cannot run "
+                "until a person grants it again (§9.6)",
+            )
+        return self._stop_for(
+            ErrorClass.NEEDS_INPUT,
+            f"node {node.node_id} names {node.tool_name}@{node.tool_version}, which the registry this "
+            f"process hydrated does not hold, though the ledger holds the live grant {recorded.grant_id} "
+            "for it; the deployment has to hydrate the registry from the ledger before the step may run "
+            "(§9.6)",
+        )
 
     def _spend_adhoc_grant(self, run_id: str, node: PlanNode, manifest: RunManifest) -> Optional[_Stop]:
         """Claim the one execution an ad-hoc node's grant is worth, and stop when it is not there to claim.
@@ -863,7 +907,14 @@ class WorkflowRunner:
                 "service account reporting a stop condition cannot mark its own run FAILED"
             )
         elif stop.state is not current:
-            self.journal.transition(run_id, stop.state, actor=self.actor, reason=stop.reason)
+            #: A run that waits is executed again and may wait at the same place for the same reason.
+            #: Transitions are deduplicated by attempt, so the second wait has to say it is the second
+            #: one, or the journal answers it as a redelivery of the first and the run never parks
+            #: where the engine says it did (§9.2).
+            attempt = self.journal.waits_before(run_id, current, stop.state) + 1
+            self.journal.transition(
+                run_id, stop.state, actor=self.actor, reason=stop.reason, attempt=attempt
+            )
             state = stop.state
             reason = stop.reason
         else:

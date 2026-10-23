@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Chip, Empty, Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
+import { AdhocRunGates } from "@/components/AdhocRunGates";
 import { DeploymentNotice } from "@/components/DeploymentStatus";
 import { approvals as approvalsApi, runs as runsApi, type Caller } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -42,6 +43,7 @@ export default function RunPage({ params }: { params: { projectId: string; runId
   return (
     <>
       <RunSummaryPanel caller={caller} projectId={projectId} runId={runId} live={live} setLive={setLive} />
+      <AdhocRunGates caller={caller} projectId={projectId} runId={runId} />
       <Journal caller={caller} projectId={projectId} runId={runId} live={live} />
       <Gate caller={caller} projectId={projectId} runId={runId} />
     </>

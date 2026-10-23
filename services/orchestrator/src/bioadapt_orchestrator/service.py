@@ -125,6 +125,20 @@ class Orchestrator:
     def journal(self, run_id: str, *, kind: Optional[str] = None, limit=None, offset=0) -> list[RunEvent]:
         return self.catalog.list_run_events(run_id, kind=kind, limit=limit, offset=offset)
 
+    def waits_before(self, run_id: str, from_state: RunState, to_state: RunState) -> int:
+        """How many times this run has already parked on this edge.
+
+        A run that waits for a person is executed again, and it may wait at the same place for the
+        same reason. The attempt number is what tells those waits apart: a transition is deduplicated
+        by attempt, so the second wait has to say it is the second one or it is answered from the
+        journal as a redelivery of the first (§9.2).
+        """
+        return sum(
+            1
+            for event in self.catalog.list_run_events(run_id, kind=str(RunEventKind.STATE))
+            if event.from_state == from_state and event.to_state == to_state
+        )
+
     def usage(self, run_id: str) -> LoopUsage:
         minutes, cost = self.catalog.usage_totals(run_id)
         return LoopUsage(iterations=self.catalog.loop_iterations(run_id), compute_minutes=minutes, model_cost_usd=cost)

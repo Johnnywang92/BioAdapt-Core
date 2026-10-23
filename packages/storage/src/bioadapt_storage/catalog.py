@@ -990,6 +990,18 @@ class Catalog:
     # ------------------------------------------------------------------ candidates and cards
 
     def record_candidate(self, candidate: CandidateSet) -> None:
+        """Content addressed: the same cluster of the same run is the same candidate, so a replayed
+        discovery resolves to the row that is already there.
+
+        A run that waits for a person is executed more than once, and the second pass reads the same
+        clusters; refusing the second write would fail the run over a fact it had already recorded.
+        """
+        existing = self.conn.execute(
+            "select 1 from candidate_set where project_id = ? and candidate_id = ?",
+            (self.scope, candidate.candidate_id),
+        ).fetchone()
+        if existing is not None:
+            return
         self._insert("candidate_set", {**candidate.model_dump(mode="python"), "project_id": self.scope})
 
     def _candidate(self, row: sqlite3.Row) -> CandidateSet:

@@ -1359,6 +1359,19 @@ export const zh: Record<string, string> = {
     " 一扇门只买一份凭据，所以再问一次答复的是台账上已经站着的那一行，而不是第二份许可（§9.6）",
   "what this buys, in the deployment's own terms: one execution, no network, no GPU, no egress, no retry, project-scoped assets, and the grant is spent by the one execution it authorises (§9.6)":
     "按本次部署的说法，它买到的是：一次执行、不联网、不给 GPU、不出流量、不重试、资产只限本项目，而且这份凭据就被它授权的那一次执行用掉（§9.6）",
+
+  // ---------------------------------------------------------------- run 页上的两张门
+  "The ad-hoc steps of this run": "这次运行里的临时步骤",
+  "the plan version this run pins is not listed for the project, so the nodes it names cannot be read here":
+    "这次运行钉住的方案版本不在本项目的列表里，所以它指名的节点在这里读不到",
+  "an ad-hoc step waits on two gates: the node's own, and the one the execution grant is issued over. Requesting them is not deciding them - each one belongs to whoever did not ask for it (§11.6)":
+    "一个临时步骤要等两扇门：节点自己那扇，以及执行凭据所依据的那扇。申请不等于裁定——每扇门都归那个没有提出它的人（§11.6）",
+  "not opened": "还没开",
+  "open the two gates this step waits on": "把这一步要等的两扇门都开出来",
+  "both gates are open; the execution grant is issued from the approval inbox, by the person who decided the ad-hoc gate (§9.6)":
+    "两扇门都开了；执行凭据在审批收件箱里由裁定那扇临时门的人发放（§9.6）",
+  "both gates are open, and each one still waits for a person who did not ask for it (§11.6)":
+    "两扇门都开了，各自仍在等一个没有提出它的人（§11.6）",
   "showing the gates of one run": "只显示某一次运行的那些门",
   "show every gate": "显示所有门",
 

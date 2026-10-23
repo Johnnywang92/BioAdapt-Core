@@ -15,8 +15,10 @@ from pathlib import Path
 
 from bioadapt_api.routes_data import CONFIRMABLE_CUTS
 from bioadapt_policies.access import Role
+from bioadapt_schemas.entities import sha256_of_json
 from bioadapt_schemas.enums import RunState
 from bioadapt_schemas.plan import MANDATORY_STOP_CONDITIONS
+from bioadapt_tool_registry import ToolSpec
 from conftest import ANALYST, PI, PROJECT_ID
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -139,8 +141,8 @@ def wizard_plan(body: dict, *, project: dict, tools: list[dict], conclusion_outp
     }
 
 
-def test_a_plan_the_wizard_builds_from_the_catalog_runs_to_qc_review(client, auth, state, catalog):
-    """§9.4, §9.1: the rows a person chooses from are the rows the engine hydrates, and they execute."""
+def upload_counts(client, auth, state) -> str:
+    """The counts file a person would pick in the data wizard, registered as the run's input."""
     payload = counts_document()
     digest = hashlib.sha256(payload).hexdigest()
     asset_id = f"as_{digest[:12]}"
@@ -169,6 +171,12 @@ def test_a_plan_the_wizard_builds_from_the_catalog_runs_to_qc_review(client, aut
         headers=auth(ANALYST, [Role.ANALYST]),
     )
     assert uploaded.status_code == 201, uploaded.json()
+    return asset_id
+
+
+def test_a_plan_the_wizard_builds_from_the_catalog_runs_to_qc_review(client, auth, state, catalog):
+    """§9.4, §9.1: the rows a person chooses from are the rows the engine hydrates, and they execute."""
+    asset_id = upload_counts(client, auth, state)
 
     cataloged = client.get(f"{BASE}/tools", headers=auth(ANALYST, [Role.ANALYST]))
     assert cataloged.status_code == 200, cataloged.json()
@@ -266,3 +274,239 @@ def test_every_cut_the_wizard_restates_is_one_the_confirmation_route_demands(cli
     project = client.get(BASE, headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR])).json()
     stated = set(project["thresholds"]) - {"confirmed"}
     assert stated == set(CONFIRMABLE_CUTS)
+
+
+def project_submission() -> dict:
+    """The bytes the wizard's form produces for one step (§9.6).
+
+    ``AdhocSpecForm.specOf`` builds exactly this shape: the lines the screen asks the owner of the
+    code for, the cage settings the deployment fixes (no network, no GPU, no retry), and the four
+    provenance fields the contract requires of every tool. The plan node carries them, because the
+    plan is what pins them.
+    """
+    return {
+        "tool_name": "project_qc_probe",
+        "tool_version": "0.1.0",
+        "task": "qc",
+        "tool_class": "project_adhoc",
+        "supported_modalities": ["RNA"],
+        "supported_species": ["human"],
+        "input_schema": {"name": "scrnaseq_counts", "version": "v1"},
+        "output_schema": {"name": "adhoc_output", "version": "v1"},
+        "container_image": {
+            "repository": "registry.internal/bioadapt/project-probe",
+            "tag": "0.1.0",
+            "digest": "sha256:" + "ab" * 32,
+        },
+        "resources": {
+            "cpu": 4,
+            "memory_mb": 8192,
+            "max_minutes": 60,
+            "measured_peak_memory_mb": 6100,
+            "measured_on": "run_scrnaseq_calibration",
+        },
+        "license": {
+            "spdx_id": "MIT",
+            "display_name": "project probe",
+            "review_status": "approved",
+            "reviewed_at": "2026-04-01",
+            "note": None,
+        },
+        "quality_checks": ["adhoc_result_is_marked_unregistered"],
+        "provenance_fields": ["input_hashes", "parameters", "container_image_digest", "tool_version"],
+        "assumptions": ["the registered QC step does not answer this project's question"],
+        "invalid_when": ["the result is the only support for a delivered conclusion"],
+        "reference_compatibility": {
+            "requires_counts": True,
+            "id_system": "hgnc_symbol",
+            "needs_log": None,
+            "embedding_source": None,
+        },
+        "failure_policy": "halt",
+        "retry_limit": 0,
+        "network": {"mode": "closed"},
+        "reproducibility_level_target": "numeric",
+    }
+
+
+def own_tool_plan(body: dict, *, project: dict, tools: list[dict], conclusion_outputs: list[str]) -> dict:
+    """The wizard's plan after the project put its own tool in one step's place (§9.6).
+
+    ``PlanWizard.tsx`` keeps that step's slots and parameters and replaces everything that names the
+    tool: the identity the outputs are recorded under, the resource floor the engine measures the
+    node against, and the approval it carries. The submission's bytes ride along on the node.
+    """
+    plan_body = wizard_plan(
+        body, project=project, tools=tools, conclusion_outputs=conclusion_outputs
+    )
+    submission = project_submission()
+    measured = submission["resources"]["measured_peak_memory_mb"]
+    for node in plan_body["nodes"]:
+        if node["node_id"] != "qc":
+            continue
+        node.update(
+            {
+                "tool_name": submission["tool_name"],
+                "tool_version": submission["tool_version"],
+                "tool_class": "project_adhoc",
+                "requires_approval": True,
+                "resources": {
+                    "cpu": submission["resources"]["cpu"],
+                    "memory_gb": max(1, -(-measured // 1024)),
+                    "gpu": 0,
+                    "max_minutes": submission["resources"]["max_minutes"],
+                },
+                "adhoc_spec": submission,
+            }
+        )
+    return plan_body
+
+
+def open_gate(client, auth, run_id: str, kind: str, node_id: str, *, reason: str) -> str:
+    """One gate, asked for by the analyst and decided by the PI (§9.4, §11.6)."""
+    gate = client.post(
+        f"{BASE}/runs/{run_id}/approvals",
+        json={"kind": kind, "node_id": node_id},
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    assert gate.status_code == 201, gate.text
+    approval_id = gate.json()["approval_id"]
+    decided = client.post(
+        f"{BASE}/approvals/{approval_id}/decision",
+        json={"approved": True, "reason": reason},
+        headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]),
+    )
+    assert decided.status_code == 200, decided.text
+    return approval_id
+
+
+def resume(client, auth, run_id: str, reason: str, attempt: int) -> None:
+    """Send a waiting run back onto the chain: the state machine's act, not the driver's (§9.2).
+
+    The attempt numbers the send-back: transitions are deduplicated by attempt, so the second time
+    a run is sent back from the same branch has to say it is the second time.
+    """
+    moved = client.post(
+        f"{BASE}/runs/{run_id}/transitions",
+        json={"to_state": "ANALYSIS_RUNNING", "reason": reason, "attempt": attempt},
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    assert moved.status_code == 201, moved.text
+
+
+def test_the_projects_own_tool_runs_only_through_two_gates_and_the_grant(client, auth, state, catalog):
+    """§9.6: the wizard's own tool is gated twice, and the grant executes exactly the plan's bytes.
+
+    The chain the workbench offers is the one this walks: the plan pins the submission, the run page
+    opens the node gate and the ad-hoc gate together, the PI decides both and issues the grant, and
+    only then does the step run - under the name the submission carries.
+    """
+    asset_id = upload_counts(client, auth, state)
+    catalog_body = client.get(f"{BASE}/tools", headers=auth(ANALYST, [Role.ANALYST])).json()
+    project = client.get(BASE, headers=auth(ANALYST, [Role.ANALYST])).json()
+
+    recorded = client.post(
+        f"{BASE}/plans",
+        json=own_tool_plan(
+            {"plan_id": "plan_wizard_own_tool"},
+            project=project,
+            tools=catalog_body["tools"],
+            conclusion_outputs=catalog_body["conclusion_outputs"],
+        ),
+        headers=auth(ANALYST, [Role.ANALYST]),
+    )
+    assert recorded.status_code == 201, recorded.json()
+
+    #: The grant form reads the bytes off the plan node, so the listing has to carry them: what a PI
+    #: is asked to sign is the submission, not a summary of it. The plan stores them as the tool
+    #: contract read them, defaults and all, so what a grant executes is exactly what was pinned.
+    listed = client.get(f"{BASE}/plans", headers=auth(ANALYST, [Role.ANALYST])).json()
+    row = next(item for item in listed["items"] if item["plan_id"] == "plan_wizard_own_tool")
+    planned = next(node for node in row["nodes"] if node["node_id"] == "qc")
+    assert planned["adhoc_spec"] == ToolSpec(**project_submission()).model_dump(mode="json")
+    assert planned["tool_class"] == "project_adhoc" and planned["requires_approval"] is True
+
+    launched = client.post(
+        f"{BASE}/runs",
+        json={
+            "plan_id": "plan_wizard_own_tool",
+            "plan_version": "1",
+            "input_asset_ids": [asset_id],
+            "tool_registry_snapshot": catalog_body["snapshot_id"],
+            "priority": 5,
+        },
+        headers={**auth(PI, [Role.PRINCIPAL_INVESTIGATOR]), "Idempotency-Key": "idem-wizard-own-tool"},
+    )
+    assert launched.status_code == 202, launched.json()
+    run_id = launched.json()["run_id"]
+
+    plan_gate = client.post(
+        f"{BASE}/runs/{run_id}/approvals", json={"kind": "plan"}, headers=auth(ANALYST, [Role.ANALYST])
+    )
+    assert plan_gate.status_code == 201, plan_gate.text
+    decided = client.post(
+        f"{BASE}/approvals/{plan_gate.json()['approval_id']}/decision",
+        json={"approved": True, "reason": "reviewed the plan the wizard assembled"},
+        headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR]),
+    )
+    assert decided.status_code == 200, decided.json()
+
+    #: The step waits: the engine reads the node's own approval, and there is none yet.
+    waiting = client.post(f"{BASE}/runs/{run_id}/execute", headers=auth(ANALYST, [Role.ANALYST]))
+    assert waiting.status_code == 200, waiting.text
+    assert waiting.json()["gated_nodes"] == ["qc"]
+    assert waiting.json()["completed"] is False
+    assert waiting.json()["state"] == str(RunState.NEEDS_INPUT)
+
+    #: The run page's one click: both gates of that step, asked for by the analyst.
+    node_gate = open_gate(client, auth, run_id, "node", "qc", reason="the step may run in this project")
+    adhoc_gate = open_gate(
+        client, auth, run_id, "adhoc_tool", "qc", reason="one submission, caged, results stay unregistered"
+    )
+    assert node_gate != adhoc_gate
+
+    #: The run is waiting in a branch, and a branch is left by the state machine, not by the driver.
+    resume(client, auth, run_id, "both gates of the step are decided", attempt=1)
+
+    #: Two gates are not a grant: the ledger still holds no row, so the step still may not execute.
+    granted_yet = client.post(f"{BASE}/runs/{run_id}/execute", headers=auth(ANALYST, [Role.ANALYST]))
+    assert granted_yet.status_code == 200, granted_yet.text
+    assert granted_yet.json()["completed"] is False
+    assert granted_yet.json()["state"] == str(RunState.NEEDS_INPUT)
+    assert "waits on the execution grant" in granted_yet.json()["reason"]
+
+    issued = client.post(
+        f"{BASE}/runs/{run_id}/nodes/qc/adhoc-grants",
+        json={"approval_id": adhoc_gate},
+        headers=auth(PI, [Role.PRINCIPAL_INVESTIGATOR], amr=["totp"]),
+    )
+    assert issued.status_code == 201, issued.text
+    grant = issued.json()
+    #: The grant carries the plan's bytes and cites their digest: what runs is what was signed.
+    assert grant["spec"] == ToolSpec(**project_submission()).model_dump(mode="json")
+    assert grant["spec_sha256"] == sha256_of_json(grant["spec"])
+    assert grant["approver_id"] == PI and grant["requested_by"] == ANALYST
+
+    #: The run left the chain again to wait for the grant; sending it back is the state machine's act.
+    resume(client, auth, run_id, "the grant is on the record", attempt=2)
+
+    executed = client.post(f"{BASE}/runs/{run_id}/execute", headers=auth(ANALYST, [Role.ANALYST]))
+    assert executed.status_code == 200, executed.text
+    outcome = executed.json()
+    assert outcome["completed"] is True, outcome
+    assert outcome["state"] == str(RunState.QC_REVIEW)
+    assert outcome["gated_nodes"] == []
+    assert len(outcome["nodes_executed"]) == 8
+
+    #: The step's output is recorded under the submission's name: that is what the approval bought.
+    checkpoints = catalog.set_scope(PROJECT_ID).list_checkpoints(run_id)
+    qc_checkpoint = next(one for one in checkpoints if one.node_id == "qc")
+    assert qc_checkpoint.tool_name == "project_qc_probe"
+    assert qc_checkpoint.tool_version == "0.1.0"
+
+    #: And the grant is spent by that one execution: a second run cannot buy another one with it.
+    spent = client.get(
+        f"{BASE}/runs/{run_id}/adhoc-grants", headers=auth(ANALYST, [Role.ANALYST])
+    ).json()
+    assert spent["items"][0]["live"] is False
+
