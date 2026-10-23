@@ -28,6 +28,7 @@ from .routes_findings import read_evidence_by_alias
 from .routes_findings import router as findings_router
 from .routes_iam import router as iam_router
 from .routes_knowledge import router as knowledge_router
+from .routes_nodes import router as nodes_router
 from .routes_orchestration import router as orchestration_router
 from .routes_runs import router as runs_router
 from .routes_stats import router as stats_router
@@ -117,6 +118,7 @@ def create_app(state: ApiState) -> FastAPI:
         compliance_router,
         iam_router,
         stats_router,
+        nodes_router,
     ):
         app.include_router(router, prefix="/v1")
 

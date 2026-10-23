@@ -17,7 +17,7 @@ from pydantic import Field
 
 from bioadapt_evidence import EvidenceCardService, barcodes_of, specimen_of
 from bioadapt_orchestrator.service import ActorRef
-from bioadapt_policies.access import Action
+from bioadapt_policies.access import GLOBAL_SCOPE, Action
 from bioadapt_schemas.entities import CandidateSet, Contract, RunManifest, sha256_of_json
 from bioadapt_schemas.enums import (
     ApprovalKind,
@@ -31,8 +31,9 @@ from bioadapt_schemas.enums import (
 from bioadapt_schemas.identifiers import derive_candidate, sha256_hex
 from bioadapt_schemas.plan import AnalysisPlan
 from bioadapt_scrnaseq import AssetDefaults, WorkflowRunner, read_product
+from bioadapt_tool_registry.dispatch import NodeDispatch
 
-from .deps import SessionDep
+from .deps import Session, SessionDep
 from .errors import conflict, invalid, not_found
 from .paging import Page, page_params
 from .quota import TERMINAL_RUN_STATES, check_active_runs, check_plan_budget
@@ -183,6 +184,26 @@ def _require_run(session: SessionDep, run_id: str) -> str:
         raise not_found("run", run_id) from None
 
 
+def _execution_backend(session: Session) -> Optional[NodeDispatch]:
+    """Where this run's work runs (§3.3, §9.4).
+
+    A deployment that declares machines runs its work on them; one that declares none runs it here,
+    because the control plane is then the only machine the deployment claims. The registry is read
+    under the platform scope - a node serves every project - and read per request, so a machine
+    declared a minute ago is one this run can use.
+    """
+    nodes = session.state.catalogs.acquire(GLOBAL_SCOPE).list_nodes()
+    if not nodes:
+        return None
+    #: The nodes are the deployment's, but the promise about where this project's bytes may go is
+    #: the project's own, so the choice is made with both (§4.2, §4.4).
+    return NodeDispatch(
+        nodes=nodes,
+        privacy_tier=session.catalog.get_project().privacy_tier,
+        token=session.state.node_token,
+    )
+
+
 @router.get("/projects/{project_id}/runs/{run_id}")
 def read_run(run_id: str, session: SessionDep) -> dict:
     state = _require_run(session, run_id)
@@ -323,6 +344,7 @@ def execute_run_pipeline(run_id: str, session: SessionDep) -> dict:
         actor=actor,
         asset_defaults=defaults,
         clock=session.state.clock,
+        backend=_execution_backend(session),
     )
 
     outcome = runner.run(run_id, root=root)

@@ -640,6 +640,7 @@ def harness(
     data=None,
     asset_defaults: AssetDefaults = ASSET_DEFAULTS,
     run_id: str = RUN_ID,
+    backend: Optional[Any] = None,
 ) -> Harness:
     """Build the control plane, with a run already parked in ANALYSIS_RUNNING."""
     clock = Clock()
@@ -695,6 +696,7 @@ def harness(
         asset_defaults=asset_defaults,
         clock=clock,
         usage_minutes=lambda _node, _result, _elapsed: MINUTES_PER_ATTEMPT,
+        backend=backend,
     )
     made = Harness(
         catalog=catalog,

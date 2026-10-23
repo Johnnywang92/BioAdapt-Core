@@ -72,6 +72,11 @@ def not_found(kind: str, identifier: str) -> ApiProblem:
     return problem(404, ErrorClass.NOT_FOUND, f"{kind}_not_found", f"{kind} {identifier!r} is not in this project")
 
 
+def not_found_in_deployment(kind: str, identifier: str) -> ApiProblem:
+    """A platform-level resource: these rows belong to no project, so the project wording is wrong."""
+    return problem(404, ErrorClass.NOT_FOUND, f"{kind}_not_found", f"{kind} {identifier!r} is not in this deployment")
+
+
 def invalid(field: str, message: str) -> ApiProblem:
     return problem(400, ErrorClass.VALIDATION, "invalid_request", message, field=field)
 

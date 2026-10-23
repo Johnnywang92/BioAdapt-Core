@@ -31,7 +31,8 @@ from bioadapt_schemas.entities import (
 from bioadapt_schemas.enums import FinalStatus, RunEventKind, RunState, UsageScope
 from bioadapt_schemas.evidence import EvidenceCard
 from bioadapt_schemas.identifiers import sha256_hex
-from bioadapt_schemas.orchestration import AdhocToolGrant, Approval, RunCheckpoint, RunEvent
+from bioadapt_schemas.nodes import ExecutionNode
+from bioadapt_schemas.orchestration import AdhocToolGrant, Approval, ExecutionReceipt, RunCheckpoint, RunEvent
 from bioadapt_schemas.plan import AnalysisPlan
 from bioadapt_schemas.thresholds import Thresholds
 
@@ -60,6 +61,15 @@ class ScopeError(RuntimeError):
 #: simply is not the one that gets to close it.
 class ConcurrentWriteError(RuntimeError):
     pass
+
+
+class ExecutionConflictError(RuntimeError):
+    """One attempt answered twice, differently.
+
+    Section 3.3 gives an attempt a single answer. The second one is not a second opinion the index
+    can hold - it means the run's own record of what happened contradicts itself, which is a thing
+    a person has to look at rather than a thing the platform picks a side about.
+    """
 
 
 def _jsonable(value: Any) -> Any:
@@ -219,13 +229,15 @@ class Catalog:
         return (self._scope or default) if key == SCOPE_GUC else default
 
     def _platform(self) -> str:
-        """The scope the identity directory is read and written under, or nothing at all.
+        """The scope the platform-wide registries are read and written under, or nothing at all.
 
-        A project-scoped session asking for the directory would otherwise see one project's keys and
-        call that the list, so the requirement is stated instead of inferred from an empty result.
+        The identity directory and the compute-node registry both belong to the deployment rather
+        than to one project. A project-scoped session asking for them would otherwise see one
+        project's keys or one project's idea of the hardware and call that the whole list, so the
+        requirement is stated instead of inferred from an empty result.
         """
         if self.scope != PLATFORM_SCOPE:
-            raise ScopeError(f"the identity directory lives under scope {PLATFORM_SCOPE!r}, not {self.scope!r}")
+            raise ScopeError(f"the platform registries live under scope {PLATFORM_SCOPE!r}, not {self.scope!r}")
         return self.scope
 
     # ------------------------------------------------------------------ row encoding
@@ -706,6 +718,88 @@ class Catalog:
         return [
             self._checkpoint(row)
             for row in self._scoped("run_checkpoint", "run_id = ? order by node_id, attempt", run_id)
+        ]
+
+    # ------------------------------------------------------------------ execution receipts
+
+    def _receipt(self, row: sqlite3.Row) -> ExecutionReceipt:
+        data = self._contract("execution_receipt", row, ("project_id",))
+        data["at"] = data.pop("created_at")
+        return ExecutionReceipt(**data)
+
+    def execution_receipt(
+        self,
+        run_id: str,
+        node_id: str,
+        attempt: int,
+        *,
+        tool_name: str,
+        tool_version: str,
+        input_digest: str,
+        parameters_sha256: str,
+        registry_snapshot: str,
+    ) -> Optional[ExecutionReceipt]:
+        """What this attempt answered, if it has answered (§3.3).
+
+        The lookup carries the execution identity as well as the correlation key, because an attempt
+        of a re-planned run is not the attempt the previous plan made.
+        """
+        rows = self._scoped(
+            "execution_receipt",
+            "run_id = ? and node_id = ? and tool_name = ? and tool_version = ? and input_digest = ?"
+            " and parameters_sha256 = ? and registry_snapshot = ? and attempt = ?",
+            run_id,
+            node_id,
+            tool_name,
+            tool_version,
+            input_digest,
+            parameters_sha256,
+            registry_snapshot,
+            attempt,
+            limit=1,
+        )
+        return self._receipt(rows[0]) if rows else None
+
+    def record_execution_receipt(self, receipt: ExecutionReceipt) -> ExecutionReceipt:
+        """§3.3: one attempt has one answer.
+
+        The same answer arriving twice is absorbed once - the row that is already there *is* the
+        answer, so the second delivery changes nothing. A different answer for the same attempt is a
+        contradiction: one execution cannot have produced two results, so the new one is refused
+        rather than stored beside the old one.
+        """
+        existing = self.execution_receipt(
+            receipt.run_id,
+            receipt.node_id,
+            receipt.attempt,
+            tool_name=receipt.tool_name,
+            tool_version=receipt.tool_version,
+            input_digest=receipt.input_digest,
+            parameters_sha256=receipt.parameters_sha256,
+            registry_snapshot=receipt.registry_snapshot,
+        )
+        if existing is not None:
+            if existing.outcome_digest != receipt.outcome_digest:
+                raise ExecutionConflictError(
+                    f"attempt {receipt.attempt} of node {receipt.node_id} in run {receipt.run_id} "
+                    f"already answered with digest {existing.outcome_digest[:12]}, and this answer's "
+                    f"digest is {receipt.outcome_digest[:12]}: one attempt has one answer (§3.3)"
+                )
+            return existing
+        self._insert(
+            "execution_receipt",
+            {
+                **receipt.model_dump(mode="python"),
+                "project_id": self.scope,
+                "created_at": receipt.at or self.clock(),
+            },
+        )
+        return receipt
+
+    def list_execution_receipts(self, run_id: str) -> list[ExecutionReceipt]:
+        return [
+            self._receipt(row)
+            for row in self._scoped("execution_receipt", "run_id = ? order by node_id, attempt", run_id)
         ]
 
     # ------------------------------------------------------------------ approvals
@@ -1490,6 +1584,56 @@ class Catalog:
         if cur.rowcount != 1:
             raise LookupError(f"no active key {kid} in the identity directory")
         return self.get_credential(kid)
+
+    # ------------------------------------------------------------------ compute nodes
+
+    def register_node(self, node: ExecutionNode) -> None:
+        """Record a declared machine. The row is a claim, and it says who made it.
+
+        Platform scope, like the identity directory: a node serves every project, so a project-scoped
+        read would show one project's idea of the hardware rather than the hardware.
+        """
+        self._insert(
+            "execution_node",
+            {
+                "node_id": node.node_id,
+                "project_id": self._platform(),
+                "label": node.label,
+                "position": str(node.position),
+                "capabilities": node.capabilities.model_dump(mode="json"),
+                "endpoint": node.endpoint,
+                "registered_by": node.registered_by,
+                "registered_at": node.registered_at,
+                "notes": node.notes,
+            },
+        )
+
+    def get_node(self, node_id: str) -> ExecutionNode:
+        self._platform()
+        rows = self._scoped("execution_node", "node_id = ?", node_id)
+        if not rows:
+            raise LookupError(f"no node {node_id} in the registry")
+        return self._node(rows[0])
+
+    def list_nodes(self, *, limit: Optional[int] = None, offset: int = 0) -> list[ExecutionNode]:
+        self._platform()
+        #: Ordered by id so a paged read is a stable window rather than a slice of whatever the
+        #: storage engine happened to hand back.
+        rows = self._scoped("execution_node", "1=1 order by node_id", limit=limit, offset=offset)
+        return [self._node(row) for row in rows]
+
+    def _node(self, row: sqlite3.Row) -> ExecutionNode:
+        decoded = self._decode("execution_node", row)
+        return ExecutionNode(
+            node_id=decoded["node_id"],
+            label=decoded["label"],
+            position=decoded["position"],
+            capabilities=decoded["capabilities"],
+            endpoint=decoded.get("endpoint"),
+            registered_by=decoded["registered_by"],
+            registered_at=decoded["registered_at"],
+            notes=decoded.get("notes"),
+        )
 
     # ------------------------------------------------------------------ reviews, decisions, audit
 

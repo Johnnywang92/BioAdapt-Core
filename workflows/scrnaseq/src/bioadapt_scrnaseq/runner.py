@@ -22,7 +22,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Callable, Mapping, Optional, Protocol, Union
+from typing import Any, Callable, Mapping, Optional, Protocol, Sequence, Union
 
 from bioadapt_schemas.entities import AssetLineage, DataAsset, RunManifest, sha256_of_json
 from bioadapt_schemas.enums import (
@@ -39,12 +39,21 @@ from bioadapt_schemas.enums import (
 )
 from bioadapt_schemas.errors import ErrorClass, to_run_state
 from bioadapt_schemas.identifiers import sha256_hex
-from bioadapt_schemas.orchestration import Approval, RunCheckpoint, node_approval_id
+from bioadapt_schemas.orchestration import Approval, ExecutionReceipt, RunCheckpoint, node_approval_id
 from bioadapt_schemas.plan import AnalysisPlan, PlanNode
-from bioadapt_storage.catalog import Catalog
+from bioadapt_storage.catalog import Catalog, ExecutionConflictError
 from bioadapt_storage.objectstore import ObjectStore, object_key
-from bioadapt_tool_registry.enums import ToolResultStatus
+from bioadapt_tool_registry.enums import NetworkMode, ToolResultStatus
+from bioadapt_tool_registry.execution import (
+    ExecutionBackend,
+    ExecutionCage,
+    ExecutionInput,
+    ExecutionOutcome,
+    ExecutionRequest,
+    outcome_digest,
+)
 from bioadapt_tool_registry.registry import (
+    DEFAULT_ADHOC_LIMITS,
     AdhocExhaustedError,
     ForbiddenToolError,
     ToolRegistry,
@@ -53,12 +62,10 @@ from bioadapt_tool_registry.registry import (
 from bioadapt_tool_registry.result import ToolResult
 from bioadapt_tool_registry.spec import ToolSpec
 
+from .backends import InProcessBackend
 from .implementation import (
     TASK_INPUT_SLOTS,
     TASK_RUNNERS,
-    Invocation,
-    ToolInput,
-    execute,
     parameters_sha256,
     required_slots,
 )
@@ -155,6 +162,9 @@ class NodeRun:
     #: slot -> asset id, for the outputs this node put on the run's wires.
     outputs: Mapping[str, str] = field(default_factory=dict)
     reused_checkpoint: bool = False
+    #: §3.3: the attempt had already answered, and its products were read back from the index
+    #: instead of being produced again.
+    reused_receipt: bool = False
     compute_minutes: float = 0.0
     reason: Optional[str] = None
 
@@ -179,6 +189,23 @@ class RunOutcome:
     def result_of(self, node_id: str) -> Optional[ToolResult]:
         run = self.node(node_id)
         return run.result if run is not None else None
+
+
+@dataclass(frozen=True)
+class _Input:
+    """One input as the driver holds it: the index row, the bytes, and the product they are.
+
+    The bytes travel to the backend rather than the product, because the machine that runs the work
+    is not necessarily the machine that holds them (§4.2). The product is still read here, because a
+    driver that handed over bytes it had not checked would be trusting an index row it never
+    verified - and because the read is what tells the driver that the asset answers the slot the
+    plan wired.
+    """
+
+    slot: str
+    asset: DataAsset
+    payload: bytes
+    product: Product
 
 
 @dataclass
@@ -250,6 +277,32 @@ def write_asset(
     )
     objects.put(asset.uri[len(URI_SCHEME) :], product.json_bytes())
     return catalog.record_asset(asset)
+
+
+def cage_for(node: PlanNode, spec: ToolSpec) -> ExecutionCage:
+    """The ceiling one attempt runs inside, carried to the machine that runs it (§9.6).
+
+    An ad-hoc tool runs inside the sandbox the registry admits it under, whatever the plan asks for:
+    that sandbox is the smaller promise and the one a person signed. A registered tool runs inside
+    the budget its own plan node declared, because that budget is what a person approved for this
+    node. The ceiling travels with the request because a limit the control plane only remembers is a
+    limit nobody enforces where the work happens.
+    """
+    if spec.tool_class is ToolClass.PROJECT_ADHOC:
+        return ExecutionCage(
+            cpu=DEFAULT_ADHOC_LIMITS.max_cpu,
+            memory_mb=DEFAULT_ADHOC_LIMITS.max_memory_mb,
+            max_minutes=DEFAULT_ADHOC_LIMITS.max_minutes,
+            allow_network=False,
+            allow_gpu=False,
+        )
+    return ExecutionCage(
+        cpu=node.resources.cpu,
+        memory_mb=node.resources.memory_gb * 1024,
+        max_minutes=node.resources.max_minutes,
+        allow_network=spec.network.mode is not NetworkMode.CLOSED,
+        allow_gpu=node.resources.gpu > 0,
+    )
 
 
 class _NodeSink:
@@ -326,6 +379,7 @@ class WorkflowRunner:
         asset_defaults: AssetDefaults,
         clock: Optional[Callable[[], datetime]] = None,
         usage_minutes: Optional[Callable[[PlanNode, ToolResult, float], float]] = None,
+        backend: Optional[ExecutionBackend] = None,
     ) -> None:
         self.catalog = catalog
         self.objects = objects
@@ -337,6 +391,9 @@ class WorkflowRunner:
         #: How a spent attempt is charged, from the seconds the wrapper actually ran. A run's logical
         #: clock may not move during a step at all, and §9.2's ceiling counts compute, not clicks.
         self.usage_minutes = usage_minutes or (lambda node, result, elapsed: elapsed / 60.0)
+        #: Where the work runs (§3.3). The default runs it in this process, which is what the
+        #: platform does today; a node that runs it elsewhere answers the same seam.
+        self.backend = backend or InProcessBackend()
 
     # ------------------------------------------------------------------ driver
 
@@ -472,17 +529,14 @@ class WorkflowRunner:
         inputs = {slot: wires[slot] for slot in node.inputs}
         try:
             tool_inputs = tuple(
-                ToolInput(slot=slot, asset_id=asset_id, product=self._read(slot, asset_id))
-                for slot, asset_id in sorted(inputs.items())
+                self._read(slot, asset_id) for slot, asset_id in sorted(inputs.items())
             )
         except IntegrityError as error:
             return self._stop_for(
                 ErrorClass.NEEDS_INPUT, f"node {node.node_id} cannot read its input: {error}"
             )
 
-        digests = {
-            asset_id: self.catalog.get_asset(asset_id).file_sha256 for asset_id in sorted({item.asset_id for item in tool_inputs})
-        }
+        digests = {item.asset.asset_id: item.asset.file_sha256 for item in tool_inputs}
         input_digest = sha256_of_json(digests)
         parameters_sha = parameters_sha256(node.parameters)
 
@@ -498,10 +552,13 @@ class WorkflowRunner:
         if spent is not None:
             return spent
 
-        self._record_lineage(run_id, node.node_id, {item.slot: item.asset_id for item in tool_inputs}, AssetRole.INPUT)
+        self._record_lineage(
+            run_id, node.node_id, {item.slot: item.asset.asset_id for item in tool_inputs}, AssetRole.INPUT
+        )
 
         attempts = self._attempt_limit(node, spec)
         result: Optional[ToolResult] = None
+        outcome: Optional[ExecutionOutcome] = None
         minutes = 0.0
         sink: Optional[_NodeSink] = None
         for attempt in range(1, attempts + 1):
@@ -513,6 +570,17 @@ class WorkflowRunner:
                     actor=self.actor,
                     reason=f"attempt {attempt} of {spec.tool_name} after {result.status}: {self._why(result)}",
                 )
+            #: §3.3: this attempt may have answered already. The receipt is asked before the work is
+            #: dispatched, so a delivery that arrives twice is answered from the index instead of
+            #: being run a second time.
+            receipt = self._receipt_of(
+                run_id, node, spec, attempt, input_digest, parameters_sha, manifest.tool_registry_snapshot
+            )
+            if receipt is not None:
+                reused = self._reuse_receipt(run_id, node, spec, receipt)
+                if isinstance(reused, _Stop):
+                    return reused
+                return reused
             started_at = self.clock()
             sink = _NodeSink(
                 catalog=self.catalog,
@@ -523,17 +591,34 @@ class WorkflowRunner:
                 defaults=self.asset_defaults,
                 created_at=started_at,
             )
-            invocation = Invocation(
+            request = ExecutionRequest(
                 run_id=run_id,
                 node_id=node.node_id,
+                attempt=attempt,
                 project_id=manifest.project_id,
                 spec=spec,
-                inputs=tool_inputs,
                 parameters=dict(node.parameters),
+                parameters_sha256=parameters_sha,
+                inputs=[
+                    ExecutionInput(
+                        slot=item.slot,
+                        asset_id=item.asset.asset_id,
+                        sha256=item.asset.file_sha256,
+                        schema_version=item.asset.schema_version,
+                        uri=item.asset.uri,
+                        content=item.payload,
+                    )
+                    for item in tool_inputs
+                ],
+                cage=cage_for(node, spec),
             )
             before = time.monotonic()
-            result = execute(invocation, sink, started_at=started_at, finished_at=self.clock())
-            minutes = max(0.0, self.usage_minutes(node, result, time.monotonic() - before))
+            outcome = self.backend.execute(request)
+            minutes = max(0.0, self.usage_minutes(node, outcome.result, time.monotonic() - before))
+            result = outcome.result
+            absorbed = self._absorb(outcome, sink)
+            if absorbed is not None:
+                return absorbed
             if minutes > 0:
                 self.journal.report_usage(
                     run_id,
@@ -549,7 +634,7 @@ class WorkflowRunner:
             if not self._retryable(result):
                 break
 
-        assert result is not None and sink is not None
+        assert result is not None and sink is not None and outcome is not None
         if result.status is not ToolResultStatus.SUCCESS:
             return NodeRun(
                 node_id=node.node_id,
@@ -563,6 +648,32 @@ class WorkflowRunner:
 
         sink.commit()
         output_digests = {asset_id: digests_of(self.catalog, asset_id) for asset_id in sink.written.values()}
+        #: §3.3: the answer is now in the index, so the receipt that says so is written before the
+        #: checkpoint that resumes from it. A crash between the two leaves the receipt to answer for
+        #: the attempt, and a crash before both leaves the assets to be produced again.
+        try:
+            self.catalog.record_execution_receipt(
+                ExecutionReceipt(
+                    run_id=run_id,
+                    node_id=node.node_id,
+                    attempt=attempt,
+                    tool_name=spec.tool_name,
+                    tool_version=spec.tool_version,
+                    input_digest=input_digest,
+                    parameters_sha256=parameters_sha,
+                    registry_snapshot=manifest.tool_registry_snapshot,
+                    outcome_digest=outcome_digest(outcome),
+                    status=str(result.status),
+                    output_asset_ids=list(sink.written.values()),
+                    output_digests=output_digests,
+                    executed_on=outcome.executed_on,
+                    runtime=outcome.runtime,
+                    compute_minutes=round(minutes, 6),
+                    at=self.clock(),
+                )
+            )
+        except ExecutionConflictError as error:
+            return self._stop_for(ErrorClass.CONFLICT, str(error))
         self.catalog.record_checkpoint(
             RunCheckpoint(
                 run_id=run_id,
@@ -781,7 +892,7 @@ class WorkflowRunner:
 
     # ------------------------------------------------------------------ inputs, reuse, retries
 
-    def _read(self, slot: str, asset_id: str) -> Product:
+    def _read(self, slot: str, asset_id: str) -> _Input:
         asset = self.catalog.get_asset(asset_id)
         if not asset.uri.startswith(URI_SCHEME):
             raise IntegrityError(f"asset {asset_id} is not stored under a platform URI: {asset.uri}")
@@ -799,7 +910,9 @@ class WorkflowRunner:
         document = json.loads(payload)
         if document.get("slot") != slot:
             raise IntegrityError(f"asset {asset_id} answers slot {document.get('slot')!r}, not {slot!r}")
-        return read_product(asset.schema_version, payload)
+        return _Input(
+            slot=slot, asset=asset, payload=payload, product=read_product(asset.schema_version, payload)
+        )
 
     def _reuse_checkpoint(
         self,
@@ -823,23 +936,13 @@ class WorkflowRunner:
         if checkpoint is None:
             return None
 
-        outputs: dict[str, str] = {}
-        for asset_id in checkpoint.output_asset_ids:
-            asset = self.catalog.get_asset(asset_id)
-            if asset.file_sha256 != checkpoint.output_digests.get(asset_id):
-                return self._stop_for(
-                    ErrorClass.NEEDS_INPUT,
-                    f"checkpoint {node.node_id}@{checkpoint.attempt} points at {asset_id}, whose recorded "
-                    "digest is not the one the index holds; the step has to be recomputed",
-                )
-            payload = self.objects.get(asset.uri[len(URI_SCHEME) :])
-            if sha256_hex(payload) != asset.file_sha256:
-                return self._stop_for(
-                    ErrorClass.NEEDS_INPUT,
-                    f"checkpoint {node.node_id}@{checkpoint.attempt} points at {asset_id}, whose bytes no "
-                    "longer match the digest it recorded; the step has to be recomputed",
-                )
-            outputs[str(json.loads(payload)["slot"])] = asset_id
+        outputs = self._read_recorded_outputs(
+            checkpoint.output_asset_ids,
+            checkpoint.output_digests,
+            source=f"checkpoint {node.node_id}@{checkpoint.attempt}",
+        )
+        if isinstance(outputs, _Stop):
+            return outputs
         self._record_lineage(run_id, node.node_id, outputs, AssetRole.OUTPUT)
         return NodeRun(
             node_id=node.node_id,
@@ -854,6 +957,104 @@ class WorkflowRunner:
                 "registry snapshot are the ones it was made from, so nothing was recomputed or charged"
             ),
         )
+
+    def _receipt_of(
+        self,
+        run_id: str,
+        node: PlanNode,
+        spec: ToolSpec,
+        attempt: int,
+        input_digest: str,
+        parameters_sha: str,
+        registry_snapshot: str,
+    ) -> Optional[ExecutionReceipt]:
+        """What this attempt answered, if it has answered (§3.3)."""
+        return self.catalog.execution_receipt(
+            run_id,
+            node.node_id,
+            attempt,
+            tool_name=spec.tool_name,
+            tool_version=spec.tool_version,
+            input_digest=input_digest,
+            parameters_sha256=parameters_sha,
+            registry_snapshot=registry_snapshot,
+        )
+
+    def _reuse_receipt(
+        self, run_id: str, node: PlanNode, spec: ToolSpec, receipt: ExecutionReceipt
+    ) -> Union[NodeRun, _Stop]:
+        """§3.3: the attempt has answered already, so the work is not run a second time.
+
+        This is the fallback for the window between absorbing an answer and writing the checkpoint
+        that resumes from it: the products are in the index, the checkpoint is not, and the answer
+        must not be produced again to fill the gap. The checkpoint is written here, so the run
+        converges on the shape every other finished node has.
+        """
+        outputs = self._read_recorded_outputs(
+            receipt.output_asset_ids,
+            receipt.output_digests,
+            source=f"receipt {node.node_id}@{receipt.attempt}",
+        )
+        if isinstance(outputs, _Stop):
+            return outputs
+        self._record_lineage(run_id, node.node_id, outputs, AssetRole.OUTPUT)
+        self.catalog.record_checkpoint(
+            RunCheckpoint(
+                run_id=run_id,
+                node_id=node.node_id,
+                attempt=receipt.attempt,
+                tool_name=receipt.tool_name,
+                tool_version=receipt.tool_version,
+                input_digest=receipt.input_digest,
+                parameters_sha256=receipt.parameters_sha256,
+                registry_snapshot=receipt.registry_snapshot,
+                output_asset_ids=list(receipt.output_asset_ids),
+                output_digests=dict(receipt.output_digests),
+                compute_minutes=round(receipt.compute_minutes, 6),
+                at=self.clock(),
+            )
+        )
+        return NodeRun(
+            node_id=node.node_id,
+            task=spec.task,
+            attempt=receipt.attempt,
+            status=ToolResultStatus.SUCCESS,
+            outputs=dict(sorted(outputs.items())),
+            reused_receipt=True,
+            compute_minutes=receipt.compute_minutes,
+            reason=(
+                f"reused receipt {node.node_id}@{receipt.attempt}: the attempt already answered and its "
+                "products are in the index, so nothing was run again (section 3.3)"
+            ),
+        )
+
+    def _read_recorded_outputs(
+        self, asset_ids: Sequence[str], digests: Mapping[str, str], *, source: str
+    ) -> Union[dict[str, str], _Stop]:
+        """The assets a record names, checked against the index before they are believed.
+
+        A record is a promise about bytes; the index and the object store are what hold the bytes.
+        When the two disagree the record is stale, and a stale record may not stand in for work
+        that has to be done again.
+        """
+        outputs: dict[str, str] = {}
+        for asset_id in asset_ids:
+            asset = self.catalog.get_asset(asset_id)
+            if asset.file_sha256 != digests.get(asset_id):
+                return self._stop_for(
+                    ErrorClass.NEEDS_INPUT,
+                    f"{source} points at {asset_id}, whose recorded digest is not the one the index "
+                    "holds; the step has to be recomputed",
+                )
+            payload = self.objects.get(asset.uri[len(URI_SCHEME) :])
+            if sha256_hex(payload) != asset.file_sha256:
+                return self._stop_for(
+                    ErrorClass.NEEDS_INPUT,
+                    f"{source} points at {asset_id}, whose bytes no longer match the digest it "
+                    "recorded; the step has to be recomputed",
+                )
+            outputs[str(json.loads(payload)["slot"])] = asset_id
+        return outputs
 
     def _attempt_limit(self, node: PlanNode, spec: ToolSpec) -> int:
         """The tighter of the plan's retry policy and the tool's own retry promise (§9.4).
@@ -875,6 +1076,42 @@ class WorkflowRunner:
         return f"{result.tool_name} {result.tool_version}: [{first.error_class}] {first.code} - {first.message}"
 
     # ------------------------------------------------------------------ outcome plumbing
+
+    # ------------------------------------------------------------------ outcome plumbing
+
+    def _absorb(self, outcome: ExecutionOutcome, sink: _NodeSink) -> Optional[_Stop]:
+        """The bytes that came back become assets here, in the control plane that owns the index.
+
+        The node that ran the work has no catalog to write to and the control plane has no step to
+        run, so this is where the two meet: each product is read back, checked against the bytes that
+        arrived, and written as the asset the run will point at. A product that does not read back as
+        the bytes that came back is refused rather than stored, because an asset whose digest
+        describes something other than what ran is not a record of anything (§5.6).
+        """
+        if outcome.status is not outcome.result.status:
+            return self._stop_for(
+                ErrorClass.NEEDS_INPUT,
+                f"the work that came back for {outcome.node_id} says {outcome.status} while the result it "
+                f"carries says {outcome.result.status}: the answer and its result disagree, so neither can "
+                "be trusted as what ran",
+            )
+        for item in outcome.outputs:
+            try:
+                product = read_product(item.schema_version, item.content)
+            except (KeyError, ValueError) as error:
+                return self._stop_for(
+                    ErrorClass.NEEDS_INPUT,
+                    f"the work that came back for {outcome.node_id} holds something in slot {item.slot!r} "
+                    f"that this platform cannot read: {error}",
+                )
+            if product.json_bytes() != item.content:
+                return self._stop_for(
+                    ErrorClass.NEEDS_INPUT,
+                    f"the product in slot {item.slot!r} does not read back as the bytes that came back, so "
+                    "storing it would store something other than what ran (section 5.6)",
+                )
+            sink.write(product)
+        return None
 
     @staticmethod
     def _stop_for(error_class: ErrorClass, reason: str) -> _Stop:

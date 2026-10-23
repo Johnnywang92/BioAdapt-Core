@@ -45,6 +45,10 @@ class Action(StrEnum):
     TOOL_REGISTER = "tool:register"
     TOOL_GRANT_ADHOC = "tool:grant_adhoc"
     TOOL_PROMOTE = "tool:promote"
+    #: Section 4.2: declaring a machine that can run runs is a statement about the deployment, not
+    #: about a project, so it is platform-scoped and it is somebody's claim rather than a fact.
+    NODE_REGISTER = "node:register"
+    NODE_READ = "node:read"
     MODEL_CALL = "model:call"
     CASE_LIBRARY_WRITE = "case_library:write"
     TRUTH_FREEZE = "evaluation:freeze_truth"
@@ -74,6 +78,8 @@ ROLE_GRANTS: dict[Role, frozenset[Action]] = {
             Action.ASSET_READ,
             Action.TOOL_REGISTER,
             Action.TOOL_PROMOTE,
+            Action.NODE_REGISTER,
+            Action.NODE_READ,
             Action.ROLE_GRANT,
             Action.POLICY_WRITE,
             Action.AUDIT_READ,
@@ -101,6 +107,7 @@ ROLE_GRANTS: dict[Role, frozenset[Action]] = {
             Action.CARD_REVIEW,
             Action.CARD_SIGN_OFF,
             Action.BENCHMARK_RUN,
+            Action.NODE_READ,
             Action.AUDIT_READ,
         }
     ),
@@ -117,6 +124,7 @@ ROLE_GRANTS: dict[Role, frozenset[Action]] = {
             Action.EGRESS_REQUEST,
             Action.CARD_REVIEW,
             Action.MODEL_CALL,
+            Action.NODE_READ,
         }
     ),
     Role.DOMAIN_EXPERT: frozenset(
@@ -140,6 +148,7 @@ ROLE_GRANTS: dict[Role, frozenset[Action]] = {
             Action.PROJECT_READ,
             Action.EGRESS_APPROVE,
             Action.APPROVAL_READ,
+            Action.NODE_READ,
             Action.AUDIT_READ,
             Action.CASE_LIBRARY_WRITE,
         }
@@ -162,6 +171,9 @@ HUMAN_ONLY_ACTIONS = frozenset(
         Action.TOOL_REGISTER,
         Action.TOOL_GRANT_ADHOC,
         Action.TOOL_PROMOTE,
+        #: A node declaration says where runs will execute, so it is somebody's claim about the
+        #: deployment and it is made by a person, not by a service account running a pipeline.
+        Action.NODE_REGISTER,
         Action.TRUTH_FREEZE,
         Action.ROLE_GRANT,
         Action.POLICY_WRITE,
@@ -183,6 +195,7 @@ MFA_REQUIRED_ACTIONS = frozenset(
         Action.ASSET_DELETE,
         Action.ROLE_GRANT,
         Action.POLICY_WRITE,
+        Action.NODE_REGISTER,
         Action.TRUTH_FREEZE,
         Action.THRESHOLDS_CONFIRM,
     }

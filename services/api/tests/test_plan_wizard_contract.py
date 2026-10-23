@@ -141,7 +141,9 @@ def wizard_plan(body: dict, *, project: dict, tools: list[dict], conclusion_outp
     }
 
 
-def upload_counts(client, auth, state) -> str:
+def upload_counts(
+    client, auth, state, *, project_id: str = PROJECT_ID, privacy_tier: str = "restricted"
+) -> str:
     """The counts file a person would pick in the data wizard, registered as the run's input."""
     payload = counts_document()
     digest = hashlib.sha256(payload).hexdigest()
@@ -151,14 +153,14 @@ def upload_counts(client, auth, state) -> str:
 
     declared = {
         "asset_id": asset_id,
-        "project_id": PROJECT_ID,
+        "project_id": project_id,
         "uri": "pending://signed-upload",
         "file_sha256": digest,
         "content_fingerprint": digest,
         "format": "json",
         "schema_version": "expression_v1",
         "size_bytes": len(payload),
-        "privacy_tier": "restricted",
+        "privacy_tier": privacy_tier,
         "usage_scope": "this_project_only",
         "retention_class": "run_linked",
         "filtering_state": "none",
@@ -166,9 +168,9 @@ def upload_counts(client, auth, state) -> str:
         "created_at": "2026-05-01T00:00:00+00:00",
     }
     uploaded = client.post(
-        f"{BASE}/assets/direct-upload",
+        f"/v1/projects/{project_id}/assets/direct-upload",
         json={"asset": declared, "content_text": payload.decode()},
-        headers=auth(ANALYST, [Role.ANALYST]),
+        headers=auth(ANALYST, [Role.ANALYST], project_ids=[project_id]),
     )
     assert uploaded.status_code == 201, uploaded.json()
     return asset_id

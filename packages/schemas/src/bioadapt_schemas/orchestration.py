@@ -270,3 +270,59 @@ class RunCheckpoint(ImmutableContract):
         for asset_id, digest in self.output_digests.items():
             require_hex64(digest, f"digest of output {asset_id}")
         return self
+
+
+class ExecutionReceipt(ImmutableContract):
+    """Section 3.3: the record of one attempt's answer, kept so the same answer is absorbed once.
+
+    The correlation key of section 3.3 is ``run_id + node_id + attempt``, and this row carries all
+    three beside the execution identity they belong to: this tool at this version, over these inputs,
+    under these parameters and this registry snapshot. The identity is part of the key because a run
+    may be re-planned (section 9.2) - an attempt answered under one set of parameters is not the same
+    attempt as the one a re-planned run makes, and the two answers must not be compared as if they
+    were the same attempt.
+
+    One attempt has one answer. A delivery that arrives twice is absorbed once, because the receipt
+    says it was absorbed already; a *different* answer for the same attempt is a contradiction rather
+    than a second opinion, so the row that holds the first answer is the one that stays.
+
+    The row names the assets the index holds for that attempt, not the bytes themselves: the bytes
+    live in the object store and are read back through the catalog, where scope and retention still
+    apply (section 5.2).
+    """
+
+    run_id: str
+    node_id: str
+    attempt: int = Field(ge=1)
+    tool_name: str
+    tool_version: str
+    input_digest: str
+    parameters_sha256: str
+    registry_snapshot: str
+    #: The digest of the answer that was absorbed, so the same answer can be told from a different one.
+    outcome_digest: str
+    status: str
+    output_asset_ids: list[str] = Field(default_factory=list)
+    output_digests: dict[str, str] = Field(default_factory=dict)
+    #: Which machine ran the attempt; empty when the work ran inside the control plane.
+    executed_on: Optional[str] = None
+    #: What actually ran there - the worker and interpreter the node itself reported. The image
+    #: digest a tool declares is a deployment artifact, not evidence that it was the runtime (§9.4),
+    #: so the record keeps both instead of letting one stand for the other.
+    runtime: Optional[str] = None
+    compute_minutes: float = Field(ge=0, default=0.0)
+    at: Optional[datetime] = None
+
+    @field_validator("input_digest", "parameters_sha256", "registry_snapshot", "outcome_digest")
+    @classmethod
+    def _digest_is_hex(cls, value: str) -> str:
+        return require_hex64(value, "receipt digest")
+
+    @model_validator(mode="after")
+    def _outputs_are_named(self) -> "ExecutionReceipt":
+        missing = sorted(set(self.output_asset_ids) - set(self.output_digests))
+        if missing:
+            raise ValueError(f"absorbed outputs without a recorded digest: {missing}")
+        for asset_id, digest in self.output_digests.items():
+            require_hex64(digest, f"digest of output {asset_id}")
+        return self

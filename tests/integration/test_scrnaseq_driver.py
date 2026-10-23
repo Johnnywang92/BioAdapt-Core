@@ -10,11 +10,16 @@ a fake of them, because a fake only proves the driver agrees with itself.
 
 from __future__ import annotations
 
+import json
+import sys
+import threading
+from pathlib import Path
 from typing import Any, Optional
 
 import pytest
 from pydantic import ValidationError
 
+from bioadapt_schemas.entities import sha256_of_json
 from bioadapt_schemas.enums import (
     ApprovalKind,
     PerturbationKind,
@@ -24,13 +29,26 @@ from bioadapt_schemas.enums import (
     ToolClass,
 )
 from bioadapt_schemas.identifiers import sha256_hex
-from bioadapt_schemas.orchestration import node_approval_id
+from bioadapt_schemas.orchestration import ExecutionReceipt, node_approval_id
 from bioadapt_schemas.thresholds import DEFAULT_THRESHOLDS
 from bioadapt_schemas.plan import LoopBudget, RetryPolicy
-from bioadapt_scrnaseq import SLOT_COUNTS, TASK_QC, ExpressionProduct, read_product, write_asset
+from bioadapt_scrnaseq import (
+    SLOT_COUNTS,
+    TASK_QC,
+    ExpressionProduct,
+    parameters_sha256,
+    read_product,
+    write_asset,
+)
+from bioadapt_scrnaseq import backends
 from bioadapt_scrnaseq import runner as driver
+from bioadapt_scrnaseq.backends import InProcessBackend
 from bioadapt_scrnaseq.errors import transient
 from bioadapt_tool_registry.enums import ToolResultStatus
+from bioadapt_tool_registry.execution import ExecutionOutcome, ExecutionRequest
+from bioadapt_tool_registry.node_agent import NodeAgent, build_server
+from bioadapt_tool_registry.node_client import HttpNodeBackend
+from bioadapt_tool_registry.process import ProcessBackend
 from bioadapt_tool_registry.registry import ToolRegistry, UnknownToolError
 
 import driver_factories as F
@@ -63,7 +81,7 @@ class Flaky:
     """
 
     def __init__(self, monkeypatch: Any, *, node_id: str, fails: int, error: Any = None) -> None:
-        real = driver.execute
+        real = backends.execute
         error = error or transient("the compute node dropped the container before the step reported")
         self.attempts: list[str] = []
 
@@ -77,7 +95,7 @@ class Flaky:
                 update={"status": ToolResultStatus.FAILED, "output_asset_ids": [], "errors": [error.as_api_error()]}
             )
 
-        monkeypatch.setattr(driver, "execute", fake)
+        monkeypatch.setattr(backends, "execute", fake)
 
 
 def registry_with_qc_retry_limit(limit: int) -> ToolRegistry:
@@ -545,6 +563,288 @@ def test_a_converted_file_is_not_read_until_it_is_admitted_as_an_asset(harness_f
     stopped = h.runner.run(F.RUN_ID, root={SLOT_COUNTS: staged.asset_id})
     assert stopped.state is RunState.NEEDS_INPUT
     assert "section 4.1" in stopped.stopped_reason and "h5ad" in stopped.stopped_reason
+
+
+# ------------------------------------------------------------------ the execution seam (§3.3)
+
+
+class Recording:
+    """A backend that remembers what it was asked and answers with the real work.
+
+    The driver must not know how the work happens, so this stands in for the machine that does it:
+    it records the request, runs the reference step, and hands back what came out. A node on another
+    machine answers the same seam with the same bytes, and the run has to mean the same thing.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[ExecutionRequest] = []
+        self.outcomes: list[ExecutionOutcome] = []
+        self.inner = InProcessBackend()
+
+    def execute(self, request: ExecutionRequest) -> ExecutionOutcome:
+        self.requests.append(request)
+        outcome = self.inner.execute(request)
+        self.outcomes.append(outcome)
+        return outcome
+
+    def request_for(self, node_id: str) -> ExecutionRequest:
+        return next(item for item in self.requests if item.node_id == node_id)
+
+    def outcome_for(self, node_id: str) -> ExecutionOutcome:
+        return next(item for item in self.outcomes if item.node_id == node_id)
+
+
+def test_the_driver_hands_the_work_to_a_backend_and_stores_what_came_back(harness_factory: Any) -> None:
+    """§3.3: the driver asks a backend to do the work, and the bytes that come back are the assets."""
+    backend = Recording()
+    h = harness_factory(backend=backend)
+    done = h.run()
+    assert done.completed, done.stopped_reason
+
+    assert {request.node_id for request in backend.requests} == {node.node_id for node in h.plan.nodes}
+    for request in backend.requests:
+        assert request.run_id == F.RUN_ID
+        assert request.attempt == 1
+        assert request.spec.tool_name == h.node(request.node_id).tool_name
+
+    qc = backend.request_for("qc")
+    assert [item.slot for item in qc.inputs] == [SLOT_COUNTS]
+    assert qc.inputs[0].sha256 == h.asset(h.root[SLOT_COUNTS]).file_sha256
+    assert qc.cage.cpu == h.node("qc").resources.cpu
+    assert qc.cage.memory_mb == h.node("qc").resources.memory_gb * 1024
+    assert qc.cage.max_minutes == h.node("qc").resources.max_minutes
+
+    flags = next(item for item in backend.outcome_for("qc").outputs if item.slot == "qc_flags")
+    stored = h.asset(done.assets["qc_flags"])
+    assert stored.file_sha256 == flags.sha256
+    assert h.objects.get(stored.uri[len("s3://") :]) == flags.content
+
+
+def test_a_backend_that_answers_with_another_verdict_than_its_result_is_refused(
+    harness_factory: Any,
+) -> None:
+    """An answer and the result it carries have to agree, or neither describes what ran."""
+
+    class Lying(Recording):
+        def execute(self, request: ExecutionRequest) -> ExecutionOutcome:
+            outcome = super().execute(request)
+            if request.node_id != "qc":
+                return outcome
+            return outcome.model_copy(update={"status": ToolResultStatus.FAILED})
+
+    h = harness_factory(backend=Lying())
+    stopped = h.run()
+    assert stopped.stopped_at == "qc" and stopped.state is RunState.NEEDS_INPUT
+    assert "disagree" in stopped.stopped_reason
+
+
+def test_bytes_the_platform_did_not_canonicalise_are_not_stored(harness_factory: Any) -> None:
+    """§5.6: an asset's digest has to describe what ran, so bytes the platform did not write are refused."""
+
+    class Repacked(Recording):
+        def execute(self, request: ExecutionRequest) -> ExecutionOutcome:
+            outcome = super().execute(request)
+            if request.node_id != "qc":
+                return outcome
+            repacked = []
+            for item in outcome.outputs:
+                content = json.dumps(json.loads(item.content), indent=2).encode()
+                repacked.append(item.model_copy(update={"content": content, "sha256": sha256_hex(content)}))
+            return outcome.model_copy(update={"outputs": repacked})
+
+    h = harness_factory(backend=Repacked())
+    stopped = h.run()
+    assert stopped.stopped_at == "qc" and stopped.state is RunState.NEEDS_INPUT
+    assert "does not read back as the bytes that came back" in stopped.stopped_reason
+    assert h.catalog.list_assets(run_id=F.RUN_ID) == [], "a refused answer leaves nothing behind"
+
+
+# ------------------------------------------------------------------ the receipt (§3.3)
+
+
+def test_a_finished_attempt_leaves_a_receipt_that_names_what_it_answered(harness_factory: Any) -> None:
+    """Section 3.3: the index remembers one attempt's answer, so the same delivery is absorbed once."""
+    h = harness_factory()
+    done = h.run()
+    assert done.completed, done.stopped_reason
+
+    receipts = h.catalog.list_execution_receipts(F.RUN_ID)
+    assert {receipt.node_id for receipt in receipts} == {node_id for node_id, _task in F.CHAIN}
+    for receipt in receipts:
+        node = h.node(receipt.node_id)
+        assert receipt.attempt == 1
+        assert receipt.tool_name == node.tool_name
+        assert receipt.tool_version == node.tool_version
+        assert receipt.status == "success"
+        assert receipt.output_asset_ids, f"{receipt.node_id} answered nothing"
+        assert set(receipt.output_digests) == set(receipt.output_asset_ids)
+        assert receipt.compute_minutes == pytest.approx(F.MINUTES_PER_ATTEMPT)
+
+
+def test_an_attempt_that_already_answered_is_answered_from_the_index(
+    harness_factory: Any, monkeypatch: Any
+) -> None:
+    """Section 3.3: a redelivery of an attempt that answered is absorbed, not run again."""
+    backend = Recording()
+    h = harness_factory(backend=backend)
+    #: The window the receipt closes: the answer is in the index and the checkpoint that resumes from
+    #: it is not. A crash between the two writes loses the checkpoint, and the attempt must not be run
+    #: again to fill the gap.
+    monkeypatch.setattr(h.catalog, "record_checkpoint", lambda *args, **kwargs: None)
+    first = h.run()
+    assert first.completed, first.stopped_reason
+    asked = len(backend.requests)
+    assert h.catalog.list_checkpoints(F.RUN_ID) == []
+    assert len(h.catalog.list_execution_receipts(F.RUN_ID)) == len(F.CHAIN)
+    monkeypatch.undo()
+
+    second = h.run()
+    assert second.completed, second.stopped_reason
+    assert len(backend.requests) == asked, "an attempt that answered is not run again"
+    assert all(node.reused_receipt for node in second.nodes), [
+        node.node_id for node in second.nodes if not node.reused_receipt
+    ]
+    assert second.assets == first.assets, "the same answer, read back from the index"
+    assert len(h.catalog.list_checkpoints(F.RUN_ID)) == len(F.CHAIN), (
+        "the receipt leaves the run in the shape every other finished node has"
+    )
+
+
+def test_a_second_answer_for_the_same_attempt_is_a_contradiction(harness_factory: Any) -> None:
+    """Section 3.3: one attempt has one answer, so a different one is a thing a person has to see."""
+
+    class Conflicting(Recording):
+        """A worker that answered the same attempt first, and answered it differently."""
+
+        def execute(self, request: ExecutionRequest) -> ExecutionOutcome:
+            outcome = super().execute(request)
+            if request.node_id != "qc":
+                return outcome
+            self.catalog.record_execution_receipt(
+                ExecutionReceipt(
+                    run_id=request.run_id,
+                    node_id=request.node_id,
+                    attempt=request.attempt,
+                    tool_name=request.spec.tool_name,
+                    tool_version=request.spec.tool_version,
+                    input_digest=sha256_of_json(
+                        {item.asset_id: item.sha256 for item in request.inputs}
+                    ),
+                    parameters_sha256=parameters_sha256(request.parameters),
+                    registry_snapshot=self.catalog.get_run(request.run_id).tool_registry_snapshot,
+                    outcome_digest="00" * 32,
+                    status="success",
+                )
+            )
+            return outcome
+
+    backend = Conflicting()
+    h = harness_factory(backend=backend)
+    backend.catalog = h.catalog
+    stopped = h.run()
+    assert stopped.stopped_at == "qc" and stopped.state is RunState.NEEDS_INPUT
+    assert "one attempt has one answer" in stopped.stopped_reason
+
+
+# ------------------------------------------------------------------ the node process (§3.3, §4.2)
+
+
+def test_the_same_plan_run_on_a_node_produces_the_same_bytes(
+    harness_factory: Any, tmp_path: Path
+) -> None:
+    """§5.6: the work means the same thing wherever it ran, so the assets are the same assets.
+
+    The run that goes to the node is the same plan, the same registry and the same root input; the
+    only difference is that every step happens in a child process on another machine. The asset ids
+    are named by the bytes (§5.2), so equal ids are equal bytes - and the stored bytes are compared
+    as well, because an id that named different bytes would be the failure this is here to catch.
+    """
+    here = harness_factory()
+    ran_here = here.run()
+    assert ran_here.completed, ran_here.stopped_reason
+
+    backend = ProcessBackend(
+        command=[sys.executable, "-m", "bioadapt_scrnaseq.worker"],
+        work_root=tmp_path / "work",
+        node_name="node_laptop",
+    )
+    there = harness_factory(backend=backend)
+    ran_there = there.run()
+    assert ran_there.completed, ran_there.stopped_reason
+
+    assert ran_there.assets == ran_here.assets
+    for slot, asset_id in ran_there.assets.items():
+        mine = here.asset(ran_here.assets[slot])
+        theirs = there.asset(asset_id)
+        assert theirs.file_sha256 == mine.file_sha256
+        assert there.objects.get(theirs.uri[len("s3://") :]) == here.objects.get(
+            mine.uri[len("s3://") :]
+        )
+
+
+def test_a_run_on_a_node_is_recorded_as_having_run_on_that_node(
+    harness_factory: Any, tmp_path: Path
+) -> None:
+    """§3.3: the answer says which machine made it, so a result can be traced to the node."""
+    backend = ProcessBackend(
+        command=[sys.executable, "-m", "bioadapt_scrnaseq.worker"],
+        work_root=tmp_path / "work",
+        node_name="node_laptop",
+    )
+    h = harness_factory(backend=backend)
+    done = h.run()
+    assert done.completed, done.stopped_reason
+
+    receipts = h.catalog.list_execution_receipts(F.RUN_ID)
+    assert {receipt.executed_on for receipt in receipts} == {"node_laptop"}
+
+
+def test_the_same_plan_run_over_the_wire_produces_the_same_bytes(
+    harness_factory: Any, tmp_path: Path
+) -> None:
+    """§4.2: the run means the same thing whether the node is this process or the next one.
+
+    Here the work travels over HTTP to a node that is reached by its address rather than by a
+    function call, and the assets that come back are the assets the in-process run produced - the
+    claim section 4.2 makes about a laptop and a lab server, proved over a real socket.
+    """
+    here = harness_factory()
+    ran_here = here.run()
+    assert ran_here.completed, ran_here.stopped_reason
+
+    agent = NodeAgent(
+        command=[sys.executable, "-m", "bioadapt_scrnaseq.worker"],
+        work_root=tmp_path / "work",
+        token="a-shared-secret",
+        node_name="node_server",
+        #: What the node says it has. Stated rather than measured, so the test says the same thing on
+        #: a laptop and on a rack.
+        cpu=16,
+        memory_mb=32768,
+    )
+    server = build_server(agent, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address[0], server.server_address[1]
+        backend = HttpNodeBackend(
+            base_url=f"http://{host}:{port}",
+            token="a-shared-secret",
+            node_name="node_server",
+        )
+        there = harness_factory(backend=backend)
+        ran_there = there.run()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=10)
+
+    assert ran_there.completed, ran_there.stopped_reason
+    assert ran_there.assets == ran_here.assets
+    for slot, asset_id in ran_there.assets.items():
+        assert there.asset(asset_id).file_sha256 == here.asset(ran_here.assets[slot]).file_sha256
+    receipts = there.catalog.list_execution_receipts(F.RUN_ID)
+    assert {receipt.executed_on for receipt in receipts} == {"node_server"}
 
 
 # ------------------------------------------------------------------ retries (§9.2, §9.4)

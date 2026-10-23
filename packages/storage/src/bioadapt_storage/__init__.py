@@ -1,5 +1,12 @@
 from . import catalog, ddl, objectstore, schema, traces
-from .catalog import Catalog, ConcurrentWriteError, PLATFORM_SCOPE, REUSABLE_SCOPES, ScopeError
+from .catalog import (
+    Catalog,
+    ConcurrentWriteError,
+    ExecutionConflictError,
+    PLATFORM_SCOPE,
+    REUSABLE_SCOPES,
+    ScopeError,
+)
 from .ddl import (
     MIGRATION_NAME,
     migration_drift,
@@ -37,6 +44,7 @@ __all__ = [
     "ConcurrentWriteError",
     "DeletionCertificate",
     "EPHEMERAL_TTL_DAYS",
+    "ExecutionConflictError",
     "GcPlan",
     "GcRecord",
     "HmacSigner",

@@ -349,6 +349,37 @@ create policy "run_checkpoint_project_scope" on "run_checkpoint" as permissive f
 drop trigger if exists "run_checkpoint_append_only" on "run_checkpoint";
 create trigger "run_checkpoint_append_only" before update or delete on "run_checkpoint"
   for each row execute function bioadapt_forbid_mutation();
+create table if not exists "execution_receipt" (
+  "project_id" text not null,
+  "run_id" text not null,
+  "node_id" text not null,
+  "tool_name" text not null,
+  "tool_version" text not null,
+  "input_digest" text not null,
+  "parameters_sha256" text not null,
+  "registry_snapshot" text not null,
+  "attempt" bigint not null,
+  "outcome_digest" text not null,
+  "status" text not null,
+  "output_asset_ids" jsonb not null,
+  "output_digests" jsonb not null,
+  "executed_on" text,
+  "runtime" text,
+  "compute_minutes" double precision not null,
+  "created_at" timestamptz not null,
+  primary key ("project_id", "run_id", "node_id", "tool_name", "tool_version", "input_digest", "parameters_sha256", "registry_snapshot", "attempt")
+);
+create index if not exists "execution_receipt_run_id_idx" on "execution_receipt" ("run_id");
+create index if not exists "execution_receipt_project_id_idx" on "execution_receipt" ("project_id");
+create index if not exists "execution_receipt_run_id_node_id_idx" on "execution_receipt" ("run_id", "node_id");
+alter table "execution_receipt" enable row level security;
+drop policy if exists "execution_receipt_project_scope" on "execution_receipt";
+create policy "execution_receipt_project_scope" on "execution_receipt" as permissive for all
+  using ("project_id" = current_setting('app.project_id', true))
+  with check ("project_id" = current_setting('app.project_id', true));
+drop trigger if exists "execution_receipt_append_only" on "execution_receipt";
+create trigger "execution_receipt_append_only" before update or delete on "execution_receipt"
+  for each row execute function bioadapt_forbid_mutation();
 create table if not exists "egress_decision" (
   "decision_id" text not null,
   "project_id" text not null,
@@ -453,6 +484,24 @@ create index if not exists "iam_credential_revoked_at_idx" on "iam_credential" (
 alter table "iam_credential" enable row level security;
 drop policy if exists "iam_credential_project_scope" on "iam_credential";
 create policy "iam_credential_project_scope" on "iam_credential" as permissive for all
+  using ("project_id" = current_setting('app.project_id', true))
+  with check ("project_id" = current_setting('app.project_id', true));
+create table if not exists "execution_node" (
+  "node_id" text not null,
+  "project_id" text not null,
+  "label" text not null,
+  "position" text not null,
+  "capabilities" jsonb not null,
+  "endpoint" text,
+  "registered_by" text not null,
+  "registered_at" timestamptz not null,
+  "notes" text,
+  primary key ("node_id")
+);
+create index if not exists "execution_node_position_idx" on "execution_node" ("position");
+alter table "execution_node" enable row level security;
+drop policy if exists "execution_node_project_scope" on "execution_node";
+create policy "execution_node_project_scope" on "execution_node" as permissive for all
   using ("project_id" = current_setting('app.project_id', true))
   with check ("project_id" = current_setting('app.project_id', true));
 create table if not exists "audit_log" (

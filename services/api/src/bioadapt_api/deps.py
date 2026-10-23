@@ -152,6 +152,11 @@ class ApiState:
     #: How long a token bought at the exchange stays valid. Minutes, deliberately: the key file is the
     #: durable thing a person keeps, and this is all a copied bearer token is worth.
     login_token_ttl: timedelta = timedelta(minutes=15)
+    #: The credential this control plane presents to a node's agent. Deployment-side like every other
+    #: secret: it belongs in the process's environment, never in a row of the node registry (§9.7).
+    #: None means the deployment cannot open its own nodes, and dispatch refuses rather than running
+    #: work somewhere the run was not placed.
+    node_token: Optional[str] = None
 
 
 @dataclass

@@ -335,6 +335,38 @@ APP_SCHEMA: tuple[TableSpec, ...] = (
         append_only=True,
     ),
     _t(
+        #: Section 3.3: the correlation key of a callback is run + node + attempt, and this row is
+        #: where one attempt's answer is remembered. The execution identity is part of the key, so a
+        #: run that is re-planned (section 9.2) answers under its own attempt rather than colliding
+        #: with the answer the previous plan produced.
+        "execution_receipt",
+        C("project_id", "text", primary_key=True),
+        C("run_id", "text", primary_key=True),
+        C("node_id", "text", primary_key=True),
+        C("tool_name", "text", primary_key=True),
+        C("tool_version", "text", primary_key=True),
+        C("input_digest", "text", primary_key=True),
+        C("parameters_sha256", "text", primary_key=True),
+        C("registry_snapshot", "text", primary_key=True),
+        C("attempt", "int", primary_key=True),
+        #: The digest of the answer that was absorbed, so the same answer can be told from a
+        #: different one.
+        C("outcome_digest", "text", nullable=False),
+        C("status", "text", nullable=False),
+        #: What the index holds for this attempt - the assets, not the bytes (§5.2).
+        C("output_asset_ids", "json", nullable=False),
+        C("output_digests", "json", nullable=False),
+        #: Which machine ran the attempt; empty when the work ran inside the control plane.
+        C("executed_on", "text"),
+        #: What the machine reported actually running (worker and interpreter), so the receipt does
+        #: not let the declared image digest stand in for the runtime (§9.4).
+        C("runtime", "text"),
+        C("compute_minutes", "float", nullable=False),
+        C("created_at", "timestamp", nullable=False),
+        indexes=(("run_id",), ("project_id",), ("run_id", "node_id")),
+        append_only=True,
+    ),
+    _t(
         "egress_decision",
         C("decision_id", "text", primary_key=True),
         C("project_id", "text", nullable=False),
@@ -409,6 +441,25 @@ APP_SCHEMA: tuple[TableSpec, ...] = (
         C("revoked_at", "timestamp"),
         unique_groups=(("algorithm", "fingerprint"),),
         indexes=(("subject_id",), ("fingerprint",), ("revoked_at",)),
+    ),
+    _t(
+        #: A machine that can run a run. The row is a declaration, not a probe: it says what the
+        #: machine has and who said so, and a run is matched against that declaration (section 9.4)
+        #: rather than against a named machine. Platform-level like the identity directory - a node
+        #: serves every project, it is not one project's property.
+        "execution_node",
+        C("node_id", "text", primary_key=True),
+        C("project_id", "text", nullable=False),
+        C("label", "text", nullable=False),
+        C("position", "text", nullable=False),
+        C("capabilities", "json", nullable=False),
+        #: Where the machine's agent listens. The address is part of the claim; the credential that
+        #: opens it is not, and never sits in a row.
+        C("endpoint", "text"),
+        C("registered_by", "text", nullable=False),
+        C("registered_at", "timestamp", nullable=False),
+        C("notes", "text"),
+        indexes=(("position",),),
     ),
     _t(
         "audit_log",

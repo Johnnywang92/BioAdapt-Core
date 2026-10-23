@@ -36,7 +36,8 @@ from bioadapt_schemas.enums import (
 )
 from bioadapt_schemas.evidence import Evidence, EvidenceCard, EvidenceSource, FieldProvenance
 from bioadapt_schemas.identifiers import derive_candidate
-from bioadapt_schemas.orchestration import RunEvent
+from bioadapt_schemas.nodes import ExecutionNode, NodeCapabilities, NodePosition
+from bioadapt_schemas.orchestration import ExecutionReceipt, RunEvent
 from bioadapt_schemas.plan import (
     MANDATORY_STOP_CONDITIONS,
     AnalysisPlan,
@@ -225,6 +226,41 @@ def review(review_id: str = "rev_0001", object_id: str = "card_001", **overrides
     }
     fields.update(overrides)
     return ReviewEvent(**fields)
+
+
+def execution_node(node_id: str = "node_laptop", **overrides) -> ExecutionNode:
+    fields = {
+        "node_id": node_id,
+        "label": "workstation",
+        "position": NodePosition.LOCAL,
+        "capabilities": NodeCapabilities(cpu=8, memory_mb=16384, can_run_containers=True),
+        "registered_by": "user_platform_admin_01",
+        "registered_at": NOW,
+    }
+    fields.update(overrides)
+    return ExecutionNode(**fields)
+
+
+def receipt(**overrides) -> ExecutionReceipt:
+    fields = {
+        "run_id": RUN_ID,
+        "node_id": "qc",
+        "attempt": 1,
+        "tool_name": "scanpy_pipeline",
+        "tool_version": "1.11.0",
+        "input_digest": "12" * 32,
+        "parameters_sha256": "34" * 32,
+        "registry_snapshot": "56" * 32,
+        "outcome_digest": "78" * 32,
+        "status": "success",
+        "output_asset_ids": ["as_0001"],
+        "output_digests": {"as_0001": SHA},
+        "executed_on": "node_laptop",
+        "compute_minutes": 1.5,
+        "at": NOW,
+    }
+    fields.update(overrides)
+    return ExecutionReceipt(**fields)
 
 
 def node(node_id: str, **overrides) -> PlanNode:

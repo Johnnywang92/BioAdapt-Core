@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import timedelta
+from typing import Optional
 
 import pytest
 from pydantic import ValidationError
@@ -18,9 +19,23 @@ from bioadapt_schemas.enums import (
     RunState,
     UsageScope,
 )
-from bioadapt_schemas.orchestration import AdhocToolGrant, Approval, new_tool_grant_id
+from bioadapt_schemas.nodes import NodePosition
+from bioadapt_schemas.orchestration import (
+    AdhocToolGrant,
+    Approval,
+    ExecutionReceipt,
+    new_tool_grant_id,
+)
 from bioadapt_schemas.thresholds import Thresholds
-from bioadapt_storage import PLATFORM_SCOPE, REUSABLE_SCOPES, Catalog, ConcurrentWriteError, ScopeError, lint
+from bioadapt_storage import (
+    PLATFORM_SCOPE,
+    REUSABLE_SCOPES,
+    Catalog,
+    ConcurrentWriteError,
+    ExecutionConflictError,
+    ScopeError,
+    lint,
+)
 from storage_factories import (
     NOW,
     OTHER_PROJECT_ID,
@@ -32,10 +47,12 @@ from storage_factories import (
     candidate,
     card,
     event,
+    execution_node,
     lineage,
     manifest,
     plan,
     project,
+    receipt,
     review,
 )
 
@@ -674,6 +691,72 @@ class TestAdHocToolGrants:
             catalog.get_tool_grant(made.grant_id)
 
 
+class TestExecutionReceipts:
+    """Section 3.3: one attempt of one node has one answer, and the index keeps it that way."""
+
+    def _receipt(self, **overrides) -> ExecutionReceipt:
+        return receipt(**overrides)
+
+    def _lookup(self, catalog, made: ExecutionReceipt) -> Optional[ExecutionReceipt]:
+        return catalog.execution_receipt(
+            made.run_id,
+            made.node_id,
+            made.attempt,
+            tool_name=made.tool_name,
+            tool_version=made.tool_version,
+            input_digest=made.input_digest,
+            parameters_sha256=made.parameters_sha256,
+            registry_snapshot=made.registry_snapshot,
+        )
+
+    def test_a_receipt_round_trips_with_the_answer_it_records(self, catalog):
+        made = self._receipt()
+        catalog.record_execution_receipt(made)
+        stored = self._lookup(catalog, made)
+        assert stored is not None
+        assert stored.outcome_digest == made.outcome_digest
+        assert stored.output_asset_ids == ["as_0001"]
+        assert stored.output_digests == {"as_0001": SHA}
+        assert stored.executed_on == "node_laptop"
+        assert stored.compute_minutes == 1.5
+        assert stored.at == NOW
+
+    def test_the_same_answer_twice_is_absorbed_once(self, catalog):
+        made = self._receipt()
+        first = catalog.record_execution_receipt(made)
+        again = catalog.record_execution_receipt(made)
+        assert again.outcome_digest == first.outcome_digest
+        assert len(catalog.list_execution_receipts(RUN_ID)) == 1
+
+    def test_an_attempt_that_answers_differently_is_refused(self, catalog):
+        catalog.record_execution_receipt(self._receipt())
+        with pytest.raises(ExecutionConflictError, match="one attempt has one answer"):
+            catalog.record_execution_receipt(self._receipt(outcome_digest="9a" * 32))
+        assert len(catalog.list_execution_receipts(RUN_ID)) == 1
+
+    def test_an_attempt_of_a_re_planned_run_is_its_own_answer(self, catalog):
+        """§9.2: a run may be re-planned, and the new plan's attempt is not the old plan's."""
+        catalog.record_execution_receipt(self._receipt())
+        replanned = self._receipt(parameters_sha256="9a" * 32, outcome_digest="9b" * 32)
+        catalog.record_execution_receipt(replanned)
+        assert len(catalog.list_execution_receipts(RUN_ID)) == 2
+        assert self._lookup(catalog, replanned) is not None
+
+    def test_another_projects_receipt_is_not_this_projects_record(self, catalog):
+        catalog.record_execution_receipt(self._receipt())
+        catalog.set_scope(OTHER_PROJECT_ID)
+        assert self._lookup(catalog, self._receipt()) is None
+        assert catalog.list_execution_receipts(RUN_ID) == []
+
+    def test_a_receipt_cannot_be_rewritten(self, catalog):
+        catalog.record_execution_receipt(self._receipt())
+        with pytest.raises(sqlite3.IntegrityError):
+            catalog.conn.execute(
+                "update execution_receipt set outcome_digest = ? where project_id = ?",
+                ("9a" * 32, PROJECT_ID),
+            )
+
+
 class TestIdentityDirectory:
     """The rows a login key is checked against (§11.2): one place, stamped, never a secret."""
 
@@ -732,6 +815,46 @@ class TestIdentityDirectory:
             catalog.list_credentials(limit=10)
         with pytest.raises(ScopeError):
             catalog.active_credential("key_1")
+
+
+class TestComputeNodes:
+    """Section 4.2: a node serves every project, so its registry is platform-level."""
+
+    def test_a_declared_node_round_trips_with_its_capabilities(self, catalog):
+        catalog.set_scope(PLATFORM_SCOPE)
+        catalog.register_node(execution_node())
+        stored = catalog.get_node("node_laptop")
+        assert stored.label == "workstation"
+        assert stored.position is NodePosition.LOCAL
+        assert (stored.capabilities.cpu, stored.capabilities.memory_mb) == (8, 16384)
+        assert stored.capabilities.can_run_containers is True
+        assert stored.registered_by == "user_platform_admin_01"
+        assert stored.registered_at == NOW
+
+    def test_a_node_is_not_one_projects_property(self, catalog):
+        catalog.set_scope(PLATFORM_SCOPE)
+        catalog.register_node(execution_node())
+        catalog.set_scope(PROJECT_ID)
+        #: A scoped read would show one project's idea of the hardware and call it the hardware.
+        with pytest.raises(ScopeError):
+            catalog.list_nodes()
+        with pytest.raises(ScopeError):
+            catalog.get_node("node_laptop")
+        with pytest.raises(ScopeError):
+            catalog.register_node(execution_node(node_id="node_server"))
+
+    def test_every_declared_node_is_listed_in_a_stable_order(self, catalog):
+        catalog.set_scope(PLATFORM_SCOPE)
+        catalog.register_node(execution_node("node_server", position=NodePosition.PRIVATE))
+        catalog.register_node(execution_node("node_laptop"))
+        assert [n.node_id for n in catalog.list_nodes()] == ["node_laptop", "node_server"]
+        assert [n.node_id for n in catalog.list_nodes(limit=1)] == ["node_laptop"]
+        assert [n.node_id for n in catalog.list_nodes(limit=1, offset=1)] == ["node_server"]
+
+    def test_a_missing_node_is_not_in_the_registry(self, catalog):
+        catalog.set_scope(PLATFORM_SCOPE)
+        with pytest.raises(LookupError):
+            catalog.get_node("node_missing")
 
 
 def evidence_invocation():
