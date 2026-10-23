@@ -1380,4 +1380,51 @@ export const zh: Record<string, string> = {
   "A card is reachable only through a run and the expert queue; every screen starts from the project list.":
     "证据卡只能从一次运行和专家队列进入；每个屏幕都从项目列表开始。",
   "Back to the start": "回到首页",
+
+  // ---------------------------------------------------------------- 统计页
+  statistics: "统计",
+  Statistics: "统计",
+  "counts and sums read from the catalog in one request; nothing here is counted from a page of rows":
+    "一次请求从目录读出计数与合计；这里没有任何数字是靠翻页数出来的",
+  confirmed: "已确认",
+  "read at": "读取于",
+  "assets and plans this project holds, counted as the index files them":
+    "本项目持有的资产与方案，按索引建档的口径计数",
+  "stored bytes": "占用空间",
+  "{hand} registered by hand · {run} produced by runs": "{hand} 个手工登记 · {run} 个由 run 产出",
+  "plan versions": "方案版本",
+  "{n} distinct plans": "{n} 个不同方案",
+  "retention class": "保留类别",
+  "usage scope": "使用范围",
+  "filtering state": "过滤状态",
+  "none recorded": "暂无记录",
+  Analysis: "分析",
+  "runs, candidate sets and evidence cards as the index holds them": "索引里记录的 run、候选集与证据卡",
+  "{active} active · {closed} closed": "{active} 个进行中 · {closed} 个已结束",
+  "{cells} cells · {donors} donor assignments": "{cells} 个细胞 · {donors} 个供体计数",
+  "evidence cards": "证据卡",
+  "{reviewed} reviewed · {signed} signed off · {reviews} review decisions":
+    "{reviewed} 张已评审 · {signed} 张已签字 · {reviews} 条评审记录",
+  "run states": "run 状态",
+  "card status": "卡片状态",
+  "a run is active until it reaches REPORT_READY, ARCHIVED or FAILED - the same set the launch quota counts; a card is reviewed once a review decision is on record, and signed off once its sign_off is no longer not_signed":
+    "run 到达 REPORT_READY、ARCHIVED 或 FAILED 之前都算进行中——启动配额数的也是这一组；一张卡只要留下过评审记录就算已评审，sign_off 不再是 not_signed 就算已签字",
+  "Runs and processing": "运行与处理",
+  "the journal's retries and spend, the gates this project requested, and the exports it queued":
+    "日志里的重试与花费、本项目提出的审批门，以及它排队的导出",
+  "average run duration": "平均 run 时长",
+  "median {value} · {n} runs with both timestamps": "中位数 {value} · {n} 个 run 同时有开始与结束时间",
+  retries: "重试",
+  "{node} node · {business} business": "{node} 次节点 · {business} 次业务",
+  "model cost {cost}": "模型费用 {cost}",
+  "pending approvals": "待处理审批",
+  "{overdue} overdue · average decision {duration}": "{overdue} 个逾期 · 平均裁定 {duration}",
+  "export jobs": "导出任务",
+  "approvals by kind": "按类型的审批",
+  "exports by status": "按状态的导出",
+  "exports by kind": "按类型的导出",
+  "durations come only from runs that recorded both a start and a finish; the journal records usage per node, not a node's own wall clock":
+    "时长只来自同时记录了开始与结束时间的 run；日志按节点记录用量，不记录节点自己的墙钟时间",
+  "not on this screen: a worker's health and the queue's depth. No heartbeat is stored, and the reference scheduler keeps its queue in memory, so neither can be read from the catalog.":
+    "本页不显示：工作进程的健康状况与队列深度。系统没有保存心跳，参考调度器把队列放在内存里，所以这两项都无法从目录中如实读出。",
 };

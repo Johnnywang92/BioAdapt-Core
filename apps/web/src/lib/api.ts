@@ -37,6 +37,7 @@ import type {
   Problem,
   Project,
   ProjectCreate,
+  ProjectStats,
   RagAnswer,
   RecordedAsset,
   RecordedPlan,
@@ -188,6 +189,14 @@ export const projects = {
         body: { thresholds, rationale },
       },
     ),
+};
+
+/**
+ * One aggregate read for the statistics screen (section 5.1). The list routes cap and omit totals,
+ * so this is the only way a number on that screen can describe more rows than one page.
+ */
+export const stats = {
+  read: (caller: Caller, projectId: string) => call<ProjectStats>(caller, `${projectPath(projectId)}/stats`),
 };
 
 /** Data registration (section 5.9): declare, upload to the signed PUT, then complete with the same body. */

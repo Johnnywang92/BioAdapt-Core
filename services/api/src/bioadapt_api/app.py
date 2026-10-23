@@ -30,6 +30,7 @@ from .routes_iam import router as iam_router
 from .routes_knowledge import router as knowledge_router
 from .routes_orchestration import router as orchestration_router
 from .routes_runs import router as runs_router
+from .routes_stats import router as stats_router
 from .routes_tools import router as tools_router
 
 TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
@@ -115,6 +116,7 @@ def create_app(state: ApiState) -> FastAPI:
         exports_router,
         compliance_router,
         iam_router,
+        stats_router,
     ):
         app.include_router(router, prefix="/v1")
 

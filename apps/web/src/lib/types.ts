@@ -96,6 +96,60 @@ export interface Page<T> {
   next_offset?: number;
 }
 
+/**
+ * The project's own numbers, read as one aggregate (plan V2.0 section 5.1).
+ *
+ * The list routes cap at 500 rows and report no total, so these counts cannot be reconstructed from
+ * pages the browser happened to receive. Only counts and sums are in this answer: no row id, subject
+ * or reason.
+ */
+export interface ProjectStats {
+  project_id: string;
+  generated_at: string;
+  project: {
+    created_at: string | null;
+    thresholds_confirmed: boolean;
+    thresholds_version: string;
+    review_load_budget_hours_per_week: number;
+  };
+  data: {
+    assets: {
+      total: number;
+      size_bytes: number;
+      from_runs: number;
+      registered_by_hand: number;
+      by_retention_class: Record<string, number>;
+      by_usage_scope: Record<string, number>;
+      by_filtering_state: Record<string, number>;
+    };
+    plans: { versions: number; distinct: number };
+  };
+  analysis: {
+    runs: { total: number; active: number; closed: number; by_state: Record<string, number> };
+    candidates: { total: number; cells: number; donor_assignments: number };
+    cards: {
+      total: number;
+      by_status: Record<string, number>;
+      reviewed: number;
+      signed_off: number;
+    };
+    reviews: { total: number };
+  };
+  process: {
+    durations: { runs: number; average_seconds: number | null; median_seconds: number | null };
+    retries: { node: number; business: number };
+    usage: { compute_minutes: number; model_cost_usd: number };
+    approvals: {
+      total: number;
+      pending: number;
+      overdue: number;
+      by_kind: Record<string, number>;
+      average_decision_seconds: number | null;
+    };
+    exports: { total: number; by_status: Record<string, number>; by_kind: Record<string, number> };
+  };
+}
+
 export interface Project {
   project_id: string;
   study_goal: string;

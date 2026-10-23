@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import uuid
 from collections.abc import Iterator, Sequence
+from statistics import median
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Callable, Optional
@@ -39,6 +40,11 @@ from .schema import APP_SCHEMA, TABLES_BY_NAME
 
 #: Section 5.8: only these scopes make an asset visible to another project's retrieval layer.
 REUSABLE_SCOPES = (UsageScope.INTERNAL_IMPROVEMENT, UsageScope.CROSS_PROJECT_ALLOWED)
+
+#: The states the quota layer already counts as no longer occupying a run slot. Statistics uses the
+#: same set so a project's "active" number is the one its next launch is checked against - a second
+#: definition here would let the screen and the refusal disagree without either side noticing.
+CLOSED_RUN_STATES = (str(RunState.REPORT_READY), str(RunState.ARCHIVED), str(RunState.FAILED))
 
 #: Section 11.2: the identity directory is one table for the whole platform, so its rows carry the
 #: global scope the policy layer uses for an all-project actor rather than some project's id.
@@ -1224,6 +1230,163 @@ class Catalog:
             "evidence_cards": {"matched": count("evidence_card", card_where, *card_params), "by_status": statuses},
             "candidate_sets": {"matched": count("candidate_set", run_where, *params)},
             "data_assets": {"matched": count("data_asset", asset_where, *params), "size_bytes": int(size_row["bytes"])},
+        }
+
+    # ------------------------------------------------------------------ statistics
+
+    def project_stats(self, *, now: datetime) -> dict[str, Any]:
+        """Every count the statistics screen shows, scoped to this project and read together.
+
+        Only counts and sums cross this boundary: no row id, subject or reason is returned. Two
+        quantities are deliberately absent because the held rows cannot answer them honestly - a
+        node's wall-clock duration (the journal records usage, not node start/end) and queue depth
+        (the reference scheduler keeps its queue in memory, not in this catalog).
+        """
+
+        def count(table: str, where: str = "1=1", *args: Any) -> int:
+            sql = f'select count(*) as n from "{table}" where "project_id" = ? and {where}'
+            return int(self.conn.execute(sql, (self.scope, *args)).fetchone()["n"])
+
+        def grouped(table: str, column: str) -> dict[str, int]:
+            rows = self.conn.execute(
+                f'select "{column}" as value, count(*) as n from "{table}" '
+                f'where "project_id" = ? group by "{column}" order by "{column}"',
+                (self.scope,),
+            )
+            return {str(row["value"]): int(row["n"]) for row in rows}
+
+        def average(values: Sequence[float]) -> Optional[float]:
+            return sum(values) / len(values) if values else None
+
+        assets = self.conn.execute(
+            'select count(*) as n, coalesce(sum(size_bytes), 0) as bytes,'
+            " coalesce(sum(case when created_by_run_id is not null then 1 else 0 end), 0) as from_runs"
+            ' from "data_asset" where "project_id" = ?',
+            (self.scope,),
+        ).fetchone()
+        asset_total = int(assets["n"])
+        plan_row = self.conn.execute(
+            'select count(*) as versions, count(distinct plan_id) as plans'
+            ' from "analysis_plan" where "project_id" = ?',
+            (self.scope,),
+        ).fetchone()
+
+        runs_total = count("run_manifest")
+        marks = ", ".join("?" for _ in CLOSED_RUN_STATES)
+        closed = count("run_manifest", f"state in ({marks})", *CLOSED_RUN_STATES)
+
+        durations: list[float] = []
+        for row in self.conn.execute(
+            'select started_at, finished_at from "run_manifest"'
+            ' where "project_id" = ? and started_at is not null and finished_at is not null',
+            (self.scope,),
+        ):
+            started = datetime.fromisoformat(row["started_at"])
+            finished = datetime.fromisoformat(row["finished_at"])
+            durations.append((finished - started).total_seconds())
+
+        candidates = self.conn.execute(
+            'select count(*) as n, coalesce(sum(size), 0) as cells,'
+            ' coalesce(sum(donor_count), 0) as donors from "candidate_set" where "project_id" = ?',
+            (self.scope,),
+        ).fetchone()
+
+        by_status = grouped("evidence_card", "final_status")
+        signed_off = 0
+        for row in self.conn.execute('select card from "evidence_card" where "project_id" = ?', (self.scope,)):
+            if json.loads(row["card"]).get("sign_off", "not_signed") != "not_signed":
+                signed_off += 1
+        reviewed_row = self.conn.execute(
+            'select count(distinct object_id) as n from "review_event"'
+            ' where "project_id" = ? and object_type = ?',
+            (self.scope, "evidence_card"),
+        ).fetchone()
+
+        approvals = list(
+            self.conn.execute(
+                'select state, kind, requested_at, sla_at, decided_at from "approval" where "project_id" = ?',
+                (self.scope,),
+            )
+        )
+        overdue = 0
+        decision_seconds: list[float] = []
+        for row in approvals:
+            if row["state"] == "pending" and datetime.fromisoformat(row["sla_at"]) < now:
+                overdue += 1
+            if row["decided_at"] and row["requested_at"]:
+                decided = datetime.fromisoformat(row["decided_at"])
+                requested = datetime.fromisoformat(row["requested_at"])
+                decision_seconds.append((decided - requested).total_seconds())
+
+        usage = self.conn.execute(
+            'select coalesce(sum(compute_minutes), 0) as minutes,'
+            ' coalesce(sum(model_cost_usd), 0) as cost from "run_event"'
+            ' where "project_id" = ? and kind = ?',
+            (self.scope, str(RunEventKind.USAGE)),
+        ).fetchone()
+        export_status = grouped("export_job", "status")
+
+        return {
+            "generated_at": now.isoformat(),
+            "data": {
+                "assets": {
+                    "total": asset_total,
+                    "size_bytes": int(assets["bytes"]),
+                    "from_runs": int(assets["from_runs"]),
+                    "registered_by_hand": asset_total - int(assets["from_runs"]),
+                    "by_retention_class": grouped("data_asset", "retention_class"),
+                    "by_usage_scope": grouped("data_asset", "usage_scope"),
+                    "by_filtering_state": grouped("data_asset", "filtering_state"),
+                },
+                "plans": {"versions": int(plan_row["versions"]), "distinct": int(plan_row["plans"])},
+            },
+            "analysis": {
+                "runs": {
+                    "total": runs_total,
+                    "active": runs_total - closed,
+                    "closed": closed,
+                    "by_state": grouped("run_manifest", "state"),
+                },
+                "candidates": {
+                    "total": int(candidates["n"]),
+                    "cells": int(candidates["cells"]),
+                    "donor_assignments": int(candidates["donors"]),
+                },
+                "cards": {
+                    "total": sum(by_status.values()),
+                    "by_status": by_status,
+                    "reviewed": int(reviewed_row["n"]),
+                    "signed_off": signed_off,
+                },
+                "reviews": {"total": count("review_event", "object_type = ?", "evidence_card")},
+            },
+            "process": {
+                "durations": {
+                    "runs": len(durations),
+                    "average_seconds": average(durations),
+                    "median_seconds": median(durations) if durations else None,
+                },
+                "retries": {
+                    "node": count("run_event", "kind = ?", str(RunEventKind.NODE_RETRY)),
+                    "business": count("run_event", "kind = ?", str(RunEventKind.BUSINESS_RETRY)),
+                },
+                "usage": {
+                    "compute_minutes": float(usage["minutes"]),
+                    "model_cost_usd": float(usage["cost"]),
+                },
+                "approvals": {
+                    "total": len(approvals),
+                    "pending": count("approval", "state = 'pending'"),
+                    "overdue": overdue,
+                    "by_kind": grouped("approval", "kind"),
+                    "average_decision_seconds": average(decision_seconds),
+                },
+                "exports": {
+                    "total": sum(export_status.values()),
+                    "by_status": export_status,
+                    "by_kind": grouped("export_job", "kind"),
+                },
+            },
         }
 
     # ------------------------------------------------------------------ identity directory
