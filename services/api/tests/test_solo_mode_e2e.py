@@ -79,7 +79,6 @@ def test_solo_mode_complete_lifecycle(client, auth, seeded):
 def test_solo_mode_adhoc_tool_grant_self_approval(client, auth, catalog):
     """Solo mode allows the submitter of an ad-hoc tool to also issue its execution grant."""
     from bioadapt_schemas.enums import ToolClass
-    from test_tool_grant_routes import spec_body
 
     adhoc_node = node(
         "adhoc_score",
@@ -120,7 +119,7 @@ def test_solo_mode_adhoc_tool_grant_self_approval(client, auth, catalog):
     # 3. Issue adhoc grant as solo operator (submitter == approver)
     grant_res = client.post(
         f"{BASE}/runs/{RUN_ID}/nodes/adhoc_score/adhoc-grants",
-        json={"approval_id": gate_id, "spec": spec_body()},
+        json={"approval_id": gate_id},
         headers=solo_headers,
     )
     assert grant_res.status_code == 201, grant_res.json()

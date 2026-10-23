@@ -12,10 +12,10 @@ from datetime import date
 from typing import Any, Optional
 
 from bioadapt_schemas.enums import ToolClass
-from bioadapt_schemas.plan import CONCLUSION_OUTPUTS
+from bioadapt_schemas.plan import CONCLUSION_OUTPUTS, PlanNode
 from bioadapt_scrnaseq.implementation import TASK_INPUT_SLOTS, TASK_RUNNERS
 from bioadapt_scrnaseq.specs import Deployment, reference_tool_specs
-from bioadapt_tool_registry.registry import ToolRegistry
+from bioadapt_tool_registry.registry import DEFAULT_ADHOC_LIMITS, ToolRegistry
 from bioadapt_tool_registry.spec import ToolSpec
 
 #: The registration facts the reference steps are deployed under. Appendix C1 keeps these as deployment
@@ -61,6 +61,40 @@ def _minimum_memory_gb(spec: ToolSpec) -> int:
     return max(1, math.ceil(measured / 1024))
 
 
+def submission_violations(
+    spec: ToolSpec,
+    *,
+    adhoc_limits: Any,
+    node: Optional[PlanNode] = None,
+) -> list[str]:
+    """Section 9.6: what a submission has to satisfy before a plan may carry it, or a grant may issue it.
+
+    The cage is checked at the boundary rather than only inside the registry, so nobody is asked to sign
+    a permission that buys nothing: the engine re-runs these rules over the bytes the grant row carries,
+    and a refusal that only arrived at execution would have cost a gate to find out.
+
+    The task is checked here as well, because the engine dispatches on it: a submission for a step this
+    workflow does not implement could be granted and then refused at the node, which reads as the
+    platform losing its mind rather than as a refusal.
+    """
+    found: list[str] = []
+    if spec.tool_class is not ToolClass.PROJECT_ADHOC:
+        found.append(f"{spec.tool_name} is {spec.tool_class}; only an ad-hoc submission runs this way")
+    if spec.task not in TASK_RUNNERS:
+        found.append(f"task {spec.task!r} has no implementation in this workflow, so no node can run it")
+    if node is not None:
+        if node.tool_class is not ToolClass.PROJECT_ADHOC:
+            found.append(f"node {node.node_id} runs {node.tool_class} tool {node.tool_name}")
+        if (node.tool_name, node.tool_version) != (spec.tool_name, spec.tool_version):
+            found.append(
+                f"the submission names {spec.tool_name}@{spec.tool_version}, but node {node.node_id} runs "
+                f"{node.tool_name}@{node.tool_version}"
+            )
+    found.extend(spec.admission_violations())
+    found.extend(adhoc_limits.violations(spec))
+    return found
+
+
 def tool_row(spec: ToolSpec) -> dict[str, Any]:
     runnable = spec.task in TASK_RUNNERS
     return {
@@ -99,10 +133,21 @@ def tool_row(spec: ToolSpec) -> dict[str, Any]:
     }
 
 
-def registry_body(registry: ToolRegistry, *, now: Optional[Any] = None) -> dict[str, Any]:
+def registry_body(
+    registry: ToolRegistry, *, now: Optional[Any] = None, adhoc_limits: Optional[Any] = None
+) -> dict[str, Any]:
+    caps = adhoc_limits or DEFAULT_ADHOC_LIMITS
     return {
         #: The value a launch has to name, and the value execution is checked against (§4.1).
         "snapshot_id": registry.snapshot_id(),
         "tools": [tool_row(spec) for spec in registry.select(include_adhoc=True, now=now)],
         "conclusion_outputs": sorted(CONCLUSION_OUTPUTS),
+        #: The cage an ad-hoc submission has to fit (§9.6). The screen that asks for the submission is
+        #: shown these numbers rather than a promise: the route refuses anything larger, in its own
+        #: words, and a form that let a person write past the cap would only move that refusal later.
+        "adhoc_limits": {
+            "max_cpu": caps.max_cpu,
+            "max_memory_mb": caps.max_memory_mb,
+            "max_minutes": caps.max_minutes,
+        },
     }

@@ -7,10 +7,12 @@ whatever that process claimed about itself. These routes are the landing point, 
 is 申请 → 决定 → 发放: a grant is only ever issued over an ``adhoc_tool`` gate a person has already
 approved, by the very subject whose token is on this request.
 
-Nothing here takes a caller's word for who approved, in which project, or when. The body carries a tool
-spec and a gate id; the row that lands records the authenticated actor as approver, the run's own project,
-the submitter read off the gate, and two timestamps from the clock the deployment owns. ``extra="forbid"``
-means an ``approver_id`` or ``expires_at`` in the request is a rejected request, not a suggested value.
+Nothing here takes a caller's word for who approved, in which project, or when. The body carries a gate id
+and nothing else about the tool: the bytes are read from the plan node the gate names, because the plan is
+what pinned them and a grant that carries its own copy of the bytes would be a second place for them to
+live. The row that lands records the authenticated actor as approver, the run's own project, the submitter
+read off the gate, and two timestamps from the clock the deployment owns. ``extra="forbid"`` means an
+``approver_id`` or ``expires_at`` in the request is a rejected request, not a suggested value.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from bioadapt_policies.access import Action
 from bioadapt_schemas.entities import Contract, sha256_of_json
@@ -32,7 +34,7 @@ from bioadapt_tool_registry import ToolSpec
 from .deps import Session, SessionDep
 from .errors import conflict, forbidden, invalid, not_found
 from .paging import Page, page_params
-from .toolset import reference_registry, registry_body
+from .toolset import reference_registry, registry_body, submission_violations
 
 router = APIRouter(tags=["tools"])
 
@@ -40,11 +42,13 @@ router = APIRouter(tags=["tools"])
 class AdhocGrantRequest(Contract):
     #: The ad-hoc gate whose approved decision this grant executes (§9.4).
     approval_id: str = Field(min_length=1)
-    spec: ToolSpec
     #: A person's own words for the record; the gate's decision reason is used when this is left open.
     reason: Optional[str] = None
     #: The deployment's window is the ceiling; a request may only ask for less time.
     valid_for_minutes: Optional[int] = Field(None, ge=1)
+    #: The bytes of the submission are not a request field: they live on the plan node the gate names
+    #: (§9.6), so what a person signed and what the platform executes are the same bytes by construction
+    #: rather than by a comparison somebody can forget to make.
 
 
 def _grant_body(grant: AdhocToolGrant, *, live: bool) -> dict:
@@ -73,19 +77,35 @@ def _planned_node(session: Session, manifest, node_id: str) -> PlanNode:
     raise not_found("node", node_id)
 
 
-def _spec_violations(session: Session, spec: ToolSpec) -> list[str]:
+def _spec_violations(session: Session, spec: ToolSpec, node: PlanNode) -> list[str]:
     """Section 9.6: the cage is checked again on the way in, not only on the way out.
 
     The engine re-runs these over the bytes the row carries, so a grant must not be issuable for a spec
     the engine would refuse - otherwise a person signs a permission that buys nothing, and the refusal
     arrives as a preflight error instead of a rejected request.
     """
-    found = []
-    if spec.tool_class is not ToolClass.PROJECT_ADHOC:
-        found.append(f"{spec.tool_name} is {spec.tool_class}; only an ad-hoc submission needs a grant")
-    found.extend(spec.admission_violations())
-    found.extend(session.state.adhoc_limits.violations(spec))
-    return found
+    return submission_violations(spec, adhoc_limits=session.state.adhoc_limits, node=node)
+
+
+def _submission_of(node: PlanNode) -> ToolSpec:
+    """The bytes the plan pins for this node (§9.6).
+
+    A plan that carries no submission has nothing to grant: the node names a tool the registry does not
+    hold, and the refusal says so rather than letting a request supply bytes the record never saw.
+    """
+    if node.adhoc_spec is None:
+        raise invalid(
+            "node_id",
+            f"node {node.node_id} carries no submission, so there are no bytes to grant: the plan has to "
+            "state the ad-hoc tool it runs before a grant can execute it",
+        )
+    try:
+        return ToolSpec(**node.adhoc_spec)
+    except ValidationError as error:
+        raise invalid(
+            "node_id",
+            f"node {node.node_id} carries a submission the tool contract does not accept: {error}",
+        ) from None
 
 
 @router.get("/projects/{project_id}/tools")
@@ -97,7 +117,11 @@ def tool_catalog(session: SessionDep) -> dict:
     one the engine holds, or it says nothing. An ad-hoc row appears only while its grant is still live.
     """
     session.enforce(Action.PROJECT_READ, f"{session.project_id}:tool_catalog", "tool_collection")
-    return registry_body(reference_registry(session.catalog), now=session.clock())
+    return registry_body(
+        reference_registry(session.catalog),
+        now=session.clock(),
+        adhoc_limits=session.state.adhoc_limits,
+    )
 
 
 @router.post("/projects/{project_id}/runs/{run_id}/nodes/{node_id}/adhoc-grants", status_code=201)
@@ -116,7 +140,18 @@ def issue_adhoc_grant(run_id: str, node_id: str, body: AdhocGrantRequest, sessio
             "approval_id",
             f"gate {gate.approval_id} is about {gate.run_id}/{gate.node_id}, not {run_id}/{node_id}",
         )
-    grant_id = new_tool_grant_id(gate.approval_id, body.spec.tool_name, body.spec.tool_version, node_id)
+    node = _planned_node(session, manifest, node_id)
+    if node.tool_class is not ToolClass.PROJECT_ADHOC:
+        raise invalid(
+            "node_id",
+            f"plan node {node_id} runs {node.tool_class} tool {node.tool_name}; an ad-hoc grant covers only "
+            "the plan's ad-hoc nodes",
+        )
+    spec = _submission_of(node)
+    violations = _spec_violations(session, spec, node)
+    if violations:
+        raise invalid("node_id", "; ".join(violations))
+    grant_id = new_tool_grant_id(gate.approval_id, spec.tool_name, spec.tool_version, node_id)
     #: The submitter is named by the gate, so separation of duties is decided against the record rather
     #: than against whoever asserted it in the body (§11.6).
     session.enforce(
@@ -138,24 +173,8 @@ def issue_adhoc_grant(run_id: str, node_id: str, body: AdhocGrantRequest, sessio
             ],
             grant_id,
         )
-    node = _planned_node(session, manifest, node_id)
-    if node.tool_class is not ToolClass.PROJECT_ADHOC:
-        raise invalid(
-            "node_id",
-            f"plan node {node_id} runs {node.tool_class} tool {node.tool_name}; an ad-hoc grant covers only "
-            "the plan's ad-hoc nodes",
-        )
-    if (node.tool_name, node.tool_version) != (body.spec.tool_name, body.spec.tool_version):
-        raise invalid(
-            "spec",
-            f"node {node_id} is planned as {node.tool_name}@{node.tool_version}, not "
-            f"{body.spec.tool_name}@{body.spec.tool_version}",
-        )
-    violations = _spec_violations(session, body.spec)
-    if violations:
-        raise invalid("spec", "; ".join(violations))
 
-    spec_dump = body.spec.model_dump(mode="json")
+    spec_dump = spec.model_dump(mode="json")
     spec_sha256 = sha256_of_json(spec_dump)
     existing = session.catalog.grant_of_approval(gate.approval_id)
     if existing is not None:
@@ -184,8 +203,8 @@ def issue_adhoc_grant(run_id: str, node_id: str, body: AdhocGrantRequest, sessio
         plan_id=manifest.plan_id,
         plan_version=manifest.plan_version,
         approval_id=gate.approval_id,
-        tool_name=body.spec.tool_name,
-        tool_version=body.spec.tool_version,
+        tool_name=spec.tool_name,
+        tool_version=spec.tool_version,
         spec=spec_dump,
         spec_sha256=spec_sha256,
         requested_by=gate.requested_by,

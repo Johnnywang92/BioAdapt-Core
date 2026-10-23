@@ -100,6 +100,13 @@ class PlanNode(Contract):
     retry_policy: RetryPolicy = Field(default_factory=RetryPolicy)
     fallback_node_id: Optional[str] = None
     input_asset_lineage_constraints: list[str] = Field(default_factory=list)
+    #: Section 9.6: the bytes of an ad-hoc submission. A node whose tool the registry does not hold
+    #: carries its submission here, so the plan is what pins those bytes and the grant is what executes
+    #: them - one source, so what was approved and what runs cannot drift apart.
+    #: The type is a plain mapping because the contract package cannot import the tool registry (the
+    #: dependency runs the other way); the API validates these bytes against ToolSpec before a plan is
+    #: recorded, and the grant route reads them back from here.
+    adhoc_spec: Optional[dict[str, Any]] = None
 
     @model_validator(mode="after")
     def _adhoc_needs_approval(self) -> "PlanNode":
@@ -107,6 +114,14 @@ class PlanNode(Contract):
             raise ValueError("ad-hoc tool nodes require explicit approval")
         if set(self.outputs) & CONCLUSION_OUTPUTS and not self.requires_approval:
             raise ValueError(f"nodes producing conclusion assets must require approval: {self.node_id}")
+        if self.tool_class is ToolClass.PROJECT_ADHOC and self.adhoc_spec is None:
+            raise ValueError(
+                f"node {self.node_id} runs an ad-hoc tool, so it must carry the submission it runs"
+            )
+        if self.tool_class is not ToolClass.PROJECT_ADHOC and self.adhoc_spec is not None:
+            raise ValueError(
+                f"node {self.node_id} runs a registered tool, which needs no submission: {self.tool_name}"
+            )
         return self
 
 

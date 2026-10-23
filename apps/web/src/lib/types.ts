@@ -205,6 +205,8 @@ export interface PlanNode {
   dependency_node_ids?: string[];
   resources?: { cpu: number; memory_gb: number; gpu: number; max_minutes: number };
   privacy_policy?: string;
+  /** The bytes of an ad-hoc submission this node runs (§9.6): the plan pins them, the grant executes them. */
+  adhoc_spec?: Record<string, unknown>;
   [extra: string]: unknown;
 }
 
@@ -240,6 +242,30 @@ export interface ToolSlot {
   required: boolean;
 }
 
+/** The image a tool runs in: the digest is the identity, the tag only names it (§9.4). */
+export interface ToolImage {
+  repository: string;
+  tag: string;
+  digest: string;
+}
+
+/** What a reader has to be able to check about the tool's licence before it feeds a conclusion. */
+export interface ToolLicense {
+  spdx_id: string;
+  display_name: string;
+  review_status: string;
+  reviewed_at: string | null;
+  note: string | null;
+}
+
+/** The reference namespace the tool was reviewed for: what it may read, and in what state. */
+export interface ToolReferenceCompatibility {
+  requires_counts: boolean | null;
+  id_system: string | null;
+  needs_log: boolean | null;
+  embedding_source: string | null;
+}
+
 /** A row of `GET /projects/{id}/tools`: the tool set this deployment both advertises and executes (§4.1, §9.4). */
 export interface ToolRow {
   tool_name: string;
@@ -255,19 +281,32 @@ export interface ToolRow {
   quality_checks: string[];
   assumptions: string[];
   invalid_when: string[];
+  input_schema: { name: string; version: string };
+  output_schema: { name: string; version: string };
+  container_image: ToolImage;
+  reference_compatibility: ToolReferenceCompatibility;
   network_mode: string;
   egress_allowlist: string[];
   failure_policy: string;
   retry_limit: number;
   reproducibility_level_target: string;
+  license: ToolLicense;
   requires_approval: boolean;
   privacy_policy: string;
+}
+
+/** What an ad-hoc submission may ask for, as this deployment caps it (§9.6). */
+export interface AdhocLimits {
+  max_cpu: number;
+  max_memory_mb: number;
+  max_minutes: number;
 }
 
 export interface ToolCatalog {
   snapshot_id: string;
   tools: ToolRow[];
   conclusion_outputs: string[];
+  adhoc_limits: AdhocLimits;
 }
 
 /** What one execute call reports: how far the run got, and what it stopped to wait for (§9.1). */

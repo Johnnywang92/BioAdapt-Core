@@ -12,7 +12,7 @@ import hashlib
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from bioadapt_policies.access import GLOBAL_SCOPE, MAX_PRESIGNED_TTL_SECONDS, Action, presigned_url_ttl
 from bioadapt_schemas.entities import Contract, DataAsset, Project
@@ -20,11 +20,13 @@ from bioadapt_schemas.enums import RetentionClass
 from bioadapt_schemas.plan import AnalysisPlan
 from bioadapt_schemas.thresholds import Thresholds
 from bioadapt_storage.objectstore import SignedUrl, issue_signed_url, object_key
+from bioadapt_tool_registry.spec import ToolSpec
 
 from .deps import ClaimsDep, SessionDep, StateDep, open_session, request_trace_id
 from .errors import conflict, invalid
 from .paging import Page, page_params
 from .quota import check_storage
+from .toolset import submission_violations
 
 router = APIRouter(tags=["data"])
 
@@ -157,12 +159,40 @@ def confirm_thresholds(body: ThresholdConfirmation, session: SessionDep) -> dict
     return {"project_id": session.project_id, "thresholds": project.thresholds.model_dump(mode="json")}
 
 
+def _check_submissions(session: SessionDep, plan: AnalysisPlan) -> AnalysisPlan:
+    """Section 9.6: a submission is checked once, here, where it enters the record.
+
+    The plan is what pins the bytes of an ad-hoc node, so the questions that decide whether those bytes
+    may run belong at the boundary: a person should not be able to record a plan whose ad-hoc node could
+    never be granted. The bytes are written back as the contract normalised them, so what the plan
+    carries is exactly what was checked.
+    """
+    checked = []
+    for node in plan.nodes:
+        if node.adhoc_spec is None:
+            checked.append(node)
+            continue
+        try:
+            spec = ToolSpec(**node.adhoc_spec)
+        except ValidationError as error:
+            raise invalid(
+                "nodes",
+                f"node {node.node_id} carries a submission the tool contract does not accept: {error}",
+            ) from None
+        violations = submission_violations(spec, adhoc_limits=session.state.adhoc_limits, node=node)
+        if violations:
+            raise invalid("nodes", f"node {node.node_id}: " + "; ".join(violations))
+        checked.append(node.model_copy(update={"adhoc_spec": spec.model_dump(mode="json")}))
+    return plan.model_copy(update={"nodes": checked})
+
+
 @router.post("/projects/{project_id}/plans", status_code=201)
 def record_plan(body: AnalysisPlan, session: SessionDep) -> dict:
     if body.project_id != session.project_id:
         raise invalid("project_id", "the plan declares a different project than the request path")
     session.enforce(Action.RUN_LAUNCH, body.plan_id, "plan")
-    digest = session.catalog.record_plan(body, created_by=session.actor.subject_id)
+    checked = _check_submissions(session, body)
+    digest = session.catalog.record_plan(checked, created_by=session.actor.subject_id)
     session.audit("plan:record", body.plan_id, details={"plan_version": body.plan_version, "plan_sha256": digest})
     return {"plan_id": body.plan_id, "plan_version": body.plan_version, "plan_sha256": digest}
 
@@ -195,6 +225,10 @@ def list_plans(session: SessionDep, page: Page = Depends(page_params)) -> dict:
                         "tool_version": node["tool_version"],
                         "tool_class": node["tool_class"],
                         "requires_approval": node["requires_approval"],
+                        #: The bytes of an ad-hoc node are part of the node the plan pins (§9.6): the
+                        #: grant reads them from here, so whoever reviews the grant has to see the same
+                        #: bytes a PI approved rather than a summary of them.
+                        **({"adhoc_spec": node["adhoc_spec"]} if node.get("adhoc_spec") else {}),
                     }
                     for node in row["plan"]["nodes"]
                 ],

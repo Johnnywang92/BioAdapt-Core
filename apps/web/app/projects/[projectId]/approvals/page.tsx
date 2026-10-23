@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 import { AdhocGrantForm } from "@/components/AdhocGrantForm";
 import { Chip, Empty, Field, Loading, Panel, ProblemNote } from "@/components/ui";
@@ -15,18 +16,42 @@ import type { Approval, ApprovalState, Page } from "@/lib/types";
 const STATES: ApprovalState[] = ["pending", "approved", "rejected", "expired"];
 
 export default function ApprovalsPage({ params }: { params: { projectId: string } }) {
+  return (
+    <Suspense fallback={<Loading on />}>
+      <Inbox projectId={params.projectId} />
+    </Suspense>
+  );
+}
+
+function Inbox({ projectId: scope }: { projectId: string }) {
   const t = useT();
-  const { caller, projectId, blocked } = useProjectScope(params.projectId);
+  const { caller, projectId, blocked } = useProjectScope(scope);
   const { identity } = useWorkbench();
-  const [state, setState] = useState<ApprovalState | "">("pending");
+  const searchParams = useSearchParams();
+  //: One run's gates can be read on their own: the run page links here with the run it is about, and
+  //: a link that does not narrow the inbox says nothing about which gates it meant (§9.2).
+  const runId = searchParams.get("run_id") ?? "";
+  //: A run's gates can be read on their own: the run page links here with the run it is about, and
+  //: a link that does not narrow the inbox says nothing about which gates it meant (§9.2).
+  //: A narrowed inbox starts on every state rather than on the pending ones: the run page sends the
+  //: reader here for a gate that has already been decided, because that is the one a grant is
+  //: issued over (§9.6).
+  const [state, setState] = useState<ApprovalState | "">(runId ? "" : "pending");
   const [overdue, setOverdue] = useState(false);
+
+  useEffect(() => setState(runId ? "" : "pending"), [runId]);
 
   const listed = useAsync<Page<Approval>>(
     () =>
       caller
-        ? approvalsApi.list(caller, projectId, { state: state || undefined, overdue: overdue || undefined, limit: 100 })
+        ? approvalsApi.list(caller, projectId, {
+            state: state || undefined,
+            overdue: overdue || undefined,
+            ...(runId ? { run_id: runId } : {}),
+            limit: 100,
+          })
         : Promise.resolve({ items: [], limit: 0, offset: 0 }),
-    [caller?.token, projectId, state, overdue],
+    [caller?.token, projectId, state, overdue, runId],
   );
 
   if (!caller) {
@@ -75,6 +100,12 @@ export default function ApprovalsPage({ params }: { params: { projectId: string 
           />
         </Field>
       </div>
+      {runId ? (
+        <p className="muted">
+          {t("showing the gates of one run")} <span className="mono">{runId}</span>{" "}
+          <Link href={`/projects/${projectId}/approvals`}>{t("show every gate")}</Link>
+        </p>
+      ) : null}
       <ProblemNote error={listed.error} />
       <Loading on={listed.loading} />
       {listed.data && listed.data.items.length ? (

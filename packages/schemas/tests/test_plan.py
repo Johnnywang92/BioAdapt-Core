@@ -105,7 +105,19 @@ class TestNodePolicies:
     def test_ad_hoc_tools_require_explicit_approval(self):
         with pytest.raises(ValidationError, match="ad-hoc"):
             node("adhoc_cluster", tool_class=ToolClass.PROJECT_ADHOC)
-        assert node("adhoc_cluster", tool_class=ToolClass.PROJECT_ADHOC, requires_approval=True)
+        assert node(
+            "adhoc_cluster",
+            tool_class=ToolClass.PROJECT_ADHOC,
+            requires_approval=True,
+            adhoc_spec={"tool_name": "scanpy_pipeline"},
+        )
+
+    def test_an_ad_hoc_node_carries_the_submission_it_runs(self):
+        """Section 9.6: the plan pins the bytes, so a node without them names nothing to run."""
+        with pytest.raises(ValidationError, match="must carry the submission"):
+            node("adhoc_cluster", tool_class=ToolClass.PROJECT_ADHOC, requires_approval=True)
+        with pytest.raises(ValidationError, match="needs no submission"):
+            node("registered_cluster", adhoc_spec={"tool_name": "scanpy_pipeline"})
 
     def test_conclusion_assets_require_approval(self):
         for output in sorted(CONCLUSION_OUTPUTS):

@@ -1272,16 +1272,40 @@ export const zh: Record<string, string> = {
   "a field review has to restate at least one field; nothing below differs from the card":
     "字段级复核至少要重写一个字段；下面没有哪一行和读到的卡片不同",
 
-  // ---------------------------------------------------------------- ad-hoc 执行凭据如实填表（第四批③）
+  // ---------------------------------------------------------------- 方案向导里的临时工具提交
+  "Your own tool for a step": "给某一步换成你自己的工具",
+  "when the registered step does not answer this project's question, the project may declare its own tool for that step (§9.6). It is stated once, here: the plan pins the bytes, and a PI approves exactly them before the step may run once, inside the cage":
+    "当已注册的那一步回答不了本项目的问题时，本项目可以给这一步声明自己的工具（§9.6）。只在这里声明一次：方案钉住这些字节，PI 逐字批准之后，这一步才能在沙箱里跑那一次",
+  "the step to put your own tool in": "要给哪一步换上自己的工具",
+  "the registered step for it stays available until you use your own": "在你真正用上自己的工具之前，已注册的那一步一直可选",
+  "choose a step": "选一步",
+  "edit the submission": "改这份提交",
+  "keep the registered step": "仍用已注册的那一步",
+  "this step runs the tool your project declared instead of the registered one; it runs once, inside the cage, and its outputs are recorded as produced by that tool, so a PI has to approve exactly these bytes":
+    "这一步跑的是本项目声明的工具，而不是已注册的那一支；它只跑一次、在沙箱里，产出的记录会记在这支工具名下，所以 PI 要逐字批准的就是这些字节",
+  "your own tool for this step": "给这一步用的你自己的工具",
+  "the registered step stays the default; this is the tool your project puts in its place. The bytes below are what a PI will be asked to approve, so they are stated here rather than at the gate - the plan is what pins them, and the grant is what executes exactly those bytes (§9.6). The outputs of the step are recorded as produced by this tool, which is why the approval is the point":
+    "已注册的那一步仍然是默认选项；这里填的是要顶替它的那支工具。下面这些字节就是 PI 会被要求批准的东西，所以在此处一次写清，而不是等到审批门再填——钉住它们的是方案，执行它们的也正是这些字节（§9.6）。这一步的产出会记在这支工具名下，所以批准才是关键",
+  "the name your own code carries; it is not the registered one": "你自己那支代码的名字；它不是已注册工具的名字",
+  "a pinned version: a floating one cannot be signed over": "一个钉住的版本号；会漂的版本没法签字",
+  "at most": "上限",
+  "why the registered step does not answer this question": "已注册的那一步为什么回答不了这个问题",
+  "the first of the assumptions below, and the line the approver reads first": "下面 assumptions 的第一条，也是批准的人先读的那一句",
+  "one per line, besides the reason above": "一行一个，上面那条理由之外的部分",
+  "how it may fail, and what it promises": "它失败时怎么走，以及它承诺什么",
+  "left as it stands: no network, no GPU, no egress, no retry, project-scoped assets (§9.6). A retry would spend a gate twice, so the platform does not offer one here":
+    "照原样固定：不联网、不给 GPU、不出流量、不重试、资产只限本项目（§9.6）。重试会把一扇门花两次，所以平台这里不提供重试",
+  "this is outside the cage": "这已经超出沙箱了",
+  "use this for the step": "用这份给这一步",
+
+  // ---------------------------------------------------------------- 收件箱里的凭据复核与发放
   "Issue the execution grant": "发放这次执行的授权凭据",
-  "the gate says a person allowed this submission; the grant is what turns that decision into one execution. Its row pins the exact bytes of the spec, so the lines below are the ones being signed - not a template (they cannot be read back from anywhere else, because this is the first time the platform sees them)":
-    "审批门说的是有人允许了这份提交；凭据才把这个决定变成一次真正的执行。凭据行钉住的是这份工具说明的逐字节内容，所以下面这些行就是被签字的东西——不是一套模板（它们别处读不回来，因为这是平台第一次看到这份提交）",
+  "the gate says a person allowed this submission; the grant is what turns that decision into one execution. The bytes below are the ones the plan pins and the ones the engine will run, so there is nothing to type here - only to read (§9.6)":
+    "审批门说的是有人允许了这份提交；凭据才把这个决定变成一次真正的执行。下面这些字节就是方案钉住、引擎会跑的那些字节，所以这里没有要填的东西——只有要读的（§9.6）",
   "the node this grant covers": "这份凭据覆盖的节点",
   "planned as": "方案里定的是",
   "read from": "读自",
   "decided by": "由谁裁定",
-  "the name and the version are not asked for: the route refuses a grant whose spec names anything other than this node's plan entry, so the screen reads them from the plan instead":
-    "名字与版本不需要填：方案里这个节点写的是哪支工具，路由就只认哪支工具，所以屏幕把方案读出来的值直接用上了",
   "this gate does not name a node, so there is nothing here a grant could cover; the route that raised it should have carried the node id":
     "这扇门没有指名节点，所以这里没有凭据能覆盖的东西；开出这扇门的接口本应带上节点 id",
   "the plan version this run pins is no longer listed for the project, so the node it names cannot be read here; a grant is issued against the plan the run actually pins":
@@ -1290,11 +1314,11 @@ export const zh: Record<string, string> = {
     "这个方案版本里没有这个 id 的节点，所以这扇门指向的是一个运行执行不了的东西",
   "this node is planned as a registered tool, and a registered tool needs no grant; only the plan's ad-hoc nodes can be made executable here":
     "这个节点在方案里定的是已注册工具，而已注册工具不需要凭据；这里只能把方案里的临时工具节点变成可执行",
-  "what the submission is": "这份提交是什么",
-  "the step this code performs, in the words the plan uses for it": "这段代码做的那一步，用方案自己的说法",
-  "one per line, as this code really reads them": "一行一个，按这段代码实际读取的模态写",
-  "a species nobody checked cannot be claimed; leave it out rather than widen it":
-    "没人验证过的物种不能声称支持；宁可少写，也不要放宽",
+  "this node carries no submission, so there are no bytes to grant: the plan has to state the ad-hoc tool it runs before a grant can execute it":
+    "这个节点没有带上提交件，所以没有可发放的字节：方案必须先写明这一步跑的是哪支临时工具，凭据才能执行它",
+  "the submission this grant executes": "这份凭据要执行的提交件",
+  "the bytes as they stand on the record": "台账上原样的字节",
+  "the two lines that are still yours": "仍然归你填的两行",
   "the image that runs": "真正跑起来的那个镜像",
   "a tag names a moving target, so the row is pinned by the digest the registry actually holds. Nobody can sign a permission over an image that was looked up later: a digest copied from the push is the only answer that means anything here":
     "标签指的是一个会动的目标，所以这一行钉的是注册里实际保存的摘要。没有人能对着一个事后才查的镜像签授权：只有从那次推送里抄下来的摘要在这里才算数",
@@ -1304,25 +1328,23 @@ export const zh: Record<string, string> = {
   "the number a run of this image actually produced, not the number asked for":
     "这个镜像真跑一次实测出来的峰值，不是你申请的那个数",
   "the dataset or run the measurement was taken on": "这次实测是在哪份数据或哪次运行上做的",
-  "the deployment caps what an ad-hoc node may ask for, and this screen does not restate those caps: ask for more and the grant route refuses, in its own words, below":
-    "本次部署对临时节点能申请的资源设有上限，而这个屏幕不替那些上限报数：申请超过上限，发放凭据的接口会在下方用它自己的话拒绝",
   "the licence as it was reviewed": "按审过的授权条款写",
   "an approved licence has to carry the date it was reviewed; not_required is the only status that needs none":
     "状态为已通过审阅的授权条款必须带上审阅日期；只有“无需审阅”这一档可以不带",
   "what a reader has to be able to check": "读这份结果的人必须能核对的东西",
   "one per line": "一行一个",
+  "one per line, as this code really reads them": "一行一个，按这段代码实际读取的模态写",
   "one per line; the contract refuses a submission that cannot say when its own result stops holding":
     "一行一个；说不出自己的结论什么时候不再成立的提交，契约会被拒",
+  "a species nobody checked cannot be claimed; leave it out rather than widen it":
+    "没人验证过的物种不能声称支持；宁可少写，也不要放宽",
   "whether this code needs raw counts or a normalised matrix": "这段代码要的是原始 counts 还是已归一化的矩阵",
   "not stated": "还没写",
   "provenance_fields": "provenance_fields",
   " - these four are what the contract requires every tool to leave behind, so they are not offered as a choice":
     " —— 这四个是契约要求每个工具都必须留下的字段，所以这里不作为可选项给出",
-  "how it may fail, and how long the grant stays open": "它失败时怎么走，凭据开多久",
   "the cage admits only these two: stop, or hand the node to a person":
     "沙箱只接受这两种：停下来，或者把这个节点交给人",
-  "left as it stands: no network, no GPU, no egress, no retry, project-scoped assets, and the grant is spent by the one execution it authorises (§9.6). A retry would spend a gate twice, so the platform does not offer one here":
-    "照原样固定：不联网、不给 GPU、不出流量、不重试、资产只限本项目，而且这份凭据就被它授权的那一次执行用掉（§9.6）。重试会把一扇门花两次，所以平台这里不提供重试",
   "optional; the deployment's own window is the ceiling and asking for less is allowed":
     "可不填；本次部署自己的有效期就是上限，填得更短是可以的",
   "optional; left open, the row records the gate's own decision reason":
@@ -1333,8 +1355,12 @@ export const zh: Record<string, string> = {
     "这份凭据执行的是一个具名的决定，所以接口只认 {who}——裁定那扇门的那个人；旁人哪怕同意这个决定，也发不出它（§11.6）",
   "Grant {id} is on the record: {tool}@{version} may execute at node {node}, live until {until}.":
     "凭据 {id} 已记入台账：{tool}@{version} 可以在节点 {node} 上执行，有效到 {until}。",
-  " one gate buys one grant, so sending these same lines again answers with the row that already stands rather than a second permission (§9.6)":
-    " 一扇门只买一份凭据，所以把这些行原样再发一次，答复的是台账上已经站着的那一行，而不是第二份许可（§9.6）",
+  " one gate buys one grant, so asking again answers with the row that already stands rather than a second permission (§9.6)":
+    " 一扇门只买一份凭据，所以再问一次答复的是台账上已经站着的那一行，而不是第二份许可（§9.6）",
+  "what this buys, in the deployment's own terms: one execution, no network, no GPU, no egress, no retry, project-scoped assets, and the grant is spent by the one execution it authorises (§9.6)":
+    "按本次部署的说法，它买到的是：一次执行、不联网、不给 GPU、不出流量、不重试、资产只限本项目，而且这份凭据就被它授权的那一次执行用掉（§9.6）",
+  "showing the gates of one run": "只显示某一次运行的那些门",
+  "show every gate": "显示所有门",
 
   // ---------------------------------------------------------------- 顶栏、身份抽屉与 404
   screens: "页面导航",

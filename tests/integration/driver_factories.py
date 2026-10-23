@@ -300,11 +300,29 @@ def node(
     retry: Optional[RetryPolicy] = None,
     memory_gb: int = MEMORY_GB,
     max_minutes: int = MAX_MINUTES,
+    submission: Optional[Mapping[str, Any]] = None,
 ) -> PlanNode:
     task = TASK_OF[node_id]
+    name = tool_name or TOOL_NAMES[task]
+    #: Section 9.6: an ad-hoc node carries the bytes of the submission it runs, because the plan is what
+    #: pins them. A factory that left them off would build a node the contract refuses, so the submission
+    #: is built here unless a test means to supply different ones.
+    pinned = None
+    if tool_class is ToolClass.PROJECT_ADHOC:
+        pinned = (
+            dict(submission)
+            if submission is not None
+            else adhoc_spec(
+                tool_name=name,
+                tool_version=tool_version,
+                task=task,
+                deployment=DEPLOYMENT,
+                reason="the registered step does not answer this project's question",
+            ).model_dump(mode="json")
+        )
     return PlanNode(
         node_id=node_id,
-        tool_name=tool_name or TOOL_NAMES[task],
+        tool_name=name,
         tool_version=tool_version,
         tool_class=tool_class,
         inputs=list(inputs if inputs is not None else DEFAULT_INPUTS[node_id]),
@@ -315,6 +333,7 @@ def node(
         privacy_policy="project_local",
         requires_approval=requires_approval,
         retry_policy=retry or RetryPolicy(max_attempts=3, backoff_seconds=0),
+        adhoc_spec=pinned,
     )
 
 

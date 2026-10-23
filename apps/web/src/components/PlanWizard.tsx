@@ -3,12 +3,18 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { AdhocSpecForm, type AdhocSpec, type AdhocSubmission } from "@/components/AdhocSpecForm";
 import { Field, Loading, Notice, Panel, ProblemNote } from "@/components/ui";
 import { assets as assetsApi, plans as plansApi, tools as toolsApi, type Caller } from "@/lib/api";
 import { digestHex, distinct, donorsPerGroup, inspectDocument, looksH5ad, type CountsPreview } from "@/lib/countsDocument";
 import { useT } from "@/lib/i18n";
 import { useAsync, useSubmit } from "@/lib/useAsync";
 import type { AnalysisPlan, PlanNode, Project, ToolCatalog, ToolRow } from "@/lib/types";
+
+/** A step as this wizard offers it: a registry row, or the project's own submission for that step (§9.6). */
+interface Step extends ToolRow {
+  adhoc_spec?: AdhocSpec;
+}
 
 /** One stage-0 number a step refuses to run without (§C1: these are inputs, never code defaults). */
 interface ParamField {
@@ -168,15 +174,22 @@ export function PlanWizard({ caller, projectId, project }: { caller: Caller; pro
   const [preview, setPreview] = useState<CountsPreview | null>(null);
   const [previewName, setPreviewName] = useState("");
   const [previewProblem, setPreviewProblem] = useState<string | null>(null);
+  const [submissions, setSubmissions] = useState<Record<string, AdhocSubmission>>({});
+  const [adhocTask, setAdhocTask] = useState("");
 
   const set = (name: keyof typeof form) => (event: { target: { value: string } }) =>
     setForm((current) => ({ ...current, [name]: event.target.value }));
 
   const tools = catalog.data?.tools ?? [];
-  const runnable = tools.filter((one) => one.runnable && !NEEDS_A_CANDIDATE.has(one.task));
+  const registered = tools.filter((one) => one.runnable && !NEEDS_A_CANDIDATE.has(one.task));
   const deferred = tools.filter((one) => NEEDS_A_CANDIDATE.has(one.task));
-  const included = runnable.filter((one) => chosen[one.tool_name]);
+  /** A step is the registered row, or the project's own submission standing in its place (§9.6). */
+  const steps: Step[] = registered.map((row) =>
+    submissions[row.task] ? adhocStep(row, submissions[row.task]) : row,
+  );
+  const included = steps.filter((one) => chosen[one.task]);
   const conclusionOutputs = new Set(catalog.data?.conclusion_outputs ?? []);
+  const adhocRow = registered.find((one) => one.task === adhocTask) ?? null;
 
   /** Reading the design off the bytes: this screen uploads nothing, it only looks at what was picked. */
   async function readData(file: File | undefined) {
@@ -209,13 +222,33 @@ export function PlanWizard({ caller, projectId, project }: { caller: Caller; pro
   const specimens = preview ? distinct(preview.cells, "specimen_id") : [];
   const groups = preview ? distinct(preview.cells, "group") : [];
 
-  function toggle(tool: ToolRow) {
+  function toggle(tool: Step) {
     setChosen((current) => {
-      const next = { ...current, [tool.tool_name]: !current[tool.tool_name] };
-      if (next[tool.tool_name]) {
+      const next = { ...current, [tool.task]: !current[tool.task] };
+      if (next[tool.task]) {
         setParams((older) => ({ ...older, [tool.task]: older[tool.task] ?? {} }));
         setResourceEdits((older) => ({ ...older, [tool.task]: older[tool.task] ?? {} }));
       }
+      return next;
+    });
+  }
+
+  /**
+   * The project's own submission takes the step's place, so the node it builds carries the bytes (§9.6).
+   *
+   * The step's resources start from the submission's own, because those are the facts the engine will
+   * measure the node against; an edit left over from the registered step would ask for less than the
+   * submission declares, which is the one thing the driver refuses.
+   */
+  function attach(submission: AdhocSubmission) {
+    setSubmissions((current) => ({ ...current, [submission.task]: submission }));
+    setResourceEdits((current) => ({ ...current, [submission.task]: {} }));
+  }
+
+  function detach(task: string) {
+    setSubmissions((current) => {
+      const next = { ...current };
+      delete next[task];
       return next;
     });
   }
@@ -282,6 +315,7 @@ export function PlanWizard({ caller, projectId, project }: { caller: Caller; pro
       },
       privacy_policy: tool.privacy_policy,
       requires_approval: gated,
+      ...(tool.adhoc_spec ? { adhoc_spec: tool.adhoc_spec } : {}),
     };
   });
 
@@ -614,10 +648,11 @@ export function PlanWizard({ caller, projectId, project }: { caller: Caller; pro
               "the name, version, slots and resource floor of every step below come from the registry this deployment hydrates; a node that emits a conclusion asset or is ad-hoc is gated whatever this screen thinks",
             )}
           </p>
-          {runnable.map((tool) => {
-            const on = !!chosen[tool.tool_name];
+          {steps.map((tool) => {
+            const on = !!chosen[tool.task];
+            const own = !!tool.adhoc_spec;
             return (
-              <div className="step-row" key={tool.tool_name}>
+              <div className="step-row" key={tool.task}>
                 <label className="check">
                   <input type="checkbox" checked={on} onChange={() => toggle(tool)} />
                   <span className="mono">
@@ -628,11 +663,29 @@ export function PlanWizard({ caller, projectId, project }: { caller: Caller; pro
                     {` · ${t("writes")} ${tool.output_slots.join(", ") || "—"}`}
                   </span>
                   {tool.requires_approval || tool.output_slots.some((one) => conclusionOutputs.has(one)) ? (
-                    <span className="chip chip--provisional" title={gateReason(conclusionOutputs, tool.output_slots).join(", ")}>
+                    <span
+                      className="chip chip--provisional"
+                      title={gateReason(conclusionOutputs, tool.output_slots, tool.tool_class).join(", ")}
+                    >
                       {t("gated")}
                     </span>
                   ) : null}
                 </label>
+                {own ? (
+                  <div className="step-body">
+                    <p className="muted">
+                      {t(
+                        "this step runs the tool your project declared instead of the registered one; it runs once, inside the cage, and its outputs are recorded as produced by that tool, so a PI has to approve exactly these bytes",
+                      )}
+                    </p>
+                    <button className="secondary" type="button" onClick={() => setAdhocTask(tool.task)}>
+                      {t("edit the submission")}
+                    </button>
+                    <button className="secondary" type="button" onClick={() => detach(tool.task)}>
+                      {t("keep the registered step")}
+                    </button>
+                  </div>
+                ) : null}
                 {on ? (
                   <div className="step-body">
                     <div className="grid">
@@ -763,6 +816,50 @@ export function PlanWizard({ caller, projectId, project }: { caller: Caller; pro
         </fieldset>
 
         <fieldset>
+          <legend>{t("Your own tool for a step")}</legend>
+          <p className="muted">
+            {t(
+              "when the registered step does not answer this project's question, the project may declare its own tool for that step (§9.6). It is stated once, here: the plan pins the bytes, and a PI approves exactly them before the step may run once, inside the cage",
+            )}
+          </p>
+          <Field
+            label={t("the step to put your own tool in")}
+            hint={t("the registered step for it stays available until you use your own")}
+          >
+            <select value={adhocTask} onChange={(event) => setAdhocTask(event.target.value)}>
+              <option value="">{t("choose a step")}</option>
+              {registered.map((row) => (
+                <option key={row.task} value={row.task}>
+                  {`${row.task} (${row.tool_name}@${row.tool_version})`}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {adhocRow ? (
+            <AdhocSpecForm
+              key={adhocRow.task}
+              row={adhocRow}
+              limits={catalog.data?.adhoc_limits ?? null}
+              initial={submissions[adhocRow.task]?.spec}
+              onSubmit={attach}
+              onClear={() => {
+                detach(adhocRow.task);
+                setAdhocTask("");
+              }}
+            />
+          ) : null}
+          {Object.keys(submissions).length ? (
+            <ul className="steps">
+              {Object.entries(submissions).map(([task, one]) => (
+                <li key={task}>
+                  {`${task}: ${one.spec.tool_name}@${one.spec.tool_version}`}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </fieldset>
+
+        <fieldset>
           <legend>{t("Budget and stops")}</legend>
           <div className="grid">
             <Field label="max_iterations">
@@ -821,7 +918,49 @@ export function PlanWizard({ caller, projectId, project }: { caller: Caller; pro
 }
 
 /** The chip's tooltip names the output that makes the node gated, so the requirement is traceable. */
-function gateReason(outputs: Set<string>, slots: string[]): string[] {
+function gateReason(outputs: Set<string>, slots: string[], toolClass: string): string[] {
+  if (toolClass === "project_adhoc") return ["ad-hoc"];
   const hit = slots.filter((one) => outputs.has(one));
   return hit.length ? hit : ["ad-hoc"];
+}
+
+/**
+ * The step as it reads once the project has put its own tool in its place (§9.6).
+ *
+ * The slots stay the ones the task reads and writes - the step is the same step - and everything that
+ * names the tool changes to the submission's own: the identity the outputs are recorded under, the
+ * resource floor the engine measures the node against, and the approval it carries.
+ */
+function adhocStep(row: ToolRow, submission: AdhocSubmission): Step {
+  const spec = submission.spec;
+  const measured = spec.resources.measured_peak_memory_mb;
+  return {
+    ...row,
+    tool_name: spec.tool_name,
+    tool_version: spec.tool_version,
+    tool_class: "project_adhoc",
+    requires_approval: true,
+    min_resources: {
+      cpu: spec.resources.cpu,
+      memory_gb: Math.max(1, Math.ceil(measured / 1024)),
+      gpu: 0,
+      max_minutes: spec.resources.max_minutes,
+    },
+    measured_peak_memory_mb: measured,
+    measured_on: spec.resources.measured_on,
+    quality_checks: spec.quality_checks,
+    assumptions: spec.assumptions,
+    invalid_when: spec.invalid_when,
+    input_schema: spec.input_schema,
+    output_schema: spec.output_schema,
+    container_image: spec.container_image,
+    reference_compatibility: spec.reference_compatibility,
+    license: spec.license,
+    network_mode: "closed",
+    egress_allowlist: [],
+    failure_policy: spec.failure_policy,
+    retry_limit: 0,
+    reproducibility_level_target: spec.reproducibility_level_target,
+    adhoc_spec: spec,
+  };
 }

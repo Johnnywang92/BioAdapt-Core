@@ -333,12 +333,16 @@ export const approvals = {
       method: "POST",
       body: { to_subject: toSubject },
     }),
+  /**
+   * The execution grant (§9.6). The body carries the gate and two lines of the issuer's own: the bytes
+   * of the submission are read off the plan node the gate names, so a request cannot bring its own.
+   */
   grantAdhoc: (
     caller: Caller,
     projectId: string,
     runId: string,
     nodeId: string,
-    body: { approval_id: string; spec: Record<string, unknown>; reason?: string; valid_for_minutes?: number },
+    body: { approval_id: string; reason?: string; valid_for_minutes?: number },
   ) =>
     call<{ grant_id: string; run_id: string; node_id: string; expires_at: string; live: boolean }>(
       caller,

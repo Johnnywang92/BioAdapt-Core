@@ -153,6 +153,52 @@ def other_asset(asset_id: str = "as_shared", **overrides) -> DataAsset:
     return DataAsset(**fields)
 
 
+def adhoc_submission(tool_name: str = "project_qc_probe", tool_version: str = "0.1.0", **overrides) -> dict:
+    """The bytes of an ad-hoc submission, as a plan node carries them (§9.6).
+
+    The plan is what pins these bytes, so a test that means to change one of them changes this dict
+    rather than a request body: there is no longer a second place for a submission to live.
+    """
+    fields: dict[str, Any] = {
+        "tool_name": tool_name,
+        "tool_version": tool_version,
+        "task": "qc",
+        "tool_class": str(ToolClass.PROJECT_ADHOC),
+        "supported_modalities": ["RNA"],
+        "supported_species": ["human"],
+        "input_schema": {"name": "scrnaseq_counts", "version": "v1"},
+        "output_schema": {"name": "adhoc_output", "version": "v1"},
+        "container_image": {
+            "repository": "registry.internal/bioadapt/project-probe",
+            "tag": tool_version,
+            "digest": "sha256:" + "ab" * 32,
+        },
+        "resources": {
+            "cpu": 4,
+            "memory_mb": 8192,
+            "max_minutes": 60,
+            "measured_peak_memory_mb": 6100,
+            "measured_on": "run_scrnaseq_calibration",
+        },
+        "license": {
+            "spdx_id": "MIT",
+            "display_name": "project probe",
+            "review_status": "approved",
+            "reviewed_at": "2026-04-01",
+        },
+        "quality_checks": ["adhoc_result_is_marked_unregistered"],
+        "provenance_fields": ["input_hashes", "parameters", "container_image_digest", "tool_version"],
+        "assumptions": ["submitted for this project only"],
+        "invalid_when": ["the result is the only support for a delivered conclusion"],
+        "reference_compatibility": {"requires_counts": True, "id_system": "ensembl"},
+        "failure_policy": "halt",
+        "retry_limit": 0,
+        "network": {"mode": "closed"},
+    }
+    fields.update(overrides)
+    return fields
+
+
 def node(node_id: str, **overrides) -> PlanNode:
     fields = {
         "node_id": node_id,
@@ -164,6 +210,10 @@ def node(node_id: str, **overrides) -> PlanNode:
         "privacy_policy": "local_only",
     }
     fields.update(overrides)
+    if fields["tool_class"] is ToolClass.PROJECT_ADHOC and fields.get("adhoc_spec") is None:
+        fields["adhoc_spec"] = adhoc_submission(
+            tool_name=fields["tool_name"], tool_version=fields["tool_version"]
+        )
     return PlanNode(**fields)
 
 

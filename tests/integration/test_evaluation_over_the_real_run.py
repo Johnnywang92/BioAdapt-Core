@@ -844,10 +844,22 @@ def adhoc_plan(plan: AnalysisPlan, node_ids: set[str]) -> AnalysisPlan:
 
     Nothing is written to the index: the run stays pinned to the plan it ran, and this object only answers
     the question the §10.3 row asks - what would have fired had the support come through that channel.
+    An ad-hoc node carries the bytes of the submission it runs (§9.6), so the hypothetical states them.
     """
     nodes = [
         PlanNode.model_validate(
-            {**node.model_dump(), "tool_class": ToolClass.PROJECT_ADHOC, "requires_approval": True}
+            {
+                **node.model_dump(),
+                "tool_class": ToolClass.PROJECT_ADHOC,
+                "requires_approval": True,
+                "adhoc_spec": F.adhoc_spec(
+                    tool_name=node.tool_name,
+                    tool_version=node.tool_version,
+                    task=F.TASK_OF[node.node_id],
+                    deployment=F.DEPLOYMENT,
+                    reason="the registered step does not answer this project's question",
+                ).model_dump(mode="json"),
+            }
         )
         if node.node_id in node_ids
         else node

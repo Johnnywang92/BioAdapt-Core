@@ -4,6 +4,9 @@ Everything these tests check is the same question asked from a different side: w
 grant is issued, and can a caller put anyone there? The gate answers whether a person approved the node;
 the route under test turns that approval into the one execution §9.6 says it buys, and it is the only
 place in the platform where a ``tool_grant`` row is written.
+
+The bytes of the submission live on the plan node the gate names, not in the request: the plan is what
+pins them, so a grant carries the plan's bytes and a request cannot supply its own.
 """
 
 import copy
@@ -66,26 +69,28 @@ def spec_body(**overrides) -> dict:
     return copy.deepcopy(fields)
 
 
-def adhoc_plan(catalog) -> None:
+def adhoc_node(node_id: str = "adhoc_score", **overrides):
+    """A plan node for an ad-hoc tool, carrying the submission it runs (§9.6)."""
+    fields = {
+        "tool_name": ADHOC_TOOL,
+        "tool_version": ADHOC_VERSION,
+        "tool_class": ToolClass.PROJECT_ADHOC,
+        "requires_approval": True,
+        "adhoc_spec": spec_body(),
+    }
+    fields.update(overrides)
+    return node(node_id, **fields)
+
+
+def adhoc_plan(catalog, *, spec: dict | None = None) -> None:
     """Point the run at a plan whose ad-hoc nodes are the submissions under test (§9.4)."""
+    submission = spec_body() if spec is None else spec
     gated = plan(
         plan_version="2",
         nodes=[
             node("cluster"),
-            node(
-                "adhoc_score",
-                tool_name=ADHOC_TOOL,
-                tool_version=ADHOC_VERSION,
-                tool_class=ToolClass.PROJECT_ADHOC,
-                requires_approval=True,
-            ),
-            node(
-                "adhoc_probe",
-                tool_name=ADHOC_TOOL,
-                tool_version=ADHOC_VERSION,
-                tool_class=ToolClass.PROJECT_ADHOC,
-                requires_approval=True,
-            ),
+            adhoc_node("adhoc_score", adhoc_spec=submission),
+            adhoc_node("adhoc_probe", adhoc_spec=submission),
         ],
     )
     catalog.set_scope(PROJECT_ID)
@@ -115,7 +120,8 @@ def open_gate(client, auth, *, requested_by=ANALYST, decided_by=PI, node_id="adh
 
 
 def grant(client, auth, approval_id, *, headers=None, node_id="adhoc_score", **body_fields) -> dict:
-    body = {"approval_id": approval_id, "spec": spec_body()}
+    """The request a grant is issued over: a gate id, and nothing about the tool."""
+    body = {"approval_id": approval_id}
     body.update(body_fields)
     return client.post(
         f"{BASE}/runs/{RUN_ID}/nodes/{node_id}/adhoc-grants",
@@ -209,7 +215,7 @@ class TestIssuingAGrant:
         approval_id = open_gate(client, auth)
         elsewhere = client.post(
             f"{BASE}/runs/{RUN_ID}/nodes/cluster/adhoc-grants",
-            json={"approval_id": approval_id, "spec": spec_body()},
+            json={"approval_id": approval_id},
             headers=auth(PI, PI_ROLE, amr=["totp"]),
         )
         assert elsewhere.status_code == 400
@@ -261,37 +267,102 @@ class TestWhoMayGrant:
         for field in ("approver_id", "requested_by", "project_id", "expires_at", "spent_at"):
             forged = client.post(
                 GRANT_BASE,
-                json={"approval_id": approval_id, "spec": spec_body(), field: "user_pi_99"},
+                json={"approval_id": approval_id, field: "user_pi_99"},
                 headers=auth(PI, PI_ROLE, amr=["totp"]),
             )
             assert forged.status_code == 400, (field, forged.text)
             assert forged.json()["field"] == field
 
-
-class TestWhatMayBeGranted:
-    def test_a_submission_outside_the_cage_is_refused(self, client, auth, catalog):
+    def test_a_request_cannot_supply_its_own_bytes(self, client, auth, catalog):
+        """The bytes live on the plan node: a body that carries its own copy is a rejected request."""
         adhoc_plan(catalog)
         approval_id = open_gate(client, auth)
-        over_cpu = grant(client, auth, approval_id, spec=spec_body(resources={
+        supplied = client.post(
+            GRANT_BASE,
+            json={"approval_id": approval_id, "spec": spec_body()},
+            headers=auth(PI, PI_ROLE, amr=["totp"]),
+        )
+        assert supplied.status_code == 400
+        assert supplied.json()["field"] == "spec"
+
+
+class TestWhatMayBeGranted:
+    """Section 9.6: the cage and the submission's own documentation, checked where the bytes enter.
+
+    A plan is the boundary: the bytes are checked when a plan is recorded, and again when a grant reads
+    them off the plan. The second check is not redundant - it is what stops a plan recorded outside this
+    API, or recorded before the deployment's caps were tightened, from buying a grant.
+    """
+
+    def test_a_submission_outside_the_cage_is_refused_by_the_plan(self, client, auth):
+        over_cpu = spec_body(resources={
+            "cpu": 64, "memory_mb": 8192, "max_minutes": 60,
+            "measured_peak_memory_mb": 6100, "measured_on": "run_scrnaseq_calibration",
+        })
+        refused = client.post(
+            f"{BASE}/plans",
+            json=plan(
+                plan_version="2",
+                nodes=[node("cluster"), adhoc_node("adhoc_score", adhoc_spec=over_cpu)],
+            ).model_dump(mode="json"),
+            headers=auth(ANALYST, ANALYST_ROLE),
+        )
+        assert refused.status_code == 400, refused.text
+        assert "exceeds ad-hoc cap" in refused.json()["message"]
+
+    def test_a_submission_outside_the_cage_is_refused_again_when_it_is_granted(self, client, auth, catalog):
+        adhoc_plan(catalog, spec=spec_body(resources={
             "cpu": 64, "memory_mb": 8192, "max_minutes": 60,
             "measured_peak_memory_mb": 6100, "measured_on": "run_scrnaseq_calibration",
         }))
+        approval_id = open_gate(client, auth)
+        over_cpu = grant(client, auth, approval_id)
         assert over_cpu.status_code == 400
         assert "exceeds ad-hoc cap" in over_cpu.json()["message"]
 
-    def test_a_submission_that_would_retry_is_refused(self, client, auth, catalog):
-        adhoc_plan(catalog)
+    def test_a_submission_that_would_retry_is_refused_by_the_plan(self, client, auth):
+        retrying = client.post(
+            f"{BASE}/plans",
+            json=plan(
+                plan_version="2",
+                nodes=[node("cluster"), adhoc_node("adhoc_score", adhoc_spec=spec_body(retry_limit=2))],
+            ).model_dump(mode="json"),
+            headers=auth(ANALYST, ANALYST_ROLE),
+        )
+        assert retrying.status_code == 400, retrying.text
+        assert "bypass the one-time approval" in retrying.json()["message"]
+
+    def test_a_submission_that_would_retry_is_refused_again_when_it_is_granted(self, client, auth, catalog):
+        adhoc_plan(catalog, spec=spec_body(retry_limit=2))
         approval_id = open_gate(client, auth)
-        retrying = grant(client, auth, approval_id, spec=spec_body(retry_limit=2))
+        retrying = grant(client, auth, approval_id)
         assert retrying.status_code == 400
         assert "bypass the one-time approval" in retrying.json()["message"]
 
-    def test_an_undocumented_submission_is_refused_before_anyone_signs_it(self, client, auth, catalog):
-        adhoc_plan(catalog)
-        approval_id = open_gate(client, auth)
-        vague = grant(client, auth, approval_id, spec=spec_body(assumptions=[]))
-        assert vague.status_code == 400
+    def test_an_undocumented_submission_is_refused_before_anyone_signs_it(self, client, auth):
+        vague = client.post(
+            f"{BASE}/plans",
+            json=plan(
+                plan_version="2",
+                nodes=[node("cluster"), adhoc_node("adhoc_score", adhoc_spec=spec_body(assumptions=[]))],
+            ).model_dump(mode="json"),
+            headers=auth(ANALYST, ANALYST_ROLE),
+        )
+        assert vague.status_code == 400, vague.text
         assert "assumptions are not documented" in vague.json()["message"]
+
+    def test_a_submission_for_a_step_this_workflow_does_not_run_is_refused(self, client, auth):
+        """The engine dispatches on the task, so a task with no runner could never be granted (§9.6)."""
+        unknown = client.post(
+            f"{BASE}/plans",
+            json=plan(
+                plan_version="2",
+                nodes=[node("cluster"), adhoc_node("adhoc_score", adhoc_spec=spec_body(task="not_a_step"))],
+            ).model_dump(mode="json"),
+            headers=auth(ANALYST, ANALYST_ROLE),
+        )
+        assert unknown.status_code == 400, unknown.text
+        assert "has no implementation in this workflow" in unknown.json()["message"]
 
     def test_a_registered_node_is_not_an_ad_hoc_one(self, client, auth, catalog):
         """The gate is the wrong kind of ask: a registered tool is admitted, not granted (§9.6)."""
@@ -299,25 +370,29 @@ class TestWhatMayBeGranted:
         approval_id = open_gate(client, auth, node_id="cluster")
         registered = client.post(
             f"{BASE}/runs/{RUN_ID}/nodes/cluster/adhoc-grants",
-            json={"approval_id": approval_id, "spec": spec_body(tool_name="scanpy_pipeline")},
+            json={"approval_id": approval_id},
             headers=auth(PI, PI_ROLE, amr=["totp"]),
         )
         assert registered.status_code == 400
-        assert "runs registered tool" in registered.json()["message"]
+        assert "an ad-hoc grant covers only the plan's ad-hoc nodes" in registered.json()["message"]
 
-    def test_the_grant_covers_the_tool_the_plan_planned(self, client, auth, catalog):
-        adhoc_plan(catalog)
+    def test_the_submission_must_be_the_one_the_node_plans(self, client, auth, catalog):
+        """A plan that names one tool and carries another cannot be granted (§9.6)."""
+        adhoc_plan(catalog, spec=spec_body(tool_name="something_else"))
         approval_id = open_gate(client, auth)
-        mismatched = grant(client, auth, approval_id, spec=spec_body(tool_name="something_else"))
+        mismatched = grant(client, auth, approval_id)
         assert mismatched.status_code == 400
-        assert "is planned as" in mismatched.json()["message"]
+        assert (
+            "the submission names something_else@0.1.0, but node adhoc_score runs project_qc_probe@0.1.0"
+            in mismatched.json()["message"]
+        )
 
     def test_a_run_that_does_not_exist_has_no_nodes_to_grant(self, client, auth, catalog):
         adhoc_plan(catalog)
         approval_id = open_gate(client, auth)
         nowhere = client.post(
             "/v1/projects/prj_002/runs/run_none/nodes/adhoc_score/adhoc-grants",
-            json={"approval_id": approval_id, "spec": spec_body()},
+            json={"approval_id": approval_id},
             headers=auth(PI, PI_ROLE, amr=["totp"]),
         )
         assert nowhere.status_code == 404
@@ -336,18 +411,26 @@ class TestOneGateOneGrant:
         assert len(catalog.set_scope(PROJECT_ID).list_tool_grants(run_id=RUN_ID)) == 1
 
     def test_a_second_submission_needs_a_second_decision(self, client, auth, catalog):
+        """The plan pins the bytes, so a second submission is a second plan - and a second decision."""
         adhoc_plan(catalog)
         approval_id = open_gate(client, auth)
         grant(client, auth, approval_id)
-        changed = grant(
-            client,
-            auth,
-            approval_id,
-            spec=spec_body(resources={
-                "cpu": 8, "memory_mb": 8192, "max_minutes": 60,
-                "measured_peak_memory_mb": 6100, "measured_on": "run_scrnaseq_calibration",
-            }),
+        revised = plan(
+            plan_version="3",
+            nodes=[
+                node("cluster"),
+                adhoc_node("adhoc_score", adhoc_spec=spec_body(resources={
+                    "cpu": 8, "memory_mb": 8192, "max_minutes": 60,
+                    "measured_peak_memory_mb": 6100, "measured_on": "run_scrnaseq_calibration",
+                })),
+            ],
         )
+        catalog.set_scope(PROJECT_ID)
+        catalog.record_plan(revised, created_by=ANALYST)
+        catalog.set_run_plan(
+            RUN_ID, plan_version="3", tool_versions={n.tool_name: n.tool_version for n in revised.nodes}
+        )
+        changed = grant(client, auth, approval_id)
         assert changed.status_code == 409
         assert "a second submission needs a second decision" in changed.json()["message"]
 
