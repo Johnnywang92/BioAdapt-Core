@@ -39,8 +39,12 @@ def node_fits(node: ExecutionNode, spec: ToolSpec) -> list[str]:
     caps = node.capabilities
     if resources.cpu > caps.cpu:
         reasons.append(f"the tool wants {resources.cpu} cpu, the node has {caps.cpu}")
-    if resources.memory_mb > caps.memory_mb:
-        reasons.append(f"the tool wants {resources.memory_mb}MB of memory, the node has {caps.memory_mb}MB")
+    #: The same number the plan budgets and the cage holds: the measured peak where the deployment
+    #: measured one, the declared ceiling otherwise. A machine that covers the peak is enough even
+    #: when the declaration is a conservative upper bound (§9.4).
+    memory = resources.measured_peak_memory_mb or resources.memory_mb
+    if memory > caps.memory_mb:
+        reasons.append(f"the tool wants {memory}MB of memory, the node has {caps.memory_mb}MB")
     if resources.gpu > caps.gpu:
         reasons.append(f"the tool wants {resources.gpu} gpu, the node has {caps.gpu}")
     if spec.tool_class is ToolClass.PROJECT_ADHOC and not caps.can_run_containers:

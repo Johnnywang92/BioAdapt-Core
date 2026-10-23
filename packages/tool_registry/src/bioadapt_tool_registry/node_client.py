@@ -31,6 +31,7 @@ from bioadapt_schemas.errors import ApiError, ErrorClass
 
 from .enums import ToolResultStatus
 from .execution import (
+    PROTOCOL_VERSION,
     ExecutionOutcome,
     ExecutionRequest,
     outcome_for_error,
@@ -41,9 +42,22 @@ from .execution import (
 #: Where the attempt is accepted.
 ATTEMPT_PATH = "/attempt"
 
+#: Where the node says who is listening, without being handed any work.
+HEALTH_PATH = "/healthz"
+
+#: How long a health check waits when the caller did not set a timeout.
+PROBE_SECONDS = 5.0
+
 #: How long the client waits past the cage's own ceiling before it calls the node unreachable. The
 #: cage is the work's own deadline, so a node that answers later than that has already failed.
 SLACK_SECONDS = 30.0
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is a third party choosing where the credential and the attempt go next."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class HttpNodeBackend:
@@ -76,8 +90,52 @@ class HttpNodeBackend:
         #: between tries. The node answers a redelivery from the record it kept (§3.3).
         self.retries = retries
         self.retry_delay = retry_delay
+        #: Redirects are refused rather than followed: the declared endpoint is the machine this
+        #: deployment chose, and a redirect would carry the credential somewhere it did not choose.
+        self._opener = urllib.request.build_opener(_NoRedirect())
 
     # ------------------------------------------------------------------ the seam
+
+    def probe(self) -> Optional[str]:
+        """Ask who is listening, without handing over any work.
+
+        Returns None when the listener names itself as the declared machine and speaks this side's
+        protocol; otherwise the reason it does not. A health check runs no attempt, so a dispatcher
+        may move on to the next declared machine without wondering whether work happened here.
+        """
+        http_request = urllib.request.Request(
+            f"{self.base_url}{HEALTH_PATH}",
+            headers={"Authorization": f"Bearer {self.token}"},
+            method="GET",
+        )
+        try:
+            with self._opener.open(http_request, timeout=self._probe_wait()) as response:
+                document = json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 403):
+                return (
+                    f"the node {self.node_name} refused the control plane's credential at its health check"
+                )
+            return f"the node {self.node_name} answered its health check with {error.code}"
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            return f"the node {self.node_name} did not answer its health check: {error}"
+        except (ValueError, json.JSONDecodeError):
+            return f"the node {self.node_name} answered its health check with something that is not json"
+        if not isinstance(document, dict):
+            return f"the node {self.node_name} answered its health check with something that is not a record"
+        reported = document.get("node")
+        if reported != self.node_name:
+            return (
+                f"the listener answers as {reported!r}, and this deployment declared the machine as "
+                f"{self.node_name!r}"
+            )
+        spoken = document.get("protocol")
+        if spoken != PROTOCOL_VERSION:
+            return (
+                f"the node {self.node_name} speaks protocol {spoken!r} and this control plane speaks "
+                f"{PROTOCOL_VERSION}"
+            )
+        return None
 
     def execute(self, request: ExecutionRequest) -> ExecutionOutcome:
         lost: Optional[Exception] = None
@@ -97,6 +155,8 @@ class HttpNodeBackend:
                 return self._unreadable(request, error)
             if outcome.key != request.key:
                 return self._about_other_work(request, outcome)
+            if outcome.executed_on is not None and outcome.executed_on != self.node_name:
+                return self._from_another_machine(request, outcome)
             if outcome.status in (ToolResultStatus.SUCCESS, ToolResultStatus.PARTIAL) and not outcome.runtime:
                 return self._without_runtime(request, outcome)
             return outcome
@@ -113,10 +173,13 @@ class HttpNodeBackend:
             },
             method="POST",
         )
-        with urllib.request.urlopen(http_request, timeout=self._wait(request)) as response:
+        with self._opener.open(http_request, timeout=self._wait(request)) as response:
             return response.read()
 
     # ------------------------------------------------------------------ the failures
+
+    def _probe_wait(self) -> float:
+        return self.timeout if self.timeout is not None else PROBE_SECONDS
 
     def _wait(self, request: ExecutionRequest) -> float:
         if self.timeout is not None:
@@ -126,6 +189,22 @@ class HttpNodeBackend:
     def _refused(self, request: ExecutionRequest, error: urllib.error.HTTPError) -> ExecutionOutcome:
         """The node answered, and the answer was that it will not take this work."""
         body = _detail(error)
+        if 300 <= error.code < 400:
+            return outcome_for_error(
+                request,
+                ToolResultStatus.FAILED,
+                ApiError(
+                    code="node_redirected",
+                    error_class=ErrorClass.NEEDS_INPUT,
+                    message=(
+                        f"the node {self.node_name} answered with a redirect"
+                        + (f" to {error.headers.get('Location')}" if error.headers.get("Location") else "")
+                        + "; this control plane does not follow a redirect with its credential"
+                    ),
+                    field="node",
+                ),
+                executed_on=self.node_name,
+            )
         if error.code in (401, 403):
             return outcome_for_error(
                 request,
@@ -214,6 +293,26 @@ class HttpNodeBackend:
                     f"run {request.run_id}"
                 ),
                 field="attempt",
+            ),
+            executed_on=self.node_name,
+        )
+
+    def _from_another_machine(
+        self, request: ExecutionRequest, outcome: ExecutionOutcome
+    ) -> ExecutionOutcome:
+        """The answer names a machine this deployment did not choose to send the work to."""
+        return outcome_for_error(
+            request,
+            ToolResultStatus.FAILED,
+            ApiError(
+                code="answer_from_another_machine",
+                error_class=ErrorClass.NEEDS_INPUT,
+                message=(
+                    f"the listener at {self.base_url} answered as {outcome.executed_on!r}, and this "
+                    f"deployment declared the machine as {self.node_name!r}; the answer is not taken "
+                    "from a machine the control plane did not place this work on"
+                ),
+                field="node",
             ),
             executed_on=self.node_name,
         )

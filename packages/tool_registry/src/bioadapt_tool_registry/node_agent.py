@@ -15,10 +15,11 @@ Two things are the node's own and cannot be the control plane's:
   the node's own file and in the control plane's environment. It is never a row in the index and
   never a field of the request.
 
-The transport itself is plain HTTP, so the request and the secret travel in the clear. That is a
-statement about the network the node sits on, not about the platform: the agent binds to the
-loopback address by default and expects to be reached over a tunnel or a trusted network. A node
-exposed to a wider network needs TLS in front of it.
+The transport to a node reached over a network is https; plain http is reserved for the loopback
+address, where the machine is talking to itself. The agent binds to the loopback address by default
+and expects to be reached over a tunnel or a trusted network with TLS in front of it. It answers a
+health check with its own name and protocol version, so the control plane can refuse a machine that
+is not the one it declared rather than take an answer from whatever is listening.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from bioadapt_schemas.errors import ApiError, ErrorClass
 
 from .enums import ToolResultStatus
 from .execution import (
+    PROTOCOL_VERSION,
     ExecutionRequest,
     outcome_for_error,
     outcome_to_envelope,
@@ -47,6 +49,9 @@ from .process import ProcessBackend
 
 #: Where an attempt is accepted.
 ATTEMPT_PATH = "/attempt"
+
+#: Where the control plane asks who is listening, without handing over any work.
+HEALTH_PATH = "/healthz"
 
 #: Where the shared secret comes from when it is not in a file.
 TOKEN_ENV = "BIOADAPT_NODE_TOKEN"
@@ -149,6 +154,15 @@ class NodeAgent:
 def _handler_for(agent: NodeAgent) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         server_version = "bioadapt-node-agent"
+
+        def do_GET(self) -> None:  # noqa: N802 - the name is the http.server's
+            if self.path != HEALTH_PATH:
+                self._reply(404, {"error": "this node answers attempts and health checks"})
+                return
+            if not agent.authorized(self.headers.get("Authorization")):
+                self._reply(401, {"error": "the credential was not accepted"})
+                return
+            self._reply(200, {"node": agent.node_name, "protocol": PROTOCOL_VERSION})
 
         def do_POST(self) -> None:  # noqa: N802 - the name is the http.server's
             if self.path != ATTEMPT_PATH:

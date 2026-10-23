@@ -67,6 +67,10 @@ if report:
     import resource
     Path(report).write_text(json.dumps({"cpu": list(resource.getrlimit(resource.RLIMIT_CPU))}))
 
+env_report = os.environ.get("FAKE_NODE_ENV_REPORT")
+if env_report:
+    Path(env_report).write_text(json.dumps(dict(os.environ)))
+
 if mode == "sleep":
     time.sleep(300)
 elif mode == "grow":
@@ -150,6 +154,16 @@ def node(tmp_path: Path, **kwargs: Any) -> ProcessBackend:
     kwargs.setdefault("command", [sys.executable, str(script)])
     kwargs.setdefault("work_root", tmp_path / "work")
     kwargs.setdefault("node_name", "node_laptop")
+    kwargs.setdefault(
+        "env_passthrough",
+        (
+            "FAKE_NODE_MODE",
+            "FAKE_NODE_COUNT",
+            "FAKE_NODE_REPORT",
+            "FAKE_NODE_RUNTIME",
+            "FAKE_NODE_ENV_REPORT",
+        ),
+    )
     return ProcessBackend(**kwargs)
 
 
@@ -236,6 +250,27 @@ class TestRuntime:
         outcome = node(tmp_path).execute(request())
 
         assert outcome.runtime == "bioadapt-scrnaseq 0.1.0 on python 3.12.11"
+
+
+class TestWhatTheChildInherits:
+    """§9.6: the node's own secrets stay on the node, not in the code it runs."""
+
+    def test_the_node_credential_does_not_reach_the_child(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        monkeypatch.setenv("FAKE_NODE_MODE", "answer")
+        monkeypatch.setenv("BIOADAPT_NODE_TOKEN", "the deployment's secret")
+        seen = tmp_path / "environment.json"
+        monkeypatch.setenv("FAKE_NODE_ENV_REPORT", str(seen))
+
+        outcome = node(tmp_path).execute(request())
+
+        assert outcome.status is ToolResultStatus.SUCCESS
+        environment = json.loads(seen.read_text(encoding="utf-8"))
+        assert "BIOADAPT_NODE_TOKEN" not in environment
+        assert environment["BIOADAPT_WORK_DIR"] == str(
+            tmp_path / "work" / "run_prj_001_01" / "qc_001" / "attempt-1"
+        )
 
 
 class TestRedelivery:
@@ -357,6 +392,32 @@ class TestTheCage:
         assert outcome.status is ToolResultStatus.SUCCESS
         seen = json.loads(report.read_text(encoding="utf-8"))
         assert seen["cpu"][0] == 4 * 60, "the kernel holds the child to the ceiling, not the parent"
+
+    def test_a_multi_core_budget_is_the_whole_time_the_plan_approved(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Four cores for four minutes is sixteen core-minutes, not four minutes of one core."""
+        monkeypatch.setenv("FAKE_NODE_MODE", "answer")
+        report = tmp_path / "limits.json"
+        monkeypatch.setenv("FAKE_NODE_REPORT", str(report))
+        brief = ResourceProfile(
+            cpu=4,
+            memory_mb=16384,
+            max_minutes=4,
+            measured_peak_memory_mb=12100,
+            measured_on="run_prj_001_01",
+        )
+        backend = node(tmp_path)
+        outcome = backend.execute(
+            request(
+                spec=complete_spec(resources=brief),
+                cage=cage(cpu=4, memory_mb=16384, max_minutes=4),
+            )
+        )
+
+        assert outcome.status is ToolResultStatus.SUCCESS
+        seen = json.loads(report.read_text(encoding="utf-8"))
+        assert seen["cpu"][0] == 4 * 60 * 4
 
     def test_an_attempt_that_outlasts_its_ceiling_is_stopped(
         self, tmp_path: Path, monkeypatch: Any

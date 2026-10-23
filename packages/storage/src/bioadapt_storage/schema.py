@@ -456,6 +456,9 @@ APP_SCHEMA: tuple[TableSpec, ...] = (
         #: Where the machine's agent listens. The address is part of the claim; the credential that
         #: opens it is not, and never sits in a row.
         C("endpoint", "text"),
+        #: Whether attempts may be sent here. A switched-off machine stays declared so every record
+        #: that names it keeps resolving, but it leaves the candidate set.
+        C("enabled", "bool", nullable=False),
         C("registered_by", "text", nullable=False),
         C("registered_at", "timestamp", nullable=False),
         C("notes", "text"),

@@ -7,11 +7,13 @@ one that does not says why, in words the person who can add a machine or change 
 
 One attempt goes to exactly one machine. The second answer for an attempt is the duplicate work
 section 3.3's receipt exists to prevent, so the choice is stable and a delivery is never mirrored.
+The one machine a dispatcher may move past is one that fails its health check: the check carries no
+work, so moving on cannot duplicate anything.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
 import pytest
 
@@ -33,6 +35,18 @@ from node_factories import (
 )
 
 
+def dispatch(
+    nodes: list[Any],
+    *,
+    tier: PrivacyTier = PrivacyTier.RESTRICTED,
+    credentials: Optional[dict[str, str]] = None,
+    **overrides: Any,
+) -> NodeDispatch:
+    """A dispatcher holding each declared machine's own secret, unless the case says otherwise."""
+    held = credentials if credentials is not None else {node.node_id: TOKEN for node in nodes}
+    return NodeDispatch(nodes=nodes, privacy_tier=tier, credentials=held, **overrides)
+
+
 @pytest.fixture
 def agent(tmp_path: Any) -> Iterator[Any]:
     """A node listening on a free port, with the stand-in tool behind it."""
@@ -47,28 +61,25 @@ def agent(tmp_path: Any) -> Iterator[Any]:
 
 class TestChoosing:
     def test_the_declared_machine_takes_the_work(self, agent: Any) -> None:
-        node = declared_node(endpoint=address_of(agent), node_id="nod_declared_01")
-        outcome = NodeDispatch(
-            nodes=[node], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
-        ).execute(request())
+        node = declared_node(endpoint=address_of(agent))
+        outcome = dispatch([node]).execute(request())
 
         assert outcome.status is ToolResultStatus.SUCCESS
         assert [item.content for item in outcome.outputs] == [b'{"slot":"counts"}']
 
     def test_the_answer_names_the_declared_machine_not_the_agent_label(self, agent: Any) -> None:
         """The receipt has to name a row the registry can resolve; the far side's own label is not one."""
-        node = declared_node(endpoint=address_of(agent), node_id="nod_declared_01")
-        outcome = NodeDispatch(
-            nodes=[node], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
-        ).execute(request())
+        node = declared_node(endpoint=address_of(agent))
+        outcome = dispatch([node]).execute(request())
 
-        assert outcome.executed_on == "nod_declared_01"
+        assert outcome.executed_on == "nod_server_01"
 
     def test_one_attempt_goes_to_one_machine(self, tmp_path: Any) -> None:
         first, second = tmp_path / "first", tmp_path / "second"
         first.mkdir()
         second.mkdir()
-        chosen, other = make_agent(first, node_name="node_a"), make_agent(second, node_name="node_b")
+        chosen = make_agent(first, node_name="nod_a")
+        other = make_agent(second, node_name="nod_b")
         servers = [serve(made) for made in (chosen, other)]
         chosen.server, other.server = servers[0][0], servers[1][0]
         try:
@@ -76,9 +87,7 @@ class TestChoosing:
                 declared_node(endpoint=address_of(other), node_id="nod_b"),
                 declared_node(endpoint=address_of(chosen), node_id="nod_a"),
             ]
-            outcome = NodeDispatch(
-                nodes=nodes, privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
-            ).execute(request())
+            outcome = dispatch(nodes).execute(request())
         finally:
             for server, thread in reversed(servers):
                 stop(server, thread)
@@ -91,30 +100,64 @@ class TestChoosing:
 
     def test_redelivering_the_same_attempt_gets_the_answer_that_was_kept(self, agent: Any) -> None:
         """§3.3: a lost answer is fetched again, not computed again on the far machine."""
-        node = declared_node(endpoint=address_of(agent), node_id="nod_declared_01")
-        dispatch = NodeDispatch(nodes=[node], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN)
+        node = declared_node(endpoint=address_of(agent))
+        dispatcher = dispatch([node])
 
-        first = dispatch.execute(request())
-        again = dispatch.execute(request())
+        first = dispatcher.execute(request())
+        again = dispatcher.execute(request())
 
         assert again.status is ToolResultStatus.SUCCESS
         assert [item.sha256 for item in again.outputs] == [item.sha256 for item in first.outputs]
         assert again.compute_minutes == first.compute_minutes
-        assert again.executed_on == "nod_declared_01"
+        assert again.executed_on == "nod_server_01"
 
-    def test_a_machine_that_is_switched_off_is_a_classified_failure(self, agent: Any) -> None:
+    def test_a_machine_that_does_not_answer_is_a_classified_failure(self, agent: Any) -> None:
         address = address_of(agent)
         agent.server.shutdown()
         agent.server.server_close()
         node = declared_node(endpoint=address, node_id="nod_off_01")
-        outcome = NodeDispatch(
-            nodes=[node], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN, timeout=2.0
-        ).execute(request())
+        outcome = dispatch([node], timeout=2.0).execute(request())
 
         assert outcome.status is ToolResultStatus.FAILED
-        assert outcome.errors[0].code == "node_unreachable"
-        assert outcome.errors[0].error_class is ErrorClass.RETRYABLE_FAILURE
-        assert outcome.executed_on == "nod_off_01", "the answer still says where the work was sent"
+        assert outcome.errors[0].code == "no_node_reachable"
+        assert outcome.errors[0].error_class is ErrorClass.NEEDS_INPUT
+        assert "nod_off_01" in outcome.errors[0].message
+        assert "did not answer its health check" in outcome.errors[0].message
+
+    def test_a_silent_machine_is_skipped_for_one_that_answers(self, tmp_path: Any) -> None:
+        """A health check carries no work, so moving past a silent machine cannot duplicate any."""
+        live = make_agent(tmp_path, node_name="nod_live_01")
+        server, thread = serve(live)
+        live.server = server
+        try:
+            nodes = [
+                declared_node(endpoint="http://127.0.0.1:9", node_id="nod_dead_01"),
+                declared_node(endpoint=address_of(live), node_id="nod_live_01"),
+            ]
+            outcome = dispatch(nodes, timeout=2.0).execute(request())
+        finally:
+            stop(server, thread)
+
+        assert outcome.status is ToolResultStatus.SUCCESS
+        assert outcome.executed_on == "nod_live_01"
+
+    def test_a_switched_off_machine_is_skipped_for_one_that_is_on(self, tmp_path: Any) -> None:
+        live = make_agent(tmp_path, node_name="nod_live_01")
+        server, thread = serve(live)
+        live.server = server
+        try:
+            nodes = [
+                declared_node(endpoint=None, node_id="nod_off_01").model_copy(
+                    update={"enabled": False}
+                ),
+                declared_node(endpoint=address_of(live), node_id="nod_live_01"),
+            ]
+            outcome = dispatch(nodes).execute(request())
+        finally:
+            stop(server, thread)
+
+        assert outcome.status is ToolResultStatus.SUCCESS
+        assert outcome.executed_on == "nod_live_01"
 
 
 class TestPrivacy:
@@ -135,9 +178,7 @@ class TestPrivacy:
 
     def test_a_strict_local_project_is_not_sent_to_a_cloud_machine(self) -> None:
         cloud = declared_node(position=NodePosition.CLOUD)
-        outcome = NodeDispatch(
-            nodes=[cloud], privacy_tier=PrivacyTier.STRICT_LOCAL, token=TOKEN
-        ).execute(request())
+        outcome = dispatch([cloud], tier=PrivacyTier.STRICT_LOCAL).execute(request())
 
         assert outcome.status is ToolResultStatus.FAILED
         assert outcome.errors[0].code == "no_node_fits"
@@ -146,9 +187,7 @@ class TestPrivacy:
         assert "cloud" in outcome.errors[0].message
 
     def test_a_strict_local_project_is_not_sent_to_an_open_network(self) -> None:
-        outcome = NodeDispatch(
-            nodes=[self.open_node()], privacy_tier=PrivacyTier.STRICT_LOCAL, token=TOKEN
-        ).execute(request())
+        outcome = dispatch([self.open_node()], tier=PrivacyTier.STRICT_LOCAL).execute(request())
 
         assert outcome.errors[0].code == "no_node_fits"
         assert "strict-local" in outcome.errors[0].message
@@ -156,18 +195,14 @@ class TestPrivacy:
         assert "open" in outcome.errors[0].message
 
     def test_a_strict_local_project_runs_on_a_local_closed_machine(self, agent: Any) -> None:
-        node = declared_node(endpoint=address_of(agent), node_id="nod_local_01")
-        outcome = NodeDispatch(
-            nodes=[node], privacy_tier=PrivacyTier.STRICT_LOCAL, token=TOKEN
-        ).execute(request())
+        node = declared_node(endpoint=address_of(agent))
+        outcome = dispatch([node], tier=PrivacyTier.STRICT_LOCAL).execute(request())
 
         assert outcome.status is ToolResultStatus.SUCCESS
 
     def test_a_hgr_project_is_not_sent_to_an_open_network(self) -> None:
-        outcome = NodeDispatch(
-            nodes=[self.open_node(position=NodePosition.PRIVATE)],
-            privacy_tier=PrivacyTier.HGR_CONTROLLED,
-            token=TOKEN,
+        outcome = dispatch(
+            [self.open_node(position=NodePosition.PRIVATE)], tier=PrivacyTier.HGR_CONTROLLED
         ).execute(request())
 
         assert outcome.errors[0].code == "no_node_fits"
@@ -175,20 +210,14 @@ class TestPrivacy:
         assert "network is closed" in outcome.errors[0].message
 
     def test_a_hgr_project_runs_where_the_network_is_closed(self, agent: Any) -> None:
-        node = declared_node(
-            endpoint=address_of(agent), position=NodePosition.PRIVATE, node_id="nod_private_01"
-        )
-        outcome = NodeDispatch(
-            nodes=[node], privacy_tier=PrivacyTier.HGR_CONTROLLED, token=TOKEN
-        ).execute(request())
+        node = declared_node(endpoint=address_of(agent), position=NodePosition.PRIVATE)
+        outcome = dispatch([node], tier=PrivacyTier.HGR_CONTROLLED).execute(request())
 
         assert outcome.status is ToolResultStatus.SUCCESS
 
     def test_a_restricted_project_may_still_use_an_open_machine(self, agent: Any) -> None:
-        node = self.open_node(endpoint=address_of(agent), node_id="nod_open_01")
-        outcome = NodeDispatch(
-            nodes=[node], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
-        ).execute(request())
+        node = self.open_node(endpoint=address_of(agent))
+        outcome = dispatch([node], tier=PrivacyTier.RESTRICTED).execute(request())
 
         assert outcome.status is ToolResultStatus.SUCCESS
 
@@ -196,9 +225,7 @@ class TestPrivacy:
 class TestRefusals:
     def test_a_machine_that_cannot_hold_the_tool_is_not_chosen(self) -> None:
         tiny = declared_node(capabilities=NodeCapabilities(cpu=2, memory_mb=2048))
-        outcome = NodeDispatch(
-            nodes=[tiny], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
-        ).execute(request())
+        outcome = dispatch([tiny]).execute(request())
 
         assert outcome.status is ToolResultStatus.FAILED
         assert outcome.errors[0].code == "no_node_fits"
@@ -210,17 +237,13 @@ class TestRefusals:
     def test_a_machine_that_cannot_hold_the_cage_is_not_chosen(self) -> None:
         """The plan's budget is what a person approved; a machine that covers only the tool has not
         been promised it can hold the attempt."""
-        outcome = NodeDispatch(
-            nodes=[declared_node()], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
-        ).execute(request(cage=cage(cpu=16)))
+        outcome = dispatch([declared_node()]).execute(request(cage=cage(cpu=16)))
 
         assert outcome.errors[0].code == "no_node_fits"
         assert "the attempt is allowed 16 cpu, the node has 8" in outcome.errors[0].message
 
     def test_a_machine_with_no_endpoint_is_not_chosen(self) -> None:
-        outcome = NodeDispatch(
-            nodes=[declared_node(endpoint=None)], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
-        ).execute(request())
+        outcome = dispatch([declared_node(endpoint=None)]).execute(request())
 
         assert outcome.errors[0].code == "no_node_fits"
         assert "declares no endpoint" in outcome.errors[0].message
@@ -230,26 +253,37 @@ class TestRefusals:
             declared_node(node_id="nod_tiny", capabilities=NodeCapabilities(cpu=2, memory_mb=2048)),
             declared_node(node_id="nod_unreachable", endpoint=None),
         ]
-        message = NodeDispatch(
-            nodes=nodes, privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
-        ).execute(request()).errors[0].message
+        message = dispatch(nodes).execute(request()).errors[0].message
 
         assert "nod_tiny" in message and "the tool wants 4 cpu" in message
         assert "nod_unreachable" in message and "declares no endpoint" in message
 
     def test_a_deployment_that_holds_no_credential_refuses_instead_of_running_here(self) -> None:
-        outcome = NodeDispatch(
-            nodes=[declared_node()], privacy_tier=PrivacyTier.RESTRICTED, token=None
-        ).execute(request())
+        outcome = dispatch([declared_node()], credentials={}).execute(request())
 
         assert outcome.errors[0].code == "node_credential_missing"
         assert outcome.errors[0].error_class is ErrorClass.NEEDS_INPUT
         assert "no credential" in outcome.errors[0].message
 
-    def test_a_dispatcher_with_no_declared_machine_refuses(self) -> None:
-        outcome = NodeDispatch(
-            nodes=[], privacy_tier=PrivacyTier.RESTRICTED, token=TOKEN
+    def test_a_machine_without_its_own_credential_is_not_opened_with_anothers(self) -> None:
+        """One node's secret does not open another; a map naming a different node is no credential."""
+        outcome = dispatch(
+            [declared_node(node_id="nod_other")], credentials={"nod_known": TOKEN}
         ).execute(request())
+
+        assert outcome.errors[0].code == "no_node_fits"
+        assert "nod_other" in outcome.errors[0].message
+        assert "no credential for this node" in outcome.errors[0].message
+
+    def test_a_wrong_credential_does_not_fall_back_to_the_next_machine(self, agent: Any) -> None:
+        node = declared_node(endpoint=address_of(agent))
+        outcome = dispatch([node], credentials={"nod_server_01": "not the secret"}).execute(request())
+
+        assert outcome.errors[0].code == "no_node_reachable"
+        assert "refused the control plane's credential" in outcome.errors[0].message
+
+    def test_a_dispatcher_with_no_declared_machine_refuses(self) -> None:
+        outcome = dispatch([]).execute(request())
 
         assert outcome.errors[0].code == "no_node_declared"
         assert outcome.errors[0].error_class is ErrorClass.NEEDS_INPUT

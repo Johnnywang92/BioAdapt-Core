@@ -15,7 +15,8 @@ Three honest limits of a single-process reference, declared by ``/v1/deployment`
   refusal (409 "nothing has been uploaded"), but a real PUT needs MinIO or S3.
 * No compute worker executes runs submitted through the API by default; the in-memory queue only
   tracks slots. A machine declared through ``POST /v1/nodes`` does take the work, provided the agent
-  on it was started with the same ``BIOADAPT_NODE_TOKEN`` this process holds.
+  on it was started with the secret this process holds for that node's id in
+  ``BIOADAPT_NODE_TOKENS`` (a json object of node id to secret).
 * The export worker is not part of this process, so a queued export stays QUEUED. The route contract
   - 202, then a download URL only at READY - is what the screens are written against.
 
@@ -141,6 +142,27 @@ def admin_credential(catalog, workbench: Path) -> LoginKey:
     return key
 
 
+def node_tokens() -> dict[str, str]:
+    """The credential for each declared node, as a json object of node id to secret.
+
+    One secret per machine, not one secret every machine knows: a shared secret would let any node
+    open every other. Unset, a declared node cannot be reached and dispatch says so rather than
+    running the work here.
+    """
+    raw = os.environ.get("BIOADAPT_NODE_TOKENS")
+    if not raw:
+        return {}
+    try:
+        document = json.loads(raw)
+    except ValueError as error:
+        raise SystemExit(f"BIOADAPT_NODE_TOKENS is not json: {error}") from error
+    if not isinstance(document, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in document.items()
+    ):
+        raise SystemExit("BIOADAPT_NODE_TOKENS must be a json object mapping node id to secret")
+    return document
+
+
 def build() -> tuple[object, dict[str, str], LoginKey, CF.Carded]:
     made = carded_run()
     harness = made.harness
@@ -171,9 +193,10 @@ def build() -> tuple[object, dict[str, str], LoginKey, CF.Carded]:
             export_generation="unavailable",
         ),
         login_keys=Ed25519Verifier(SingleNodeCatalogs(harness.catalog), issuer=ISS, audience=AUD),
-        #: §9.7: the node credential is the deployment's, so it arrives from the environment and is
-        #: never written to a row. Unset, a declared node cannot be reached and dispatch says so.
-        node_token=os.environ.get("BIOADAPT_NODE_TOKEN"),
+        #: §9.7: the node credentials are the deployment's, per node, so they arrive from the
+        #: environment and are never written to a row. Unset, a declared node cannot be reached and
+        #: dispatch says so.
+        node_tokens=node_tokens(),
     )
     return create_app(state), tokens(verifier, harness.clock()), admin, made
 

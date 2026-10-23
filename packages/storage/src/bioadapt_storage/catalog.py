@@ -1602,6 +1602,7 @@ class Catalog:
                 "position": str(node.position),
                 "capabilities": node.capabilities.model_dump(mode="json"),
                 "endpoint": node.endpoint,
+                "enabled": node.enabled,
                 "registered_by": node.registered_by,
                 "registered_at": node.registered_at,
                 "notes": node.notes,
@@ -1614,6 +1615,20 @@ class Catalog:
         if not rows:
             raise LookupError(f"no node {node_id} in the registry")
         return self._node(rows[0])
+
+    def set_node_enabled(self, node_id: str, enabled: bool) -> None:
+        """Take a machine out of, or put it back into, the candidate set without deleting the row.
+
+        The row is platform-scoped, so only a platform-scoped session may move it; every receipt that
+        names this machine keeps resolving either way.
+        """
+        self._platform()
+        cur = self.conn.execute(
+            'update "execution_node" set "enabled" = ? where "node_id" = ? and "project_id" = ?',
+            (enabled, node_id, self._platform()),
+        )
+        if cur.rowcount != 1:
+            raise LookupError(f"no node {node_id} in the registry")
 
     def list_nodes(self, *, limit: Optional[int] = None, offset: int = 0) -> list[ExecutionNode]:
         self._platform()
@@ -1630,6 +1645,7 @@ class Catalog:
             position=decoded["position"],
             capabilities=decoded["capabilities"],
             endpoint=decoded.get("endpoint"),
+            enabled=decoded["enabled"],
             registered_by=decoded["registered_by"],
             registered_at=decoded["registered_at"],
             notes=decoded.get("notes"),

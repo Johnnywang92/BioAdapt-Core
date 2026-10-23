@@ -3,6 +3,7 @@ from bioadapt_schemas.nodes import ExecutionNode, NodeCapabilities, NodeNetworkM
 from bioadapt_tool_registry import NetworkPolicy
 from bioadapt_tool_registry.enums import NetworkMode
 from bioadapt_tool_registry.placement import node_allows_tier, node_fits, select_nodes
+from bioadapt_tool_registry.spec import ResourceProfile
 
 from registry_factories import NOW, adhoc_spec, complete_spec
 
@@ -26,6 +27,19 @@ class TestResources:
 
     def test_a_node_short_of_memory_says_so(self) -> None:
         reasons = node_fits(machine(capabilities=NodeCapabilities(cpu=16, memory_mb=4096)), complete_spec())
+        assert any("12100MB" in reason for reason in reasons), "the peak the tool was measured at is the ask"
+
+    def test_a_node_that_covers_the_measured_peak_fits(self) -> None:
+        """The declared budget covers the worst run; the machine only has to hold what was measured."""
+        measured = machine(capabilities=NodeCapabilities(cpu=16, memory_mb=12288))
+        assert node_fits(measured, complete_spec()) == []
+
+    def test_without_a_measured_peak_the_declared_budget_is_the_ask(self) -> None:
+        declared = ResourceProfile(cpu=4, memory_mb=16384, max_minutes=60)
+        reasons = node_fits(
+            machine(capabilities=NodeCapabilities(cpu=16, memory_mb=12288)),
+            complete_spec(resources=declared),
+        )
         assert any("16384MB" in reason for reason in reasons)
 
     def test_a_node_short_of_cpu_says_so(self) -> None:

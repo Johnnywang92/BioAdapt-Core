@@ -200,7 +200,7 @@ def _execution_backend(session: Session) -> Optional[NodeDispatch]:
     return NodeDispatch(
         nodes=nodes,
         privacy_tier=session.catalog.get_project().privacy_tier,
-        token=session.state.node_token,
+        credentials=session.state.node_tokens,
     )
 
 

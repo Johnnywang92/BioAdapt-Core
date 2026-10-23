@@ -52,7 +52,7 @@ class TestTheJourney:
         assert outcome.status is ToolResultStatus.SUCCESS
         assert [item.slot for item in outcome.outputs] == ["counts"]
         assert outcome.outputs[0].content == b'{"slot":"counts"}'
-        assert outcome.executed_on == "node_server", "the answer says which machine ran it"
+        assert outcome.executed_on == "nod_server_01", "the answer says which machine ran it"
         assert outcome.runtime is not None and outcome.runtime.startswith("host-python ")
         assert outcome.key == ("run_prj_001_01", "qc_001", 1)
 
@@ -100,6 +100,39 @@ class TestTheDoor:
         assert caught.value.code == 400
 
 
+class TestTheHealthCheck:
+    """§3.3, §4.2: ask who is listening before handing it any work."""
+
+    def test_the_declared_machine_answers_with_its_name_and_protocol(self, agent: Any) -> None:
+        assert backend_for(agent).probe() is None
+
+    def test_a_listener_that_cannot_name_itself_is_not_the_declared_machine(self) -> None:
+        class Anonymous(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - the name is the http.server's
+                body = json.dumps({}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        server, thread = _serve(Anonymous)
+        try:
+            host, port = server.server_address[0], server.server_address[1]
+            reason = HttpNodeBackend(
+                base_url=f"http://{host}:{port}", token=TOKEN, node_name="node_other"
+            ).probe()
+        finally:
+            stop(server, thread)
+
+        assert reason is not None and "declared the machine as" in reason
+
+    def test_a_health_check_with_the_wrong_credential_is_refused(self, agent: Any) -> None:
+        reason = backend_for(agent, token="not the secret").probe()
+
+        assert reason is not None and "credential" in reason
+
+
 class TestTheFailures:
     def test_a_node_that_cannot_be_reached_is_a_classified_failure(self, agent: Any) -> None:
         agent.server.shutdown()
@@ -138,6 +171,56 @@ class TestTheFailures:
         assert outcome.status is ToolResultStatus.FAILED
         assert outcome.errors[0].code == "answer_without_runtime"
         assert outcome.errors[0].error_class is ErrorClass.NEEDS_INPUT
+
+    def test_an_answer_from_a_machine_this_deployment_did_not_place_is_refused(self) -> None:
+        """The listener has to be the declared machine, not merely a machine holding the credential."""
+        server, thread = _serve_answer(_answer(executed_on="somebody_elses_box"))
+        try:
+            host, port = server.server_address[0], server.server_address[1]
+            outcome = HttpNodeBackend(
+                base_url=f"http://{host}:{port}", token=TOKEN, node_name="node_other"
+            ).execute(request())
+        finally:
+            stop(server, thread)
+
+        assert outcome.status is ToolResultStatus.FAILED
+        assert outcome.errors[0].code == "answer_from_another_machine"
+        assert outcome.errors[0].error_class is ErrorClass.NEEDS_INPUT
+
+    def test_a_redirect_is_refused_and_never_followed(self) -> None:
+        """A redirect would carry the attempt and the credential to a destination nobody declared."""
+        seen: list[str] = []
+
+        class Target(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - the name is the http.server's
+                seen.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        target, target_thread = _serve(Target)
+
+        class Redirecting(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802 - the name is the http.server's
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{target.server_address[1]}/attempt")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        server, thread = _serve(Redirecting)
+        try:
+            host, port = server.server_address[0], server.server_address[1]
+            outcome = HttpNodeBackend(
+                base_url=f"http://{host}:{port}", token=TOKEN, node_name="nod_server_01"
+            ).execute(request())
+        finally:
+            stop(server, thread)
+            stop(target, target_thread)
+
+        assert outcome.status is ToolResultStatus.FAILED
+        assert outcome.errors[0].code == "node_redirected"
+        assert outcome.errors[0].error_class is ErrorClass.NEEDS_INPUT
+        assert seen == [], "the credential was not carried to the redirect target"
 
     def test_a_cage_the_machine_cannot_hold_is_refused(self, tmp_path: Path) -> None:
         """A ceiling the node cannot keep is not a ceiling: the node says so instead of running it."""
@@ -230,7 +313,7 @@ def _backend_retrying(server: ThreadingHTTPServer) -> HttpNodeBackend:
     return HttpNodeBackend(
         base_url=f"http://{host}:{port}",
         token=TOKEN,
-        node_name="node_server",
+        node_name="nod_server_01",
         retries=1,
         retry_delay=0.0,
     )
@@ -251,7 +334,12 @@ def _serve_answer(document: dict) -> tuple[ThreadingHTTPServer, threading.Thread
     return _serve(Answering)
 
 
-def _answer(*, attempt: int = 1, runtime: Optional[str] = "host-python 3.12.11") -> dict:
+def _answer(
+    *,
+    attempt: int = 1,
+    runtime: Optional[str] = "host-python 3.12.11",
+    executed_on: Optional[str] = None,
+) -> dict:
     """An answer the far side might send, about the given attempt and with the given runtime."""
     payload = b'{"slot":"counts"}'
     outcome = ExecutionOutcome(
@@ -259,6 +347,7 @@ def _answer(*, attempt: int = 1, runtime: Optional[str] = "host-python 3.12.11")
         node_id="qc_001",
         attempt=attempt,
         status=ToolResultStatus.SUCCESS,
+        executed_on=executed_on,
         result=ToolResult(
             run_id="run_prj_001_01",
             node_id="qc_001",

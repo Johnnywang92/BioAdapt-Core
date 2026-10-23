@@ -84,9 +84,9 @@ class TestRegistration:
 class TestTheEndpoint:
     def test_a_declaration_says_where_the_machine_is_reached(self, client, admin_auth) -> None:
         """A declared machine that says nothing about how to reach it leaves the run nowhere to go."""
-        assert register(client, admin_auth, {**ROOMY, "endpoint": "http://10.0.0.7:8765"}).status_code == 201
+        assert register(client, admin_auth, {**ROOMY, "endpoint": "https://10.0.0.7:8765"}).status_code == 201
         detail = client.get("/v1/nodes/nod_server_01", headers=admin_auth)
-        assert detail.json()["endpoint"] == "http://10.0.0.7:8765"
+        assert detail.json()["endpoint"] == "https://10.0.0.7:8765"
 
     def test_a_machine_without_an_endpoint_is_still_declared(self, client, admin_auth) -> None:
         assert register(client, admin_auth, ROOMY).status_code == 201
@@ -96,6 +96,61 @@ class TestTheEndpoint:
     def test_an_address_that_is_not_an_address_is_refused(self, client, admin_auth) -> None:
         response = register(client, admin_auth, {**ROOMY, "endpoint": "not-an-address"})
         assert response.status_code == 400
+
+    def test_a_machine_reached_over_a_network_must_speak_https(self, client, admin_auth) -> None:
+        """Carrying the node credential in cleartext across a network hands it to anyone on the path."""
+        response = register(client, admin_auth, {**ROOMY, "endpoint": "http://10.0.0.7:8765"})
+        assert response.status_code == 400
+        assert "https" in response.json()["message"]
+
+    def test_plain_http_is_allowed_on_the_loopback_address(self, client, admin_auth) -> None:
+        assert register(
+            client, admin_auth, {**ROOMY, "endpoint": "http://127.0.0.1:8765"}
+        ).status_code == 201
+
+
+class TestSwitchingOff:
+    """A decommissioned machine leaves the candidate set; its row and its receipts stay."""
+
+    def test_a_machine_is_declared_on(self, client, admin_auth) -> None:
+        body = register(client, admin_auth, ROOMY).json()
+        assert body["enabled"] is True
+
+    def test_a_machine_can_be_switched_off_and_back_on(self, client, admin_auth) -> None:
+        register(client, admin_auth, ROOMY)
+
+        off = client.patch("/v1/nodes/nod_server_01", json={"enabled": False}, headers=admin_auth)
+        assert off.status_code == 200
+        assert off.json()["enabled"] is False
+        assert client.get("/v1/nodes/nod_server_01", headers=admin_auth).json()["enabled"] is False
+
+        on = client.patch("/v1/nodes/nod_server_01", json={"enabled": True}, headers=admin_auth)
+        assert on.json()["enabled"] is True
+
+    def test_switching_a_machine_is_written_to_the_audit_log(self, client, admin_auth, catalog) -> None:
+        register(client, admin_auth, ROOMY)
+        client.patch("/v1/nodes/nod_server_01", json={"enabled": False}, headers=admin_auth)
+
+        rows = catalog.set_scope(GLOBAL_SCOPE).audit_entries(action="node:disable", limit=10)
+        assert [row["resource_id"] for row in rows] == ["nod_server_01"]
+
+    def test_an_unknown_machine_cannot_be_switched(self, client, admin_auth) -> None:
+        response = client.patch("/v1/nodes/nod_nothing_01", json={"enabled": False}, headers=admin_auth)
+        assert response.status_code == 404
+        assert response.json()["code"] == "compute_node_not_found"
+
+    def test_an_analyst_cannot_switch_a_machine(self, client, admin_auth, analyst_auth) -> None:
+        register(client, admin_auth, ROOMY)
+        response = client.patch("/v1/nodes/nod_server_01", json={"enabled": False}, headers=analyst_auth)
+        assert response.status_code == 403
+
+    def test_a_switched_off_machine_is_still_readable(self, client, admin_auth) -> None:
+        register(client, admin_auth, ROOMY)
+        client.patch("/v1/nodes/nod_server_01", json={"enabled": False}, headers=admin_auth)
+
+        response = client.get("/v1/nodes/nod_server_01", headers=admin_auth)
+        assert response.status_code == 200
+        assert response.json()["label"] == "lab server"
 
 
 class TestReading:
@@ -132,7 +187,9 @@ class TestPlacement:
             "/v1/nodes/nod_laptop_01", params={"can_run": "scrnaseq_qc@1.0.0"}, headers=admin_auth
         )
         assert detail.json()["fits"] is False
-        assert any("memory" in reason for reason in detail.json()["unmet_requirements"])
+        #: The laptop's memory holds the measured peak (2048MB), so what it lacks is cores; the reason
+        #: names the shortfall a person can act on.
+        assert any("cpu" in reason for reason in detail.json()["unmet_requirements"])
 
     def test_a_node_that_fits_says_it_fits(self, client, admin_auth) -> None:
         register(client, admin_auth, ROOMY)

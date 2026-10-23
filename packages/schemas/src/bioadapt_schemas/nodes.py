@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 from typing import Optional
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 
@@ -89,6 +90,9 @@ class ExecutionNode(ImmutableContract):
     #: machine leaves the run with nowhere to go, so the endpoint is part of the claim - and only the
     #: endpoint: the credential that opens it belongs to the deployment, not to a row in the index.
     endpoint: Optional[str] = None
+    #: Whether this machine is taking work. A machine that is switched off stays declared - its id,
+    #: records and receipts remain resolvable - but no attempt is sent to it, and the refusal says so.
+    enabled: bool = True
     #: Who made the claim. The row is not evidence that the machine is there.
     registered_by: str = Field(min_length=1)
     registered_at: datetime
@@ -98,10 +102,32 @@ class ExecutionNode(ImmutableContract):
     def _endpoint_is_reachable(self) -> "ExecutionNode":
         if self.endpoint is None:
             return self
-        scheme, _, rest = self.endpoint.partition("://")
-        if scheme not in ("http", "https") or not rest.strip("/"):
-            raise ValueError("a node endpoint must be an http or https address")
+        problem = endpoint_problem(self.endpoint)
+        if problem is not None:
+            raise ValueError(problem)
         return self
+
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def endpoint_problem(endpoint: str) -> Optional[str]:
+    """What is wrong with an endpoint address, if anything.
+
+    Plain http carries both the attempt and the credential in the clear, so it is only acceptable on
+    the loopback address - a machine talking to itself. A machine reached over a network has to be
+    reached over https; a redirect is somebody else choosing the destination, so no address that
+    redirects is treated as reachable.
+    """
+    try:
+        parts = urlsplit(endpoint)
+    except ValueError:
+        return "a node endpoint must be an http or https address"
+    if parts.scheme not in ("http", "https") or not parts.netloc.strip("/"):
+        return "a node endpoint must be an http or https address"
+    if parts.scheme == "http" and parts.hostname not in _LOOPBACK_HOSTS:
+        return "a node reached over a network must use https; plain http is only for the loopback address"
+    return None
 
 
 def _covers(declared: str, wanted: str) -> bool:

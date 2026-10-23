@@ -17,11 +17,17 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from bioadapt_policies.access import GLOBAL_SCOPE, Action
 from bioadapt_schemas.entities import Contract
-from bioadapt_schemas.nodes import ExecutionNode, NodeCapabilities, NodePosition, node_reaches
+from bioadapt_schemas.nodes import (
+    ExecutionNode,
+    NodeCapabilities,
+    NodePosition,
+    endpoint_problem,
+    node_reaches,
+)
 from bioadapt_scrnaseq.specs import reference_tool_specs
 from bioadapt_tool_registry.placement import node_fits
 from bioadapt_tool_registry.spec import ToolSpec
@@ -49,6 +55,26 @@ class NodeRegistration(Contract):
     capabilities: NodeCapabilities
     endpoint: Optional[str] = None
     notes: Optional[str] = None
+
+    @field_validator("endpoint")
+    @classmethod
+    def _endpoint_is_secure(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            problem = endpoint_problem(value)
+            if problem is not None:
+                raise ValueError(problem)
+        return value
+
+
+class NodeUpdate(Contract):
+    """What a person may change about a machine without declaring it again.
+
+    Only the switch: the address and the capabilities are the declaration, and changing those means
+    declaring a different machine. Switching off keeps the row - and every receipt that names it -
+    resolvable, while taking the machine out of the candidate set.
+    """
+
+    enabled: bool
 
 
 def _platform_session(request: Request, state: ApiState, claims) -> Session:
@@ -122,6 +148,34 @@ def register_node(body: NodeRegistration, request: Request, state: StateDep, cla
         },
     )
     return node.model_dump(mode="json")
+
+
+@router.patch("/nodes/{node_id}")
+def update_node(
+    node_id: str, body: NodeUpdate, request: Request, state: StateDep, claims: ClaimsDep
+) -> dict:
+    """Switch a declared machine on or off.
+
+    A machine that is decommissioned, or whose address was declared wrong, must be able to leave the
+    candidate set without deleting the row: receipts that name it have to keep resolving. The act is
+    the same permission as declaring it - a person, with a second factor, audited - because switching
+    a machine changes where every project's work may run.
+    """
+    session = _platform_session(request, state, claims)
+    session.enforce(Action.NODE_REGISTER, node_id, "execution_node")
+    try:
+        node = session.catalog.get_node(node_id)
+    except LookupError as exc:
+        raise not_found_in_deployment("compute_node", node_id) from exc
+    if node.enabled == body.enabled:
+        return node.model_dump(mode="json")
+    session.catalog.set_node_enabled(node_id, body.enabled)
+    session.audit(
+        "node:enable" if body.enabled else "node:disable",
+        node_id,
+        details={"enabled": body.enabled},
+    )
+    return node.model_copy(update={"enabled": body.enabled}).model_dump(mode="json")
 
 
 @router.get("/nodes")

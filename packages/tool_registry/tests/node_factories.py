@@ -118,7 +118,7 @@ def make_agent(tmp_path: Path, **overrides: Any) -> NodeAgent:
         "command": [sys.executable, str(script)],
         "work_root": tmp_path / "work",
         "token": TOKEN,
-        "node_name": "node_server",
+        "node_name": "nod_server_01",
         "cpu": NODE_CPU,
         "memory_mb": NODE_MEMORY_MB,
     }
@@ -141,7 +141,11 @@ def stop(server: ThreadingHTTPServer, thread: threading.Thread) -> None:
 
 def backend_for(agent: Any, **overrides: Any) -> HttpNodeBackend:
     host, port = agent.server.server_address[0], agent.server.server_address[1]
-    fields: dict[str, Any] = {"base_url": f"http://{host}:{port}", "token": TOKEN, "node_name": "node_server"}
+    fields: dict[str, Any] = {
+        "base_url": f"http://{host}:{port}",
+        "token": TOKEN,
+        "node_name": agent.node_name,
+    }
     fields.update(overrides)
     return HttpNodeBackend(**fields)
 

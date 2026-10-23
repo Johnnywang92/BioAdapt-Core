@@ -89,6 +89,26 @@ SECONDS_PER_MINUTE = 60.0
 SECONDS_PER_HOUR = 3600.0
 SAMPLE_SECONDS = 0.2
 
+#: What a worker gets from the host's environment. The node's own credential and every other secret
+#: live outside this set on purpose: a step that can read the secret that opens its node can act as
+#: the node. A deployment that needs more names passes them in ``env_passthrough``.
+BASE_ENV = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "PYTHONPATH",
+    "PYTHONDONTWRITEBYTECODE",
+    "PYTHONUNBUFFERED",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "SYSTEMROOT",
+)
+
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -249,6 +269,7 @@ class ProcessBackend:
         node_name: str = "local",
         isolated: bool = False,
         retain_hours: Optional[float] = 24.0,
+        env_passthrough: Sequence[str] = (),
         clock: Optional[Callable[[], datetime]] = None,
     ) -> None:
         self.command = list(command)
@@ -258,6 +279,10 @@ class ProcessBackend:
         #: Whether the launcher keeps the attempt off the network (§9.6). A plain child process
         #: cannot, so a node without a container runtime does not set this.
         self.isolated = isolated
+        #: Extra host variables the deployment lets the worker see. The base set is the system's
+        #: basics; the node's credential is deliberately not among them, so a step cannot read the
+        #: secret that opens its own node unless the deployment names it here on purpose.
+        self.env_passthrough = tuple(env_passthrough)
         #: How long an answered attempt stays on disk so a redelivery can be answered from it. None
         #: keeps every answer until a person removes it.
         if retain_hours is not None and retain_hours < 0:
@@ -443,16 +468,25 @@ class ProcessBackend:
         return path
 
     def _run(self, request: ExecutionRequest, work_dir: Path, started_at: datetime) -> ExecutionOutcome:
+        #: The cage's minutes are wall-clock minutes, the budget the plan approved. The kernel's CPU
+        #: clock counts every core the step may use, so the ceiling is the wall budget times the
+        #: cores: a four-core step is not killed at a quarter of the time it was promised (§9.6).
+        cpu_seconds = int(request.cage.max_minutes * SECONDS_PER_MINUTE * max(1, request.cage.cpu))
         command = [
             sys.executable,
             "-m",
             "bioadapt_tool_registry.limits",
             "--cpu-seconds",
-            str(int(request.cage.max_minutes * SECONDS_PER_MINUTE)),
+            str(cpu_seconds),
             "--",
             *self.command,
         ]
-        env = {**os.environ, WORK_DIR_ENV: str(work_dir)}
+        env = {
+            key: os.environ[key]
+            for key in (*BASE_ENV, *self.env_passthrough)
+            if key in os.environ
+        }
+        env[WORK_DIR_ENV] = str(work_dir)
         began = time.monotonic()
         with (work_dir / STDOUT_FILE).open("wb") as out, (work_dir / STDERR_FILE).open("wb") as err:
             process = subprocess.Popen(

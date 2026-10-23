@@ -161,7 +161,7 @@ class TestDispatching:
         self, client, auth, admin, state, catalog, tmp_path: Path
     ) -> None:
         endpoint, (server, thread) = start_node(tmp_path)
-        state.node_token = NODE_TOKEN
+        state.node_tokens = {"nod_server_01": NODE_TOKEN}
         try:
             #: The laptop cannot hold the chain, so the server is the only candidate - the same
             #: question a person asks when they have a laptop and a server (§9.4).
@@ -213,7 +213,7 @@ class TestDispatching:
     def test_a_deployment_whose_machines_are_all_too_small_says_why(
         self, client, auth, admin, state, catalog
     ) -> None:
-        state.node_token = NODE_TOKEN
+        state.node_tokens = {"nod_laptop_01": NODE_TOKEN}
         declared = client.post("/v1/nodes", json=TIGHT, headers=admin)
         assert declared.status_code == 201, declared.json()
         run_id = runnable_run(client, auth, state)
@@ -226,6 +226,51 @@ class TestDispatching:
         assert "the tool wants" in body["reason"], "a refusal without a reason is a dead end"
         assert receipts_of(catalog, run_id) == []
 
+    def test_a_machine_that_fails_its_health_check_is_skipped_for_one_that_answers(
+        self, client, auth, admin, state, catalog, tmp_path: Path
+    ) -> None:
+        """§3.3: a health check hands over no work, so skipping a silent machine duplicates none."""
+        endpoint, (server, thread) = start_node(tmp_path)
+        state.node_tokens = {"nod_dead_01": NODE_TOKEN, "nod_server_01": NODE_TOKEN}
+        try:
+            dead = {**ROOMY, "node_id": "nod_dead_01", "label": "old server", "endpoint": "http://127.0.0.1:9"}
+            assert client.post("/v1/nodes", json=dead, headers=admin).status_code == 201
+            assert client.post(
+                "/v1/nodes", json={**ROOMY, "endpoint": endpoint}, headers=admin
+            ).status_code == 201
+
+            body = execute(client, auth, runnable_run(client, auth, state))
+
+            assert body["completed"] is True, body
+            assert {receipt.executed_on for receipt in receipts_of(catalog, body["run_id"])} == {
+                "nod_server_01"
+            }
+        finally:
+            stop_node(server, thread)
+
+    def test_a_switched_off_machine_is_not_used(
+        self, client, auth, admin, state, catalog, tmp_path: Path
+    ) -> None:
+        endpoint, (server, thread) = start_node(tmp_path)
+        state.node_tokens = {"nod_server_01": NODE_TOKEN}
+        try:
+            declared = client.post("/v1/nodes", json={**ROOMY, "endpoint": endpoint}, headers=admin)
+            assert declared.status_code == 201, declared.json()
+            switched = client.patch(
+                "/v1/nodes/nod_server_01", json={"enabled": False}, headers=admin
+            )
+            assert switched.status_code == 200, switched.json()
+            run_id = runnable_run(client, auth, state)
+
+            body = execute(client, auth, run_id)
+
+            assert body["completed"] is False
+            assert body["state"] == str(RunState.NEEDS_INPUT)
+            assert "switched off" in body["reason"]
+            assert receipts_of(catalog, run_id) == []
+        finally:
+            stop_node(server, thread)
+
 
 class TestPrivacy:
     """§4.2, §4.4: a strict-local project's work never leaves a machine that can keep the promise."""
@@ -234,7 +279,7 @@ class TestPrivacy:
         self, client, auth, admin, state, catalog, tmp_path: Path
     ) -> None:
         endpoint, (server, thread) = start_node(tmp_path)
-        state.node_token = NODE_TOKEN
+        state.node_tokens = {"nod_cloud_01": NODE_TOKEN}
         try:
             #: The machine is reachable and big enough; only the project's tier rules it out, so the
             #: refusal cannot be explained by an unreachable endpoint or a small machine.

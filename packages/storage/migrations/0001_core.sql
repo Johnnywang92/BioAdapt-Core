@@ -493,6 +493,7 @@ create table if not exists "execution_node" (
   "position" text not null,
   "capabilities" jsonb not null,
   "endpoint" text,
+  "enabled" boolean not null,
   "registered_by" text not null,
   "registered_at" timestamptz not null,
   "notes" text,
